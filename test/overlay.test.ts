@@ -116,7 +116,7 @@ test("overlay html contains Mistr Flow card, mascot, state hooks, and reduced mo
   assert.match(html, /\.cane[\s\S]*right:\s*-3px/);
   assert.match(html, /\.cane[\s\S]*bottom:\s*-4px/);
   assert.match(html, /\.cane[\s\S]*width:\s*3px/);
-  assert.match(html, /\.cane[\s\S]*height:\s*42px/);
+  assert.match(html, /\.cane[\s\S]*height:\s*36px/);
   assert.match(html, /\.microphone[\s\S]*right:\s*-24px/);
   assert.match(html, /\.microphone[\s\S]*bottom:\s*32px/);
   assert.match(html, /\.microphone[\s\S]*z-index:\s*1/);
