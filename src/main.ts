@@ -18,11 +18,21 @@ import {
   openConfigFileWithDefaultHandler,
   runBarContextMenuAction,
 } from "./barControls";
-import { getConfigPath, readOpenAiApiKey } from "./config";
+import {
+  getConfigPath,
+  readOpenAiApiKey,
+  readOverlayPosition,
+  writeOverlayPosition,
+} from "./config";
 import { createDictationCancelledError, runDictationSession } from "./dictation";
 import { polishTranscript, transcribeAudio } from "./openai";
 import { pasteText as pasteTextImpl } from "./paste";
 import { buildOverlaySnapshot } from "./overlay";
+import {
+  clampOverlayPosition,
+  resolveOverlayPosition,
+  type OverlayPosition,
+} from "./overlayPosition";
 
 let overlayWindow: BrowserWindow | null = null;
 let apiKey = "";
@@ -163,17 +173,17 @@ function registerHotkey(): void {
   }
 }
 
-function createOverlayWindow(): BrowserWindow {
+function createOverlayWindow(savedPosition: OverlayPosition | null = null): BrowserWindow {
   const display = screen.getPrimaryDisplay();
   const winWidth = 292;
   const winHeight = 178;
-  const { x, y, width, height } = display.workArea;
+  const position = resolveOverlayPosition({ workArea: display.workArea, savedPosition });
 
   const win = new BrowserWindow({
     width: winWidth,
     height: winHeight,
-    x: Math.round(x + (width - winWidth) / 2),
-    y: y + height - winHeight - 6,
+    x: position.x,
+    y: position.y,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -196,6 +206,25 @@ function createOverlayWindow(): BrowserWindow {
 function setOverlayMouseEvents(ignore: boolean): void {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
   overlayWindow.setIgnoreMouseEvents(ignore, { forward: true });
+}
+
+function moveOverlayBy(delta: { deltaX: number; deltaY: number }): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  if (!Number.isFinite(delta.deltaX) || !Number.isFinite(delta.deltaY)) return;
+
+  const [currentX, currentY] = overlayWindow.getPosition();
+  const position = clampOverlayPosition(
+    {
+      x: currentX + delta.deltaX,
+      y: currentY + delta.deltaY,
+    },
+    screen.getPrimaryDisplay().workArea,
+  );
+
+  overlayWindow.setPosition(position.x, position.y);
+  void writeOverlayPosition(position).catch((error) => {
+    console.error("[mistr-flow] failed to persist overlay position:", error);
+  });
 }
 
 function showContextMenu(): void {
@@ -248,10 +277,18 @@ app.whenReady().then(async () => {
     return;
   }
 
-  overlayWindow = createOverlayWindow();
+  const savedOverlayPosition = await readOverlayPosition().catch((error) => {
+    console.warn("[mistr-flow] failed to read saved overlay position:", error);
+    return null;
+  });
+
+  overlayWindow = createOverlayWindow(savedOverlayPosition);
   ipcMain.on("show-context-menu", () => showContextMenu());
   ipcMain.on("set-overlay-mouse-events", (_event, { ignore }: { ignore: boolean }) => {
     setOverlayMouseEvents(ignore);
+  });
+  ipcMain.on("move-overlay-by", (_event, delta: { deltaX: number; deltaY: number }) => {
+    moveOverlayBy(delta);
   });
 
   try {

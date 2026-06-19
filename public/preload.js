@@ -8,5 +8,6 @@ contextBridge.exposeInMainWorld("mistrFlow", {
     ipcRenderer.on("overlay-state", (_event, snapshot) => callback(snapshot)),
   sendRecordingStopped: (arrayBuffer) => ipcRenderer.send("recording-stopped", arrayBuffer),
   setOverlayMouseEvents: ({ ignore }) => ipcRenderer.send("set-overlay-mouse-events", { ignore }),
+  moveOverlayBy: ({ deltaX, deltaY }) => ipcRenderer.send("move-overlay-by", { deltaX, deltaY }),
   requestContextMenu: () => ipcRenderer.send("show-context-menu"),
 });
