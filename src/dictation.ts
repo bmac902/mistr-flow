@@ -1,4 +1,8 @@
-import { buildOverlaySnapshot, type OverlaySnapshot } from "./overlay";
+import {
+  buildErrorOverlaySnapshot,
+  buildOverlaySnapshot,
+  type OverlaySnapshot,
+} from "./overlay";
 import { runSession, type RunSessionResult } from "./session";
 
 export interface RunDictationSessionDependencies {
@@ -35,8 +39,14 @@ export async function runDictationSession(
   }
 
   if (result.kind === "raw-fallback") {
+    void dependencies.showOverlay(buildErrorOverlaySnapshot());
     await dependencies.pasteText(result.rawTranscript);
-    void dependencies.showOverlay(buildOverlaySnapshot("done"));
+  }
+
+  if (result.kind === "hard-error") {
+    void dependencies.showOverlay(
+      buildErrorOverlaySnapshot(result.error.message),
+    );
   }
 
   return result;

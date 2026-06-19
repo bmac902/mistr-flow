@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildOverlaySnapshot,
+  buildErrorOverlaySnapshot,
   runHappyPathOverlaySession,
 } from "../src/overlay";
 
@@ -29,6 +30,8 @@ test("buildOverlaySnapshot distinguishes idle from active happy-path states", ()
   const processing = buildOverlaySnapshot("processing");
   const polishing = buildOverlaySnapshot("polishing");
   const done = buildOverlaySnapshot("done");
+  const error = buildErrorOverlaySnapshot();
+  const erroredWithToast = buildErrorOverlaySnapshot("Transcription failed.");
 
   assert.equal(idle.barMode, "peek");
   assert.equal(idle.waveformVisible, false);
@@ -49,6 +52,13 @@ test("buildOverlaySnapshot distinguishes idle from active happy-path states", ()
 
   assert.equal(done.waveformVisible, false);
   assert.equal(done.mascotCopy, "done");
+
+  assert.equal(error.barMode, "expanded");
+  assert.equal(error.waveformVisible, false);
+  assert.equal(error.mascotCopy, "error");
+  assert.equal(error.toastCopy, undefined);
+
+  assert.equal(erroredWithToast.toastCopy, "Transcription failed.");
 });
 
 test("runHappyPathOverlaySession advances through real phase boundaries without padding", async () => {

@@ -4,6 +4,7 @@ export { runDictationSession } from "./dictation";
 export { pasteText } from "./paste";
 export {
   buildOverlaySnapshot,
+  buildErrorOverlaySnapshot,
   runHappyPathOverlaySession,
 } from "./overlay";
 export { runSession } from "./session";

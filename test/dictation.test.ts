@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { runDictationSession } from "../src/dictation";
+import type { OverlaySnapshot } from "../src/overlay";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -133,7 +134,7 @@ test("runDictationSession pastes the raw transcript when Polish fails", async ()
     "recording",
     "processing",
     "polishing",
-    "done",
+    "error",
   ]);
   assert.deepEqual(calls, [
     "beep",
@@ -147,10 +148,14 @@ test("runDictationSession does not paste anything when transcription fails", asy
   const states: string[] = [];
   const calls: string[] = [];
   const recordAudio = deferred<Buffer>();
+  let errorSnapshot: OverlaySnapshot | undefined;
 
   const session = runDictationSession({
     showOverlay(snapshot) {
       states.push(snapshot.phase);
+      if (snapshot.phase === "error") {
+        errorSnapshot = snapshot;
+      }
     },
     async playBeep() {
       calls.push("beep");
@@ -179,6 +184,7 @@ test("runDictationSession does not paste anything when transcription fails", asy
   const result = await session;
 
   assert.equal(result.kind, "hard-error");
-  assert.deepEqual(states, ["listening", "recording", "processing"]);
+  assert.deepEqual(states, ["listening", "recording", "processing", "error"]);
+  assert.equal(errorSnapshot?.toastCopy, "transcription failed");
   assert.deepEqual(calls, ["beep", "record", "transcribe:audio"]);
 });

@@ -4,13 +4,15 @@ export type OverlayPhase =
   | "recording"
   | "processing"
   | "polishing"
-  | "done";
+  | "done"
+  | "error";
 
 export interface OverlaySnapshot {
   phase: OverlayPhase;
   barMode: "peek" | "expanded";
   waveformVisible: boolean;
   mascotCopy: string;
+  toastCopy?: string;
 }
 
 export interface HappyPathOverlayDependencies {
@@ -66,7 +68,21 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
         waveformVisible: false,
         mascotCopy: "done",
       };
+    case "error":
+      return buildErrorOverlaySnapshot();
   }
+}
+
+export function buildErrorOverlaySnapshot(
+  toastCopy?: string,
+): OverlaySnapshot {
+  return {
+    phase: "error",
+    barMode: "expanded",
+    waveformVisible: false,
+    mascotCopy: "error",
+    toastCopy,
+  };
 }
 
 export async function runHappyPathOverlaySession(
