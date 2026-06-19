@@ -165,8 +165,8 @@ function registerHotkey(): void {
 
 function createOverlayWindow(): BrowserWindow {
   const display = screen.getPrimaryDisplay();
-  const winWidth = 180;
-  const winHeight = 64;
+  const winWidth = 292;
+  const winHeight = 178;
   const { x, y, width, height } = display.workArea;
 
   const win = new BrowserWindow({
@@ -188,8 +188,14 @@ function createOverlayWindow(): BrowserWindow {
   });
 
   win.setAlwaysOnTop(true, "screen-saver");
+  win.setIgnoreMouseEvents(true, { forward: true });
   void win.loadFile(path.join(__dirname, "..", "public", "overlay.html"));
   return win;
+}
+
+function setOverlayMouseEvents(ignore: boolean): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  overlayWindow.setIgnoreMouseEvents(ignore, { forward: true });
 }
 
 function showContextMenu(): void {
@@ -244,6 +250,9 @@ app.whenReady().then(async () => {
 
   overlayWindow = createOverlayWindow();
   ipcMain.on("show-context-menu", () => showContextMenu());
+  ipcMain.on("set-overlay-mouse-events", (_event, { ignore }: { ignore: boolean }) => {
+    setOverlayMouseEvents(ignore);
+  });
 
   try {
     registerHotkey();

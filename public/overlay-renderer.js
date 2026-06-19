@@ -1,9 +1,24 @@
-const barEl = document.getElementById("bar");
+const overlayEl = document.getElementById("mistr-flow-overlay");
+const cardEl = document.getElementById("mistr-flow-card");
+const statusCopyEl = document.getElementById("status-copy");
 const toastEl = document.getElementById("toast");
 
 let mediaRecorder = null;
 let chunks = [];
 let micStream = null;
+let overlayIgnoringMouse = true;
+
+function setOverlayMouseEvents(ignore) {
+  if (overlayIgnoringMouse === ignore) return;
+  overlayIgnoringMouse = ignore;
+  window.mistrFlow.setOverlayMouseEvents({ ignore });
+}
+
+function updateMousePassThrough(event) {
+  const target = document.elementFromPoint(event.clientX, event.clientY);
+  const overCard = Boolean(target && cardEl.contains(target));
+  setOverlayMouseEvents(!overCard);
+}
 
 async function startRecording() {
   chunks = [];
@@ -43,10 +58,14 @@ window.mistrFlow.onStopRecording(() => stopAndSendRecording());
 window.mistrFlow.onCancelRecording(() => cancelRecording());
 
 window.mistrFlow.onOverlayState((snapshot) => {
-  barEl.textContent = `🎩 ${snapshot.mascotCopy}`;
-  barEl.className = ["error", "done", "cancelled"].includes(snapshot.phase) ? snapshot.phase : "";
+  overlayEl.dataset.phase = snapshot.phase;
+  statusCopyEl.textContent = snapshot.statusCopy;
   toastEl.textContent = snapshot.toastCopy || "";
 });
+
+window.addEventListener("mousemove", updateMousePassThrough);
+window.addEventListener("mouseleave", () => setOverlayMouseEvents(true));
+window.mistrFlow.setOverlayMouseEvents({ ignore: true });
 
 window.addEventListener("contextmenu", (event) => {
   event.preventDefault();
