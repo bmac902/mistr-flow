@@ -96,24 +96,56 @@ test("buildOverlaySnapshot exposes exact Mistr Flow status copy for every phase"
 test("overlay html contains Mistr Flow card, mascot, state hooks, and reduced motion rules", () => {
   const html = readFileSync(path.join(rootDir, "public", "overlay.html"), "utf8");
 
+  assert.match(html, /id="mistr-flow-overlay"/);
+  assert.match(html, /id="mistr-flow-stage"/);
   assert.match(html, /id="mistr-flow-card"/);
   assert.match(html, /data-phase="idle"/);
   assert.match(html, /id="mascot"/);
+  assert.match(html, /id="compact-mascot"/);
   assert.match(html, /id="status-copy"/);
   assert.match(html, /class="top-hat"/);
   assert.match(html, /class="moustache"/);
+  assert.match(html, /width:\s*280px/);
+  assert.match(html, /#mistr-flow-stage[\s\S]*pointer-events:\s*none/);
+  assert.match(html, /#mistr-flow-card[\s\S]*pointer-events:\s*auto/);
+  assert.match(html, /@keyframes hat-tip/);
+  assert.match(html, /@keyframes shoulder-breathe/);
+  assert.match(html, /@keyframes cane-twirl/);
+  assert.match(html, /@keyframes brush-reveal/);
+  assert.match(html, /@keyframes polite-bow/);
+  assert.match(html, /@keyframes hat-fall/);
+  assert.match(html, /@keyframes exit-stage-left/);
   assert.match(html, /prefers-reduced-motion:\s*reduce/);
+  assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*#mistr-flow-stage[\s\S]*display:\s*none/);
+  assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*#compact-mascot[\s\S]*display:\s*block/);
 });
 
-test("overlay renderer renders status copy, applies data-phase, and preserves context menu IPC", () => {
+test("overlay renderer renders status copy, applies data-phase, preserves context menu IPC, and gates mouse input", () => {
   const renderer = readFileSync(
     path.join(rootDir, "public", "overlay-renderer.js"),
     "utf8",
   );
 
   assert.match(renderer, /statusCopy/);
-  assert.match(renderer, /dataset\.phase\s*=\s*snapshot\.phase/);
+  assert.match(renderer, /overlayEl\.dataset\.phase\s*=\s*snapshot\.phase/);
   assert.match(renderer, /requestContextMenu\(\)/);
+  assert.match(renderer, /setOverlayMouseEvents/);
+  assert.match(renderer, /elementFromPoint/);
+  assert.match(renderer, /cardEl\.contains/);
+});
+
+test("preload and main expose mouse pass-through IPC while keeping the overlay bottom-centered", () => {
+  const preload = readFileSync(path.join(rootDir, "public", "preload.js"), "utf8");
+  const main = readFileSync(path.join(rootDir, "src", "main.ts"), "utf8");
+
+  assert.match(preload, /setOverlayMouseEvents/);
+  assert.match(preload, /set-overlay-mouse-events/);
+  assert.match(main, /ipcMain\.on\("set-overlay-mouse-events"/);
+  assert.match(main, /setIgnoreMouseEvents\(ignore, \{ forward: true \}\)/);
+  assert.match(main, /const winWidth = 292/);
+  assert.match(main, /const winHeight = 178/);
+  assert.match(main, /x: Math\.round\(x \+ \(width - winWidth\) \/ 2\)/);
+  assert.match(main, /y: y \+ height - winHeight - 6/);
 });
 
 test("runHappyPathOverlaySession advances through real phase boundaries without padding", async () => {
