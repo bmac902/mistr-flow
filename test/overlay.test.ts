@@ -140,7 +140,7 @@ test("overlay html contains Mistr Flow card, mascot, state hooks, and reduced mo
   assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*data-phase="recording"[\s\S]*animation-iteration-count:\s*infinite !important/);
 });
 
-test("overlay renderer renders status copy, applies data-phase, preserves context menu IPC, and gates mouse input", () => {
+test("overlay renderer renders status copy, applies data-phase, preserves context menu IPC, gates mouse input, and wires drag events", () => {
   const renderer = readFileSync(
     path.join(rootDir, "public", "overlay-renderer.js"),
     "utf8",
@@ -152,20 +152,28 @@ test("overlay renderer renders status copy, applies data-phase, preserves contex
   assert.match(renderer, /setOverlayMouseEvents/);
   assert.match(renderer, /elementFromPoint/);
   assert.match(renderer, /cardEl\.contains/);
+  assert.match(renderer, /pointerdown/);
+  assert.match(renderer, /pointermove/);
+  assert.match(renderer, /pointerup/);
+  assert.match(renderer, /moveOverlayBy/);
+  assert.match(renderer, /event\.button\s*!==\s*0/);
 });
 
-test("preload and main expose mouse pass-through IPC while keeping the overlay bottom-centered", () => {
+test("preload and main expose mouse pass-through and overlay movement IPC", () => {
   const preload = readFileSync(path.join(rootDir, "public", "preload.js"), "utf8");
   const main = readFileSync(path.join(rootDir, "src", "main.ts"), "utf8");
 
   assert.match(preload, /setOverlayMouseEvents/);
   assert.match(preload, /set-overlay-mouse-events/);
+  assert.match(preload, /moveOverlayBy/);
+  assert.match(preload, /move-overlay-by/);
   assert.match(main, /ipcMain\.on\("set-overlay-mouse-events"/);
+  assert.match(main, /ipcMain\.on\("move-overlay-by"/);
   assert.match(main, /setIgnoreMouseEvents\(ignore, \{ forward: true \}\)/);
   assert.match(main, /const winWidth = 292/);
   assert.match(main, /const winHeight = 178/);
-  assert.match(main, /x: Math\.round\(x \+ \(width - winWidth\) \/ 2\)/);
-  assert.match(main, /y: y \+ height - winHeight - 6/);
+  assert.match(main, /resolveOverlayPosition/);
+  assert.match(main, /writeOverlayPosition/);
 });
 
 test("runHappyPathOverlaySession advances through real phase boundaries without padding", async () => {

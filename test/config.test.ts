@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { getConfigPath, readOpenAiApiKey } from "../src/config";
+import {
+  getConfigPath,
+  readOpenAiApiKey,
+  readOverlayPosition,
+  writeOverlayPosition,
+} from "../src/config";
 
 test("getConfigPath resolves the Windows config location from APPDATA", () => {
   const configPath = getConfigPath({ APPDATA: "C:\\Users\\alice\\AppData\\Roaming" });
@@ -25,10 +30,20 @@ test("readOpenAiApiKey reads the runtime config file", async () => {
     "utf8",
   );
 
-  const apiKey = await readOpenAiApiKey(
-    { APPDATA: tempRoot },
-    fs,
-  );
+  const apiKey = await readOpenAiApiKey({ APPDATA: tempRoot }, fs);
 
   assert.equal(apiKey, "test-api-key");
+});
+
+test("writeOverlayPosition persists the overlay position without dropping existing config", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  const configPath = path.join(configDir, "config.json");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(configPath, JSON.stringify({ openaiApiKey: "test-api-key" }), "utf8");
+
+  await writeOverlayPosition({ x: 321, y: 654 }, { APPDATA: tempRoot }, fs);
+
+  assert.deepEqual(await readOverlayPosition({ APPDATA: tempRoot }, fs), { x: 321, y: 654 });
+  assert.equal(JSON.parse(await fs.readFile(configPath, "utf8")).openaiApiKey, "test-api-key");
 });
