@@ -174,6 +174,8 @@ test("preload and main expose mouse pass-through and overlay movement IPC", () =
   assert.match(main, /const winHeight = 178/);
   assert.match(main, /resolveOverlayPosition/);
   assert.match(main, /writeOverlayPosition/);
+  assert.match(main, /ensureOverlayStaysOnTop/);
+  assert.match(main, /moveTop\(\)/);
 });
 
 test("runHappyPathOverlaySession advances through real phase boundaries without padding", async () => {

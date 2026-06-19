@@ -60,17 +60,26 @@ export async function writeOverlayPosition(
   let parsed: AppConfig = {};
 
   try {
-    parsed = JSON.parse(await fileSystem.readFile(configPath, "utf8")) as AppConfig;
+    const raw = await fileSystem.readFile(configPath, "utf8");
+    if (raw.trim()) parsed = JSON.parse(raw) as AppConfig;
   } catch (error) {
-    if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+    if (isNodeError(error) && error.code === "ENOENT") {
+      // file doesn't exist yet — start from empty config
+    } else if (error instanceof SyntaxError) {
+      // transient truncated write while dragging — start from empty config
+    } else {
+      throw error;
+    }
   }
 
   await fileSystem.mkdir(path.dirname(configPath), { recursive: true });
+  const tmpPath = configPath + ".tmp";
   await fileSystem.writeFile(
-    configPath,
+    tmpPath,
     JSON.stringify({ ...parsed, overlayPosition: position }, null, 2),
     "utf8",
   );
+  await fileSystem.rename(tmpPath, configPath);
 }
 
 function pickApiKey(config: AppConfig): string | null {
