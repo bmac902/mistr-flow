@@ -108,6 +108,11 @@ test("overlay html contains Mistr Flow card, mascot, state hooks, and reduced mo
   assert.match(html, /width:\s*280px/);
   assert.match(html, /#mistr-flow-stage[\s\S]*pointer-events:\s*none/);
   assert.match(html, /#mistr-flow-card[\s\S]*pointer-events:\s*auto/);
+  assert.match(html, /\.copy[\s\S]*grid-column:\s*2/);
+  assert.match(html, /#state-indicator[\s\S]*grid-column:\s*3/);
+  assert.match(html, /\.microphone[\s\S]*right:\s*-54px/);
+  assert.match(html, /\.microphone[\s\S]*z-index:\s*1/);
+  assert.match(html, /\.gentleman[\s\S]*z-index:\s*2/);
   assert.match(html, /@keyframes hat-tip/);
   assert.match(html, /@keyframes shoulder-breathe/);
   assert.match(html, /@keyframes cane-twirl/);
@@ -118,7 +123,8 @@ test("overlay html contains Mistr Flow card, mascot, state hooks, and reduced mo
   assert.match(html, /prefers-reduced-motion:\s*reduce/);
   assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*#mistr-flow-stage[\s\S]*display:\s*block/);
   assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*#compact-mascot[\s\S]*display:\s*none/);
-  assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*animation:\s*none !important/);
+  assert.doesNotMatch(html, /prefers-reduced-motion:\s*reduce[\s\S]*animation:\s*none !important/);
+  assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*animation-duration:\s*220ms !important/);
 });
 
 test("overlay renderer renders status copy, applies data-phase, preserves context menu IPC, and gates mouse input", () => {

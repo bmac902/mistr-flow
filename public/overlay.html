@@ -85,6 +85,7 @@
         width: 54px;
         height: 92px;
         transform-origin: 50% 92%;
+        z-index: 2;
       }
 
       .top-hat {
@@ -239,6 +240,7 @@
         background: #4a4036;
         transform: rotate(-10deg);
         transform-origin: 50% 90%;
+        z-index: 1;
       }
 
       .ribbon {
@@ -286,10 +288,11 @@
 
       .microphone {
         position: absolute;
-        right: 48px;
+        right: -54px;
         bottom: 16px;
         width: 30px;
         height: 48px;
+        z-index: 1;
       }
 
       .mic-head {
@@ -327,7 +330,7 @@
 
       .mic-wave {
         position: absolute;
-        right: 88px;
+        right: -24px;
         top: 35px;
         width: 18px;
         height: 42px;
@@ -338,7 +341,7 @@
 
       .flourish {
         position: absolute;
-        right: 62px;
+        right: -40px;
         bottom: 29px;
         width: 52px;
         height: 52px;
@@ -400,6 +403,7 @@
       }
 
       .copy {
+        grid-column: 2;
         min-width: 0;
       }
 
@@ -426,6 +430,7 @@
       }
 
       #state-indicator {
+        grid-column: 3;
         justify-self: center;
         width: 9px;
         height: 9px;
@@ -668,7 +673,8 @@
         #mistr-flow-overlay *,
         #mistr-flow-overlay *::before,
         #mistr-flow-overlay *::after {
-          animation: none !important;
+          animation-duration: 220ms !important;
+          animation-iteration-count: 1 !important;
         }
       }
     </style>
