@@ -214,6 +214,18 @@ function ensureOverlayStaysOnTop(): void {
   overlayWindow.setAlwaysOnTop(true, "screen-saver");
 }
 
+let persistPositionTimer: ReturnType<typeof setTimeout> | null = null;
+
+function schedulePersistPosition(position: OverlayPosition): void {
+  if (persistPositionTimer) clearTimeout(persistPositionTimer);
+  persistPositionTimer = setTimeout(() => {
+    persistPositionTimer = null;
+    void writeOverlayPosition(position).catch((error) => {
+      console.error("[mistr-flow] failed to persist overlay position:", error);
+    });
+  }, 400);
+}
+
 function moveOverlayBy(delta: { deltaX: number; deltaY: number }): void {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
   if (!Number.isFinite(delta.deltaX) || !Number.isFinite(delta.deltaY)) return;
@@ -229,9 +241,7 @@ function moveOverlayBy(delta: { deltaX: number; deltaY: number }): void {
 
   overlayWindow.setPosition(position.x, position.y);
   ensureOverlayStaysOnTop();
-  void writeOverlayPosition(position).catch((error) => {
-    console.error("[mistr-flow] failed to persist overlay position:", error);
-  });
+  schedulePersistPosition(position);
 }
 
 function showContextMenu(): void {
