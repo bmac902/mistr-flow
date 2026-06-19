@@ -73,11 +73,13 @@ export async function writeOverlayPosition(
   }
 
   await fileSystem.mkdir(path.dirname(configPath), { recursive: true });
+  const tmpPath = configPath + ".tmp";
   await fileSystem.writeFile(
-    configPath,
+    tmpPath,
     JSON.stringify({ ...parsed, overlayPosition: position }, null, 2),
     "utf8",
   );
+  await fileSystem.rename(tmpPath, configPath);
 }
 
 function pickApiKey(config: AppConfig): string | null {
