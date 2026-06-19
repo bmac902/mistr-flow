@@ -116,8 +116,9 @@ test("overlay html contains Mistr Flow card, mascot, state hooks, and reduced mo
   assert.match(html, /@keyframes hat-fall/);
   assert.match(html, /@keyframes exit-stage-left/);
   assert.match(html, /prefers-reduced-motion:\s*reduce/);
-  assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*#mistr-flow-stage[\s\S]*display:\s*none/);
-  assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*#compact-mascot[\s\S]*display:\s*block/);
+  assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*#mistr-flow-stage[\s\S]*display:\s*block/);
+  assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*#compact-mascot[\s\S]*display:\s*none/);
+  assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*animation:\s*none !important/);
 });
 
 test("overlay renderer renders status copy, applies data-phase, preserves context menu IPC, and gates mouse input", () => {
