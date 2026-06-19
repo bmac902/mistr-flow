@@ -208,6 +208,12 @@ function setOverlayMouseEvents(ignore: boolean): void {
   overlayWindow.setIgnoreMouseEvents(ignore, { forward: true });
 }
 
+function ensureOverlayStaysOnTop(): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  overlayWindow.moveTop();
+  overlayWindow.setAlwaysOnTop(true, "screen-saver");
+}
+
 function moveOverlayBy(delta: { deltaX: number; deltaY: number }): void {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
   if (!Number.isFinite(delta.deltaX) || !Number.isFinite(delta.deltaY)) return;
@@ -222,6 +228,7 @@ function moveOverlayBy(delta: { deltaX: number; deltaY: number }): void {
   );
 
   overlayWindow.setPosition(position.x, position.y);
+  ensureOverlayStaysOnTop();
   void writeOverlayPosition(position).catch((error) => {
     console.error("[mistr-flow] failed to persist overlay position:", error);
   });

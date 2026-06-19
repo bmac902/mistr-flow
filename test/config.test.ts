@@ -47,3 +47,15 @@ test("writeOverlayPosition persists the overlay position without dropping existi
   assert.deepEqual(await readOverlayPosition({ APPDATA: tempRoot }, fs), { x: 321, y: 654 });
   assert.equal(JSON.parse(await fs.readFile(configPath, "utf8")).openaiApiKey, "test-api-key");
 });
+
+test("writeOverlayPosition tolerates a transient empty config file while dragging", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  const configPath = path.join(configDir, "config.json");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(configPath, "", "utf8");
+
+  await writeOverlayPosition({ x: 111, y: 222 }, { APPDATA: tempRoot }, fs);
+
+  assert.deepEqual(await readOverlayPosition({ APPDATA: tempRoot }, fs), { x: 111, y: 222 });
+});
