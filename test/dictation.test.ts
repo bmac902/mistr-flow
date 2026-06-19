@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runDictationSession } from "../src/dictation";
+import {
+  createDictationCancelledError,
+  runDictationSession,
+} from "../src/dictation";
 import type { OverlaySnapshot } from "../src/overlay";
 
 function deferred<T>() {
@@ -89,6 +92,90 @@ test("runDictationSession drives the happy path from recording through paste", a
     "polish:raw transcript",
     "paste:polished transcript",
   ]);
+});
+
+test("runDictationSession cancels in the dead zone without API calls or paste", async () => {
+  const states: string[] = [];
+  const calls: string[] = [];
+  const recordAudio = deferred<Buffer>();
+
+  const session = runDictationSession({
+    showOverlay(snapshot) {
+      states.push(snapshot.phase);
+    },
+    async playBeep() {
+      calls.push("beep");
+    },
+    async recordAudio() {
+      calls.push("record");
+      return recordAudio.promise;
+    },
+    async transcribe() {
+      calls.push("transcribe");
+      return "should not be used";
+    },
+    async polish() {
+      calls.push("polish");
+      return "should not be used";
+    },
+    async pasteText(text) {
+      calls.push(`paste:${text}`);
+    },
+  });
+
+  await flush();
+  recordAudio.reject(createDictationCancelledError("dead-zone"));
+
+  const result = await session;
+
+  assert.deepEqual(states, ["listening", "recording", "cancelled"]);
+  assert.deepEqual(calls, ["beep", "record"]);
+  assert.deepEqual(result, {
+    kind: "cancelled",
+    reason: "dead-zone",
+  });
+});
+
+test("runDictationSession cancels an in-progress recording on Escape", async () => {
+  const states: string[] = [];
+  const calls: string[] = [];
+  const recordAudio = deferred<Buffer>();
+
+  const session = runDictationSession({
+    showOverlay(snapshot) {
+      states.push(snapshot.phase);
+    },
+    async playBeep() {
+      calls.push("beep");
+    },
+    async recordAudio() {
+      calls.push("record");
+      return recordAudio.promise;
+    },
+    async transcribe() {
+      calls.push("transcribe");
+      return "should not be used";
+    },
+    async polish() {
+      calls.push("polish");
+      return "should not be used";
+    },
+    async pasteText(text) {
+      calls.push(`paste:${text}`);
+    },
+  });
+
+  await flush();
+  recordAudio.reject(createDictationCancelledError("escape"));
+
+  const result = await session;
+
+  assert.deepEqual(states, ["listening", "recording", "cancelled"]);
+  assert.deepEqual(calls, ["beep", "record"]);
+  assert.deepEqual(result, {
+    kind: "cancelled",
+    reason: "escape",
+  });
 });
 
 test("runDictationSession pastes the raw transcript when Polish fails", async () => {

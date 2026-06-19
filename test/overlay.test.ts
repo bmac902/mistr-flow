@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildCancelledOverlaySnapshot,
   buildOverlaySnapshot,
   buildErrorOverlaySnapshot,
   runHappyPathOverlaySession,
@@ -29,6 +30,7 @@ test("buildOverlaySnapshot distinguishes idle from active happy-path states", ()
   const recording = buildOverlaySnapshot("recording");
   const processing = buildOverlaySnapshot("processing");
   const polishing = buildOverlaySnapshot("polishing");
+  const cancelled = buildCancelledOverlaySnapshot();
   const done = buildOverlaySnapshot("done");
   const error = buildErrorOverlaySnapshot();
   const erroredWithToast = buildErrorOverlaySnapshot("Transcription failed.");
@@ -49,6 +51,10 @@ test("buildOverlaySnapshot distinguishes idle from active happy-path states", ()
 
   assert.equal(polishing.waveformVisible, false);
   assert.equal(polishing.mascotCopy, "polishing");
+
+  assert.equal(cancelled.barMode, "expanded");
+  assert.equal(cancelled.waveformVisible, false);
+  assert.equal(cancelled.mascotCopy, "exits stage left");
 
   assert.equal(done.waveformVisible, false);
   assert.equal(done.mascotCopy, "done");

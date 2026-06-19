@@ -2,6 +2,7 @@ export type OverlayPhase =
   | "idle"
   | "listening"
   | "recording"
+  | "cancelled"
   | "processing"
   | "polishing"
   | "done"
@@ -47,6 +48,13 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
         waveformVisible: true,
         mascotCopy: "recording",
       };
+    case "cancelled":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: false,
+        mascotCopy: "exits stage left",
+      };
     case "processing":
       return {
         phase,
@@ -83,6 +91,10 @@ export function buildErrorOverlaySnapshot(
     mascotCopy: "error",
     toastCopy,
   };
+}
+
+export function buildCancelledOverlaySnapshot(): OverlaySnapshot {
+  return buildOverlaySnapshot("cancelled");
 }
 
 export async function runHappyPathOverlaySession(

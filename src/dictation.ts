@@ -1,9 +1,28 @@
 import {
+  buildCancelledOverlaySnapshot,
   buildErrorOverlaySnapshot,
   buildOverlaySnapshot,
   type OverlaySnapshot,
 } from "./overlay";
 import { runSession, type RunSessionResult } from "./session";
+
+export type DictationCancelReason = "dead-zone" | "escape";
+
+export class DictationCancelledError extends Error {
+  readonly reason: DictationCancelReason;
+
+  constructor(reason: DictationCancelReason) {
+    super(`Dictation cancelled: ${reason}`);
+    this.name = "DictationCancelledError";
+    this.reason = reason;
+  }
+}
+
+export function createDictationCancelledError(
+  reason: DictationCancelReason,
+): DictationCancelledError {
+  return new DictationCancelledError(reason);
+}
 
 export interface RunDictationSessionDependencies {
   showOverlay(snapshot: OverlaySnapshot): void | Promise<void>;
@@ -14,14 +33,35 @@ export interface RunDictationSessionDependencies {
   pasteText(text: string): Promise<void> | void;
 }
 
+export type RunDictationSessionResult =
+  | RunSessionResult
+  | {
+      kind: "cancelled";
+      reason: DictationCancelReason;
+    };
+
 export async function runDictationSession(
   dependencies: RunDictationSessionDependencies,
-): Promise<RunSessionResult> {
+): Promise<RunDictationSessionResult> {
   void dependencies.showOverlay(buildOverlaySnapshot("listening"));
   void dependencies.playBeep();
   void dependencies.showOverlay(buildOverlaySnapshot("recording"));
 
-  const audioBuffer = await dependencies.recordAudio();
+  let audioBuffer: Buffer;
+  try {
+    audioBuffer = await dependencies.recordAudio();
+  } catch (error) {
+    if (isDictationCancelledError(error)) {
+      void dependencies.showOverlay(buildCancelledOverlaySnapshot());
+      return {
+        kind: "cancelled",
+        reason: error.reason,
+      };
+    }
+
+    throw error;
+  }
+
   void dependencies.showOverlay(buildOverlaySnapshot("processing"));
 
   const result = await runSession(audioBuffer, {
@@ -50,4 +90,19 @@ export async function runDictationSession(
   }
 
   return result;
+}
+
+function isDictationCancelledError(
+  error: unknown,
+): error is DictationCancelledError {
+  return (
+    error instanceof DictationCancelledError ||
+    (typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      (error as { name?: unknown }).name === "DictationCancelledError" &&
+      "reason" in error &&
+      ((error as { reason?: unknown }).reason === "dead-zone" ||
+        (error as { reason?: unknown }).reason === "escape"))
+  );
 }
