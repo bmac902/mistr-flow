@@ -1,4 +1,9 @@
 export { getConfigPath, readOpenAiApiKey } from "./config";
+export {
+  buildBarContextMenu,
+  openConfigFileWithDefaultHandler,
+  runBarContextMenuAction,
+} from "./barControls";
 export { polishTranscript, transcribeAudio } from "./openai";
 export { pasteText } from "./paste";
 export {
