@@ -1,0 +1,28 @@
+{
+  "name": "mistr-flow",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "sandcastle": "npx tsx .sandcastle/main.mts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bmac902/mistr-flow.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/bmac902/mistr-flow/issues"
+  },
+  "homepage": "https://github.com/bmac902/mistr-flow#readme",
+  "devDependencies": {
+    "@ai-hero/sandcastle": "^0.10.0"
+  }
+}
