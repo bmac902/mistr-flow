@@ -209,20 +209,20 @@
 
       .arm {
         position: absolute;
-        right: 4px;
+        right: 8px;
         top: 57px;
-        width: 8px;
-        height: 45px;
+        width: 7px;
+        height: 24px;
         border-radius: 999px;
         background: #4a4036;
-        transform: rotate(-12deg);
+        transform: rotate(-34deg);
         transform-origin: 50% 0;
       }
 
       .glove {
         position: absolute;
-        right: 1px;
-        top: 61px;
+        right: 0;
+        top: 67px;
         width: 12px;
         height: 12px;
         border-radius: 50%;
@@ -232,9 +232,9 @@
 
       .cane {
         position: absolute;
-        right: -8px;
+        right: -2px;
         bottom: 7px;
-        width: 5px;
+        width: 3px;
         height: 70px;
         border-radius: 999px;
         background: #4a4036;
@@ -288,7 +288,7 @@
 
       .microphone {
         position: absolute;
-        right: -54px;
+        right: -24px;
         bottom: 16px;
         width: 30px;
         height: 48px;
@@ -330,7 +330,7 @@
 
       .mic-wave {
         position: absolute;
-        right: -24px;
+        right: 6px;
         top: 35px;
         width: 18px;
         height: 42px;
@@ -341,7 +341,7 @@
 
       .flourish {
         position: absolute;
-        right: -40px;
+        right: -10px;
         bottom: 29px;
         width: 52px;
         height: 52px;
@@ -467,7 +467,11 @@
       }
 
       #mistr-flow-overlay[data-phase="recording"] .mic-wave {
-        animation: wave-pulse 1.4s ease-in-out infinite;
+        animation: wave-pulse 1.1s ease-in-out infinite;
+      }
+
+      #mistr-flow-overlay[data-phase="recording"] .cane {
+        animation: cane-recording-sway 1.1s ease-in-out infinite;
       }
 
       #mistr-flow-overlay[data-phase="recording"] .gentleman {
@@ -557,12 +561,22 @@
       @keyframes wave-pulse {
         0%,
         100% {
-          opacity: 0.18;
-          transform: translateX(0) scaleX(0.8);
+          opacity: 0.2;
+          transform: translateX(0) scaleX(0.72);
         }
         50% {
-          opacity: 0.85;
-          transform: translateX(7px) scaleX(1.15);
+          opacity: 1;
+          transform: translateX(11px) scaleX(1.35);
+        }
+      }
+
+      @keyframes cane-recording-sway {
+        0%,
+        100% {
+          transform: rotate(-10deg);
+        }
+        50% {
+          transform: rotate(-4deg) translateX(1px);
         }
       }
 
@@ -675,6 +689,14 @@
         #mistr-flow-overlay *::after {
           animation-duration: 220ms !important;
           animation-iteration-count: 1 !important;
+        }
+
+        #mistr-flow-overlay[data-phase="recording"] .moustache,
+        #mistr-flow-overlay[data-phase="recording"] .mic-wave,
+        #mistr-flow-overlay[data-phase="recording"] .gentleman,
+        #mistr-flow-overlay[data-phase="recording"] .cane {
+          animation-duration: 1.1s !important;
+          animation-iteration-count: infinite !important;
         }
       }
     </style>
