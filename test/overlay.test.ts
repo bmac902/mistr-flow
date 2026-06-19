@@ -105,6 +105,7 @@ test("overlay html contains Mistr Flow card, mascot, state hooks, and reduced mo
   assert.match(html, /id="status-copy"/);
   assert.match(html, /class="top-hat"/);
   assert.match(html, /class="moustache"/);
+  assert.match(html, /\.top-hat[\s\S]*top:\s*4px/);
   assert.match(html, /width:\s*280px/);
   assert.match(html, /#mistr-flow-stage[\s\S]*pointer-events:\s*none/);
   assert.match(html, /#mistr-flow-card[\s\S]*pointer-events:\s*auto/);
