@@ -165,7 +165,7 @@ function registerHotkey(): void {
 
 function createOverlayWindow(): BrowserWindow {
   const display = screen.getPrimaryDisplay();
-  const winWidth = 180;
+  const winWidth = 292;
   const winHeight = 64;
   const { x, y, width, height } = display.workArea;
 

@@ -1,4 +1,5 @@
-const barEl = document.getElementById("bar");
+const cardEl = document.getElementById("mistr-flow-card");
+const statusCopyEl = document.getElementById("status-copy");
 const toastEl = document.getElementById("toast");
 
 let mediaRecorder = null;
@@ -43,8 +44,8 @@ window.mistrFlow.onStopRecording(() => stopAndSendRecording());
 window.mistrFlow.onCancelRecording(() => cancelRecording());
 
 window.mistrFlow.onOverlayState((snapshot) => {
-  barEl.textContent = `🎩 ${snapshot.mascotCopy}`;
-  barEl.className = ["error", "done", "cancelled"].includes(snapshot.phase) ? snapshot.phase : "";
+  cardEl.dataset.phase = snapshot.phase;
+  statusCopyEl.textContent = snapshot.statusCopy;
   toastEl.textContent = snapshot.toastCopy || "";
 });
 

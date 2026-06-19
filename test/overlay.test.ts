@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import * as path from "node:path";
 import test from "node:test";
 
 import {
@@ -7,6 +9,19 @@ import {
   buildErrorOverlaySnapshot,
   runHappyPathOverlaySession,
 } from "../src/overlay";
+
+const rootDir = path.join(__dirname, "..");
+
+const expectedStatusCopy = {
+  idle: "Ready when you are, sir.",
+  listening: "Listening…",
+  recording: "Go on, I’m taking notes…",
+  processing: "Tidying your ramble…",
+  polishing: "Ahem. Much better…",
+  done: "Pasted, sir.",
+  error: "Mistr Flo tripped over the microphone.",
+  cancelled: "Very well. We shall pretend that never happened.",
+} as const;
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -41,30 +56,64 @@ test("buildOverlaySnapshot distinguishes idle from active happy-path states", ()
 
   assert.equal(listening.barMode, "expanded");
   assert.equal(listening.waveformVisible, true);
-  assert.equal(listening.mascotCopy, "listening");
+  assert.equal(listening.mascotCopy, "tips top hat");
 
   assert.equal(recording.waveformVisible, true);
-  assert.equal(recording.mascotCopy, "recording");
+  assert.equal(recording.mascotCopy, "moustache wiggle");
 
   assert.equal(processing.waveformVisible, false);
-  assert.equal(processing.mascotCopy, "processing");
+  assert.equal(processing.mascotCopy, "cane twirl");
 
   assert.equal(polishing.waveformVisible, false);
-  assert.equal(polishing.mascotCopy, "polishing");
+  assert.equal(polishing.mascotCopy, "brushes sentence ribbon");
 
   assert.equal(cancelled.barMode, "expanded");
   assert.equal(cancelled.waveformVisible, false);
   assert.equal(cancelled.mascotCopy, "exits stage left");
 
   assert.equal(done.waveformVisible, false);
-  assert.equal(done.mascotCopy, "done");
+  assert.equal(done.mascotCopy, "top hat bow");
 
   assert.equal(error.barMode, "expanded");
   assert.equal(error.waveformVisible, false);
-  assert.equal(error.mascotCopy, "error");
+  assert.equal(error.mascotCopy, "top hat askew");
   assert.equal(error.toastCopy, undefined);
 
   assert.equal(erroredWithToast.toastCopy, "Transcription failed.");
+});
+
+test("buildOverlaySnapshot exposes exact Mistr Flow status copy for every phase", () => {
+  for (const [phase, statusCopy] of Object.entries(expectedStatusCopy)) {
+    const snapshot =
+      phase === "error"
+        ? buildErrorOverlaySnapshot()
+        : buildOverlaySnapshot(phase as Parameters<typeof buildOverlaySnapshot>[0]);
+
+    assert.equal(snapshot.statusCopy, statusCopy);
+  }
+});
+
+test("overlay html contains Mistr Flow card, mascot, state hooks, and reduced motion rules", () => {
+  const html = readFileSync(path.join(rootDir, "public", "overlay.html"), "utf8");
+
+  assert.match(html, /id="mistr-flow-card"/);
+  assert.match(html, /data-phase="idle"/);
+  assert.match(html, /id="mascot"/);
+  assert.match(html, /id="status-copy"/);
+  assert.match(html, /class="top-hat"/);
+  assert.match(html, /class="moustache"/);
+  assert.match(html, /prefers-reduced-motion:\s*reduce/);
+});
+
+test("overlay renderer renders status copy, applies data-phase, and preserves context menu IPC", () => {
+  const renderer = readFileSync(
+    path.join(rootDir, "public", "overlay-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(renderer, /statusCopy/);
+  assert.match(renderer, /dataset\.phase\s*=\s*snapshot\.phase/);
+  assert.match(renderer, /requestContextMenu\(\)/);
 });
 
 test("runHappyPathOverlaySession advances through real phase boundaries without padding", async () => {

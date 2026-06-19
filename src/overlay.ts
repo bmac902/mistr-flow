@@ -13,8 +13,31 @@ export interface OverlaySnapshot {
   barMode: "peek" | "expanded";
   waveformVisible: boolean;
   mascotCopy: string;
+  statusCopy: string;
   toastCopy?: string;
 }
+
+const STATUS_COPY: Record<OverlayPhase, string> = {
+  idle: "Ready when you are, sir.",
+  listening: "Listening…",
+  recording: "Go on, I’m taking notes…",
+  cancelled: "Very well. We shall pretend that never happened.",
+  processing: "Tidying your ramble…",
+  polishing: "Ahem. Much better…",
+  done: "Pasted, sir.",
+  error: "Mistr Flo tripped over the microphone.",
+};
+
+const MASCOT_COPY: Record<OverlayPhase, string> = {
+  idle: "hat + eyes",
+  listening: "tips top hat",
+  recording: "moustache wiggle",
+  cancelled: "exits stage left",
+  processing: "cane twirl",
+  polishing: "brushes sentence ribbon",
+  done: "top hat bow",
+  error: "top hat askew",
+};
 
 export interface HappyPathOverlayDependencies {
   showOverlay(snapshot: OverlaySnapshot): void | Promise<void>;
@@ -32,49 +55,56 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
         phase,
         barMode: "peek",
         waveformVisible: false,
-        mascotCopy: "hat + eyes",
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
       };
     case "listening":
       return {
         phase,
         barMode: "expanded",
         waveformVisible: true,
-        mascotCopy: "listening",
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
       };
     case "recording":
       return {
         phase,
         barMode: "expanded",
         waveformVisible: true,
-        mascotCopy: "recording",
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
       };
     case "cancelled":
       return {
         phase,
         barMode: "expanded",
         waveformVisible: false,
-        mascotCopy: "exits stage left",
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
       };
     case "processing":
       return {
         phase,
         barMode: "expanded",
         waveformVisible: false,
-        mascotCopy: "processing",
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
       };
     case "polishing":
       return {
         phase,
         barMode: "expanded",
         waveformVisible: false,
-        mascotCopy: "polishing",
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
       };
     case "done":
       return {
         phase,
         barMode: "expanded",
         waveformVisible: false,
-        mascotCopy: "done",
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
       };
     case "error":
       return buildErrorOverlaySnapshot();
@@ -88,7 +118,8 @@ export function buildErrorOverlaySnapshot(
     phase: "error",
     barMode: "expanded",
     waveformVisible: false,
-    mascotCopy: "error",
+    mascotCopy: MASCOT_COPY.error,
+    statusCopy: STATUS_COPY.error,
     toastCopy,
   };
 }

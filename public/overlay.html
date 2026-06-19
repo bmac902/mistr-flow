@@ -3,51 +3,396 @@
   <head>
     <meta charset="utf-8" />
     <style>
+      :root {
+        --card-cream: #f8f1e1;
+        --stage: #221d19;
+        --ink: #2a241f;
+        --warm-charcoal: #6b5e4c;
+        --brass: #b8893c;
+        --light-brass: #d8b068;
+        --border: #e0d4bc;
+        --success: #1f8a5b;
+        --face: #ebdcbe;
+        --warm-white: #f4ecd9;
+      }
+
       html,
       body {
         margin: 0;
         padding: 0;
+        width: 100%;
+        height: 100%;
         background: transparent;
         overflow: hidden;
-        font-family: "Segoe UI", sans-serif;
+        font-family:
+          "Space Grotesk", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont,
+          sans-serif;
         -webkit-app-region: no-drag;
+        user-select: none;
       }
-      #bar {
-        display: flex;
+
+      body {
+        display: grid;
+        place-items: center;
+      }
+
+      #mistr-flow-card {
+        box-sizing: border-box;
+        width: 280px;
+        height: 56px;
+        display: grid;
+        grid-template-columns: 36px 1fr 22px;
         align-items: center;
-        justify-content: center;
-        height: 100%;
-        width: 100%;
-        border-radius: 14px;
-        background: rgba(20, 20, 20, 0.85);
-        color: white;
-        font-size: 14px;
-        letter-spacing: 0.02em;
-        transition: background 0.15s ease;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+        gap: 10px;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--card-cream);
+        color: var(--ink);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+        transform-origin: center bottom;
+        transition:
+          border-color 120ms ease,
+          opacity 120ms ease,
+          transform 120ms ease;
       }
-      #bar.error {
-        background: rgba(150, 30, 30, 0.92);
+
+      #mistr-flow-card[data-phase="done"] {
+        border-color: rgba(31, 138, 91, 0.45);
       }
-      #bar.done {
-        background: rgba(25, 120, 65, 0.92);
+
+      #mistr-flow-card[data-phase="cancelled"] {
+        opacity: 0.86;
       }
-      #bar.cancelled {
-        background: rgba(60, 60, 60, 0.85);
+
+      #mascot {
+        position: relative;
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        background:
+          radial-gradient(circle at 50% 42%, rgba(216, 176, 104, 0.22), transparent 58%),
+          var(--stage);
+        overflow: hidden;
       }
+
+      .gentleman {
+        position: absolute;
+        left: 50%;
+        bottom: 3px;
+        width: 22px;
+        height: 26px;
+        transform: translateX(-50%);
+        transition: transform 180ms ease;
+      }
+
+      .top-hat {
+        position: absolute;
+        left: 5px;
+        top: 0;
+        width: 12px;
+        height: 8px;
+        border-radius: 2px 2px 1px 1px;
+        background: var(--ink);
+        box-shadow:
+          inset 0 -2px 0 var(--brass),
+          0 7px 0 -5px var(--ink);
+        transform-origin: 20% 90%;
+        transition: transform 180ms ease;
+      }
+
+      .top-hat::after {
+        content: "";
+        position: absolute;
+        left: -4px;
+        top: 7px;
+        width: 20px;
+        height: 3px;
+        border-radius: 999px;
+        background: var(--ink);
+      }
+
+      .face {
+        position: absolute;
+        left: 4px;
+        top: 9px;
+        width: 14px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--face);
+      }
+
+      .eye {
+        position: absolute;
+        top: 13px;
+        width: 2px;
+        height: 2px;
+        border-radius: 50%;
+        background: var(--ink);
+      }
+
+      .eye.left {
+        left: 8px;
+      }
+
+      .eye.right {
+        left: 14px;
+      }
+
+      .moustache {
+        position: absolute;
+        left: 7px;
+        top: 16px;
+        width: 9px;
+        height: 4px;
+        transform-origin: center;
+      }
+
+      .moustache::before,
+      .moustache::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        width: 6px;
+        height: 4px;
+        border-radius: 50% 50% 45% 45%;
+        background: var(--ink);
+      }
+
+      .moustache::before {
+        right: 4px;
+        transform: rotate(-12deg);
+      }
+
+      .moustache::after {
+        left: 4px;
+        transform: rotate(12deg);
+      }
+
+      .shirt {
+        position: absolute;
+        left: 6px;
+        bottom: 0;
+        width: 10px;
+        height: 9px;
+        border-radius: 5px 5px 2px 2px;
+        background: var(--warm-white);
+      }
+
+      .bowtie {
+        position: absolute;
+        left: 8px;
+        bottom: 8px;
+        width: 7px;
+        height: 4px;
+        background: var(--brass);
+        clip-path: polygon(0 0, 45% 50%, 0 100%, 100% 100%, 55% 50%, 100% 0);
+      }
+
+      .cane {
+        position: absolute;
+        right: 1px;
+        bottom: 0;
+        width: 2px;
+        height: 17px;
+        border-radius: 999px;
+        background: var(--brass);
+        transform-origin: 50% 90%;
+      }
+
+      .mic-wave {
+        position: absolute;
+        right: 5px;
+        top: 12px;
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: var(--light-brass);
+        opacity: 0.55;
+        box-shadow:
+          5px 0 0 rgba(216, 176, 104, 0.46),
+          10px 0 0 rgba(216, 176, 104, 0.34);
+      }
+
+      .copy {
+        min-width: 0;
+      }
+
+      .brand {
+        display: block;
+        color: var(--warm-charcoal);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      #status-copy {
+        display: block;
+        overflow: hidden;
+        color: var(--ink);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        line-height: 1.3;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #state-indicator {
+        justify-self: center;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--brass);
+        box-shadow: 0 0 0 3px rgba(184, 137, 60, 0.18);
+      }
+
       #toast {
         position: absolute;
-        bottom: 70px;
+        bottom: 62px;
         left: 0;
         right: 0;
         text-align: center;
-        color: #ffb4b4;
+        color: var(--warm-white);
         font-size: 12px;
+        text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+      }
+
+      #mistr-flow-card[data-phase="listening"] .top-hat {
+        transform: rotate(-14deg) translateY(-1px);
+      }
+
+      #mistr-flow-card[data-phase="recording"] .moustache {
+        animation: moustache-wiggle 1.1s ease-in-out infinite;
+      }
+
+      #mistr-flow-card[data-phase="recording"] .mic-wave {
+        animation: wave-pulse 1.4s ease-in-out infinite;
+      }
+
+      #mistr-flow-card[data-phase="processing"] .cane {
+        animation: cane-twirl 560ms cubic-bezier(0.45, 0, 0.55, 1);
+      }
+
+      #mistr-flow-card[data-phase="polishing"] .gentleman {
+        transform: translateX(-50%) translateY(-1px) rotate(-2deg);
+      }
+
+      #mistr-flow-card[data-phase="done"] #state-indicator {
+        background: var(--success);
+        box-shadow: 0 0 0 3px rgba(31, 138, 91, 0.16);
+      }
+
+      #mistr-flow-card[data-phase="done"] .gentleman {
+        animation: polite-bow 520ms cubic-bezier(0.34, 1.56, 0.64, 1);
+      }
+
+      #mistr-flow-card[data-phase="error"] .top-hat {
+        transform: rotate(16deg) translate(1px, -1px);
+      }
+
+      #mistr-flow-card[data-phase="cancelled"] .gentleman {
+        transform: translateX(-62%) translateY(1px) rotate(-5deg);
+      }
+
+      @keyframes moustache-wiggle {
+        0%,
+        100% {
+          transform: scaleX(1);
+        }
+        50% {
+          transform: scaleX(1.18);
+        }
+      }
+
+      @keyframes wave-pulse {
+        0%,
+        100% {
+          opacity: 0.35;
+          transform: translateX(0);
+        }
+        50% {
+          opacity: 0.9;
+          transform: translateX(1px);
+        }
+      }
+
+      @keyframes cane-twirl {
+        from {
+          transform: rotate(0deg);
+        }
+        to {
+          transform: rotate(1turn);
+        }
+      }
+
+      @keyframes polite-bow {
+        0%,
+        100% {
+          transform: translateX(-50%) rotate(0deg);
+        }
+        55% {
+          transform: translateX(-50%) rotate(8deg) translateY(1px);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #mistr-flow-card,
+        .gentleman,
+        .top-hat,
+        .cane {
+          transition-duration: 120ms;
+        }
+
+        #mistr-flow-card *,
+        #mistr-flow-card *::before,
+        #mistr-flow-card *::after {
+          animation: none !important;
+        }
+
+        #mistr-flow-card[data-phase] .gentleman,
+        #mistr-flow-card[data-phase] .top-hat,
+        #mistr-flow-card[data-phase] .cane {
+          transform: translateX(-50%);
+        }
+
+        #mistr-flow-card[data-phase] .top-hat,
+        #mistr-flow-card[data-phase] .cane {
+          transform: none;
+        }
+
+        .mic-wave {
+          width: 3px;
+          box-shadow:
+            5px 0 0 rgba(216, 176, 104, 0.46),
+            10px 0 0 rgba(216, 176, 104, 0.34);
+        }
       }
     </style>
   </head>
   <body>
-    <div id="bar">🎩 idle</div>
+    <section id="mistr-flow-card" data-phase="idle" aria-live="polite">
+      <div id="mascot" aria-hidden="true">
+        <div class="gentleman">
+          <div class="top-hat"></div>
+          <div class="face"></div>
+          <div class="eye left"></div>
+          <div class="eye right"></div>
+          <div class="moustache"></div>
+          <div class="shirt"></div>
+          <div class="bowtie"></div>
+          <div class="cane"></div>
+        </div>
+        <div class="mic-wave"></div>
+      </div>
+      <div class="copy">
+        <span class="brand">Mistr Flow</span>
+        <span id="status-copy">Ready when you are, sir.</span>
+      </div>
+      <div id="state-indicator" aria-hidden="true"></div>
+    </section>
     <div id="toast"></div>
     <script src="./overlay-renderer.js"></script>
   </body>
