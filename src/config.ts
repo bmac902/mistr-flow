@@ -20,6 +20,10 @@ export async function readOpenAiApiKey(
   env: NodeJS.ProcessEnv = process.env,
   fileSystem = fs,
 ): Promise<string> {
+  if (typeof env.OPENAI_API_KEY === "string" && env.OPENAI_API_KEY.trim()) {
+    return env.OPENAI_API_KEY.trim();
+  }
+
   const configPath = getConfigPath(env);
   const rawConfig = await fileSystem.readFile(configPath, "utf8");
   const parsed = JSON.parse(rawConfig) as AppConfig;

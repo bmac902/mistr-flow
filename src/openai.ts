@@ -18,7 +18,7 @@ export async function transcribeAudio(
   const fetchImpl = options.fetchImpl ?? fetch;
   const body = new FormData();
   body.append("model", "whisper-1");
-  body.append("file", new Blob([new Uint8Array(audioBuffer)]), "audio.wav");
+  body.append("file", new Blob([new Uint8Array(audioBuffer)]), "audio.webm");
 
   const response = await fetchImpl(whisperUrl, {
     method: "POST",

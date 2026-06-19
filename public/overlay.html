@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        overflow: hidden;
+        font-family: "Segoe UI", sans-serif;
+        -webkit-app-region: no-drag;
+      }
+      #bar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        width: 100%;
+        border-radius: 14px;
+        background: rgba(20, 20, 20, 0.85);
+        color: white;
+        font-size: 14px;
+        letter-spacing: 0.02em;
+        transition: background 0.15s ease;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+      }
+      #bar.error {
+        background: rgba(150, 30, 30, 0.92);
+      }
+      #bar.done {
+        background: rgba(25, 120, 65, 0.92);
+      }
+      #bar.cancelled {
+        background: rgba(60, 60, 60, 0.85);
+      }
+      #toast {
+        position: absolute;
+        bottom: 70px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        color: #ffb4b4;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="bar">🎩 idle</div>
+    <div id="toast"></div>
+    <script src="./overlay-renderer.js"></script>
+  </body>
+</html>
