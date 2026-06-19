@@ -1,0 +1,184 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { runDictationSession } from "../src/dictation";
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function flush(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
+test("runDictationSession drives the happy path from recording through paste", async () => {
+  const states: string[] = [];
+  const calls: string[] = [];
+  const recordAudio = deferred<Buffer>();
+  const transcribe = deferred<string>();
+  const polish = deferred<string>();
+
+  const session = runDictationSession({
+    showOverlay(snapshot) {
+      states.push(snapshot.phase);
+    },
+    async playBeep() {
+      calls.push("beep");
+    },
+    async recordAudio() {
+      calls.push("record");
+      return recordAudio.promise;
+    },
+    async transcribe(audioBuffer) {
+      calls.push(`transcribe:${audioBuffer.toString("utf8")}`);
+      return transcribe.promise;
+    },
+    async polish(rawTranscript) {
+      calls.push(`polish:${rawTranscript}`);
+      return polish.promise;
+    },
+    async pasteText(text) {
+      calls.push(`paste:${text}`);
+    },
+  });
+
+  await flush();
+  assert.deepEqual(states, ["listening", "recording"]);
+  assert.deepEqual(calls, ["beep", "record"]);
+
+  recordAudio.resolve(Buffer.from("audio"));
+  await flush();
+  assert.deepEqual(states, ["listening", "recording", "processing"]);
+  assert.deepEqual(calls, ["beep", "record", "transcribe:audio"]);
+
+  transcribe.resolve("raw transcript");
+  await flush();
+  assert.deepEqual(states, ["listening", "recording", "processing", "polishing"]);
+  assert.deepEqual(calls, [
+    "beep",
+    "record",
+    "transcribe:audio",
+    "polish:raw transcript",
+  ]);
+
+  polish.resolve("polished transcript");
+  await flush();
+  const result = await session;
+
+  assert.equal(result.kind, "polished");
+  assert.deepEqual(states, [
+    "listening",
+    "recording",
+    "processing",
+    "polishing",
+    "done",
+  ]);
+  assert.deepEqual(calls, [
+    "beep",
+    "record",
+    "transcribe:audio",
+    "polish:raw transcript",
+    "paste:polished transcript",
+  ]);
+});
+
+test("runDictationSession pastes the raw transcript when Polish fails", async () => {
+  const states: string[] = [];
+  const calls: string[] = [];
+  const recordAudio = deferred<Buffer>();
+  const transcribe = deferred<string>();
+
+  const session = runDictationSession({
+    showOverlay(snapshot) {
+      states.push(snapshot.phase);
+    },
+    async playBeep() {
+      calls.push("beep");
+    },
+    async recordAudio() {
+      calls.push("record");
+      return recordAudio.promise;
+    },
+    async transcribe(audioBuffer) {
+      calls.push(`transcribe:${audioBuffer.toString("utf8")}`);
+      return transcribe.promise;
+    },
+    async polish() {
+      throw new Error("polish failed");
+    },
+    async pasteText(text) {
+      calls.push(`paste:${text}`);
+    },
+  });
+
+  await flush();
+  recordAudio.resolve(Buffer.from("audio"));
+  await flush();
+  transcribe.resolve("raw transcript");
+  await flush();
+
+  const result = await session;
+
+  assert.equal(result.kind, "raw-fallback");
+  assert.deepEqual(states, [
+    "listening",
+    "recording",
+    "processing",
+    "polishing",
+    "done",
+  ]);
+  assert.deepEqual(calls, [
+    "beep",
+    "record",
+    "transcribe:audio",
+    "paste:raw transcript",
+  ]);
+});
+
+test("runDictationSession does not paste anything when transcription fails", async () => {
+  const states: string[] = [];
+  const calls: string[] = [];
+  const recordAudio = deferred<Buffer>();
+
+  const session = runDictationSession({
+    showOverlay(snapshot) {
+      states.push(snapshot.phase);
+    },
+    async playBeep() {
+      calls.push("beep");
+    },
+    async recordAudio() {
+      calls.push("record");
+      return recordAudio.promise;
+    },
+    async transcribe(audioBuffer) {
+      calls.push(`transcribe:${audioBuffer.toString("utf8")}`);
+      throw new Error("transcription failed");
+    },
+    async polish() {
+      calls.push("polish");
+      return "should not be used";
+    },
+    async pasteText(text) {
+      calls.push(`paste:${text}`);
+    },
+  });
+
+  await flush();
+  recordAudio.resolve(Buffer.from("audio"));
+  await flush();
+
+  const result = await session;
+
+  assert.equal(result.kind, "hard-error");
+  assert.deepEqual(states, ["listening", "recording", "processing"]);
+  assert.deepEqual(calls, ["beep", "record", "transcribe:audio"]);
+});

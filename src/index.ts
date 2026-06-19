@@ -1,5 +1,6 @@
 export { getConfigPath, readOpenAiApiKey } from "./config";
 export { polishTranscript, transcribeAudio } from "./openai";
+export { runDictationSession } from "./dictation";
 export { pasteText } from "./paste";
 export {
   buildOverlaySnapshot,
@@ -11,4 +12,5 @@ export type {
   OverlayPhase,
   OverlaySnapshot,
 } from "./overlay";
+export type { RunDictationSessionDependencies } from "./dictation";
 export type { RunSessionDependencies, RunSessionResult } from "./session";
