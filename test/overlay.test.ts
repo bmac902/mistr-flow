@@ -195,10 +195,14 @@ test("reusable design components gate animation completion to deterministic fini
     "utf8",
   );
 
-  assert.match(overlay, /OVERLAY_COMPLETION_SELECTORS/);
+  assert.doesNotMatch(overlay, /OVERLAY_COMPLETION_SELECTORS/);
+  assert.match(overlay, /ANIMATION_DURATION_MS/);
+  assert.match(overlay, /window\.setTimeout[\s\S]*onAnimationComplete\(state\)[\s\S]*durationMs/);
+  assert.match(overlay, /window\.clearTimeout\(timeoutId\)/);
+  assert.match(overlay, /LOOPING_STATES\.has\(state\)/);
   assert.match(overlay, /completedStateRef\.current === state/);
-  assert.match(overlay, /target\.matches\(completionSelector\)/);
-  assert.match(overlay, /cancelled: '\.mf-indicator-cancelled'/);
+  assert.doesNotMatch(overlay, /target\.matches\(completionSelector\)/);
+  assert.doesNotMatch(overlay, /cancelled: '\.mf-indicator-cancelled'/);
 
   assert.match(mascot, /MASCOT_COMPLETION_SELECTORS/);
   assert.match(mascot, /completedStateRef\.current === state/);

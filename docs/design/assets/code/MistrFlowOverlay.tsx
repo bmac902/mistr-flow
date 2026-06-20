@@ -14,17 +14,10 @@
  *   <MistrFlowOverlay state={appState} onAnimationComplete={onDone} />
  */
 
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import type { MistrFlowOverlayProps, MistrFlowState } from './mistr-flow.types';
-import { STATUS_COPY, LOOPING_STATES } from './mistr-flow.types';
+import { ANIMATION_DURATION_MS, STATUS_COPY, LOOPING_STATES } from './mistr-flow.types';
 import './mistr-flow.css';
-
-const OVERLAY_COMPLETION_SELECTORS: Partial<Record<MistrFlowState, string>> = {
-  polishing: '.mf-indicator-polishing .mf-words-clean',
-  done: '.mf-indicator-check',
-  error: '.mf-indicator-warn',
-  cancelled: '.mf-indicator-cancelled',
-};
 
 // ─── Mini avatar (40 × 40 viewBox, hat + face + moustache) ────────────────────
 
@@ -115,22 +108,21 @@ export const MistrFlowOverlay: React.FC<MistrFlowOverlayProps> = ({
     completedStateRef.current = null;
   }, [state]);
 
-  const handleAnimationEnd = useCallback(
-    (e: React.AnimationEvent<HTMLDivElement>) => {
-      if (!onAnimationComplete || LOOPING_STATES.has(state)) return;
+  useEffect(() => {
+    if (!onAnimationComplete || LOOPING_STATES.has(state)) return;
+    if (completedStateRef.current === state) return;
+
+    const durationMs = ANIMATION_DURATION_MS[state];
+    if (!durationMs) return;
+
+    const timeoutId = window.setTimeout(() => {
       if (completedStateRef.current === state) return;
-
-      const completionSelector = OVERLAY_COMPLETION_SELECTORS[state];
-      if (!completionSelector) return;
-
-      const target = e.target as Element;
-      if (!target.matches(completionSelector) && !target.closest(completionSelector)) return;
-
       completedStateRef.current = state;
       onAnimationComplete(state);
-    },
-    [state, onAnimationComplete],
-  );
+    }, durationMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [state, onAnimationComplete]);
 
   const copy = statusText ?? STATUS_COPY[state];
 
@@ -141,7 +133,6 @@ export const MistrFlowOverlay: React.FC<MistrFlowOverlayProps> = ({
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      onAnimationEnd={handleAnimationEnd}
     >
       <div className="mf-overlay-avatar">
         <MiniAvatar state={state} />
