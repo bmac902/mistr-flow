@@ -20,6 +20,7 @@ import {
 } from "./barControls";
 import {
   getConfigPath,
+  readMuteSystemAudioWhileRecording,
   readOpenAiApiKey,
   readOverlayPosition,
   writeOverlayPosition,
@@ -33,13 +34,16 @@ import {
   resolveOverlayPosition,
   type OverlayPosition,
 } from "./overlayPosition";
+import { muteSystemAudio, type SystemAudioMuteHandle } from "./systemAudio";
 
 let overlayWindow: BrowserWindow | null = null;
 let apiKey = "";
+let muteSystemAudioWhileRecording = true;
 
 interface ActiveSession {
   resolveAudio(buffer: Buffer): void;
   rejectAudio(error: Error): void;
+  systemAudioMutePromise: Promise<SystemAudioMuteHandle | null>;
 }
 
 let activeSession: ActiveSession | null = null;
@@ -110,7 +114,8 @@ function startSession(): void {
     rejectAudio = reject;
   });
 
-  activeSession = { resolveAudio, rejectAudio };
+  const systemAudioMutePromise = muteSystemAudioForRecording();
+  activeSession = { resolveAudio, rejectAudio, systemAudioMutePromise };
   globalShortcut.register("Escape", () => {
     if (activeSession) endSession("escape");
   });
@@ -139,20 +144,45 @@ function scheduleReturnToIdle(): void {
   }, 5000);
 }
 
+async function muteSystemAudioForRecording(): Promise<SystemAudioMuteHandle | null> {
+  if (!muteSystemAudioWhileRecording) return null;
+
+  try {
+    return await muteSystemAudio();
+  } catch (error) {
+    console.warn("[mistr-flow] failed to mute system audio while recording:", error);
+    return null;
+  }
+}
+
+function restoreSystemAudioAfterRecording(
+  mutePromise: Promise<SystemAudioMuteHandle | null>,
+): void {
+  void mutePromise
+    .then((handle) => handle?.restore())
+    .catch((error) => {
+      console.warn("[mistr-flow] failed to restore system audio after recording:", error);
+    });
+}
+
 function endSession(reason: "release" | "escape"): void {
   if (!activeSession) return;
-  const { resolveAudio, rejectAudio } = activeSession;
+  const { resolveAudio, rejectAudio, systemAudioMutePromise } = activeSession;
   activeSession = null;
   globalShortcut.unregister("Escape");
 
   if (reason === "escape") {
     sendToRenderer("cancel-recording");
     rejectAudio(createDictationCancelledError("escape"));
+    restoreSystemAudioAfterRecording(systemAudioMutePromise);
     return;
   }
 
   bloop();
-  requestStopRecording().then(resolveAudio).catch(rejectAudio);
+  requestStopRecording()
+    .then(resolveAudio)
+    .catch(rejectAudio)
+    .finally(() => restoreSystemAudioAfterRecording(systemAudioMutePromise));
 }
 
 const TOGGLE_ACCELERATOR = "Control+Alt+D";
@@ -267,7 +297,11 @@ async function ensureConfigExists(): Promise<boolean> {
   if (fs.existsSync(configPath)) return true;
 
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify({ openaiApiKey: "" }, null, 2), "utf8");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({ openaiApiKey: "", muteSystemAudioWhileRecording: true }, null, 2),
+    "utf8",
+  );
   dialog.showErrorBox(
     "Mistr Flow needs an OpenAI API key",
     `Created ${configPath}. Add your OpenAI API key as "openaiApiKey" and restart Mistr Flow.`,
@@ -288,6 +322,7 @@ app.whenReady().then(async () => {
 
   try {
     apiKey = await readOpenAiApiKey();
+    muteSystemAudioWhileRecording = await readMuteSystemAudioWhileRecording();
   } catch (error) {
     dialog.showErrorBox("Mistr Flow config error", String(error));
     app.quit();
