@@ -14,10 +14,17 @@
  *   <MistrFlowOverlay state={appState} onAnimationComplete={onDone} />
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import type { MistrFlowOverlayProps, MistrFlowState } from './mistr-flow.types';
 import { STATUS_COPY, LOOPING_STATES } from './mistr-flow.types';
 import './mistr-flow.css';
+
+const OVERLAY_COMPLETION_SELECTORS: Partial<Record<MistrFlowState, string>> = {
+  polishing: '.mf-indicator-polishing .mf-words-clean',
+  done: '.mf-indicator-check',
+  error: '.mf-indicator-warn',
+  cancelled: '.mf-indicator-cancelled',
+};
 
 // ─── Mini avatar (40 × 40 viewBox, hat + face + moustache) ────────────────────
 
@@ -102,14 +109,25 @@ export const MistrFlowOverlay: React.FC<MistrFlowOverlayProps> = ({
   className = '',
   style,
 }) => {
+  const completedStateRef = useRef<MistrFlowState | null>(null);
+
+  useEffect(() => {
+    completedStateRef.current = null;
+  }, [state]);
+
   const handleAnimationEnd = useCallback(
     (e: React.AnimationEvent<HTMLDivElement>) => {
-      if (onAnimationComplete && !LOOPING_STATES.has(state)) {
-        // Only fire once from the top-level element
-        if (e.target === e.currentTarget) {
-          onAnimationComplete(state);
-        }
-      }
+      if (!onAnimationComplete || LOOPING_STATES.has(state)) return;
+      if (completedStateRef.current === state) return;
+
+      const completionSelector = OVERLAY_COMPLETION_SELECTORS[state];
+      if (!completionSelector) return;
+
+      const target = e.target as Element;
+      if (!target.matches(completionSelector) && !target.closest(completionSelector)) return;
+
+      completedStateRef.current = state;
+      onAnimationComplete(state);
     },
     [state, onAnimationComplete],
   );

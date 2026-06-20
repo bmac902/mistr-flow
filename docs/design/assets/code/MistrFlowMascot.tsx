@@ -8,10 +8,19 @@
  *   <MistrFlowMascot state={appState} width={240} />
  */
 
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import type { MistrFlowMascotProps, MistrFlowState } from './mistr-flow.types';
 import { LOOPING_STATES } from './mistr-flow.types';
 import './mistr-flow.css';
+
+const MASCOT_COMPLETION_SELECTORS: Partial<Record<MistrFlowState, string>> = {
+  listening: '.mf-body',
+  processing: '.mf-cane',
+  polishing: '.mf-words-clean',
+  done: '.mf-body',
+  error: '.mf-hat',
+  cancelled: '.mf-figure',
+};
 
 // ─── Hat ──────────────────────────────────────────────────────────────────────
 
@@ -44,16 +53,25 @@ export const MistrFlowMascot: React.FC<MistrFlowMascotProps> = ({
   style,
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
+  const completedStateRef = useRef<MistrFlowState | null>(null);
+
+  useEffect(() => {
+    completedStateRef.current = null;
+  }, [state]);
 
   const handleAnimationEnd = useCallback(
     (e: React.AnimationEvent<SVGSVGElement>) => {
-      // Only fire callback for one-shot animations — not loops
-      if (onAnimationComplete && !LOOPING_STATES.has(state)) {
-        // Filter to the outermost animated element to avoid duplicate calls
-        if (e.target === e.currentTarget || (e.target as Element).closest('.mf-body, .mf-cane, .mf-hat, .mf-figure')) {
-          onAnimationComplete(state);
-        }
-      }
+      if (!onAnimationComplete || LOOPING_STATES.has(state)) return;
+      if (completedStateRef.current === state) return;
+
+      const completionSelector = MASCOT_COMPLETION_SELECTORS[state];
+      if (!completionSelector) return;
+
+      const target = e.target as Element;
+      if (!target.matches(completionSelector) && !target.closest(completionSelector)) return;
+
+      completedStateRef.current = state;
+      onAnimationComplete(state);
     },
     [state, onAnimationComplete],
   );

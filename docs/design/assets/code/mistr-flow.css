@@ -122,7 +122,7 @@
   0%, 12%   { transform: translateX(0); opacity: 1; }
   46%       { transform: translateX(-58px); opacity: 0; }
   60%, 88%  { transform: translateX(-58px); opacity: 0; }
-  100%      { transform: translateX(0); opacity: 1; }
+  100%      { transform: translateX(-58px); opacity: 0; }
 }
 
 @keyframes mf-pulse {

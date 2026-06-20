@@ -132,6 +132,7 @@ test("overlay html contains Mistr Flow card, mascot, state hooks, and reduced mo
   assert.match(html, /@keyframes mf-bow/);
   assert.match(html, /@keyframes mf-hatfall/);
   assert.match(html, /@keyframes mf-exit/);
+  assert.match(html, /100%\s*\{ transform: translateX\(-58px\); opacity: 0; \}/);
   assert.match(html, /prefers-reduced-motion:\s*reduce/);
   assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*#mistr-flow-stage[\s\S]*display:\s*block/);
   assert.match(html, /prefers-reduced-motion:\s*reduce[\s\S]*#compact-mascot[\s\S]*display:\s*block/);
@@ -178,6 +179,31 @@ test("preload and main expose mouse pass-through and overlay movement IPC", () =
   assert.match(main, /writeOverlayPosition/);
   assert.match(main, /ensureOverlayStaysOnTop/);
   assert.match(main, /moveTop\(\)/);
+  assert.match(main, /cleanupPromise: Promise<void> \| null/);
+  assert.match(main, /beginSessionCleanup/);
+  assert.match(main, /app\.on\("before-quit"/);
+  assert.match(main, /quitAfterSessionCleanup/);
+});
+
+test("reusable design components gate animation completion to deterministic finite animations", () => {
+  const overlay = readFileSync(
+    path.join(rootDir, "docs", "design", "assets", "code", "MistrFlowOverlay.tsx"),
+    "utf8",
+  );
+  const mascot = readFileSync(
+    path.join(rootDir, "docs", "design", "assets", "code", "MistrFlowMascot.tsx"),
+    "utf8",
+  );
+
+  assert.match(overlay, /OVERLAY_COMPLETION_SELECTORS/);
+  assert.match(overlay, /completedStateRef\.current === state/);
+  assert.match(overlay, /target\.matches\(completionSelector\)/);
+  assert.match(overlay, /cancelled: '\.mf-indicator-cancelled'/);
+
+  assert.match(mascot, /MASCOT_COMPLETION_SELECTORS/);
+  assert.match(mascot, /completedStateRef\.current === state/);
+  assert.match(mascot, /polishing: '\.mf-words-clean'/);
+  assert.match(mascot, /cancelled: '\.mf-figure'/);
 });
 
 test("runHappyPathOverlaySession advances through real phase boundaries without padding", async () => {
