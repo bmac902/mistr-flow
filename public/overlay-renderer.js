@@ -93,7 +93,12 @@ window.mistrFlow.onStopRecording(() => stopAndSendRecording());
 window.mistrFlow.onCancelRecording(() => cancelRecording());
 
 window.mistrFlow.onOverlayState((snapshot) => {
+  const previousPhase = overlayEl.dataset.phase || "idle";
   overlayEl.dataset.phase = snapshot.phase;
+  overlayEl.classList.remove(`mf-state-${previousPhase}`);
+  overlayEl.classList.add(`mf-state-${snapshot.phase}`);
+  mascotEl.classList.remove(`mf-state-${previousPhase}`);
+  mascotEl.classList.add(`mf-state-${snapshot.phase}`);
   statusCopyEl.textContent = snapshot.statusCopy;
   toastEl.textContent = snapshot.toastCopy || "";
 });

@@ -3,741 +3,684 @@
   <head>
     <meta charset="utf-8" />
     <style>
-      :root {
-        --card-cream: #f8f1e1;
-        --stage: #221d19;
-        --ink: #2a241f;
-        --warm-charcoal: #6b5e4c;
-        --brass: #b8893c;
-        --light-brass: #d8b068;
-        --border: #e0d4bc;
-        --success: #1f8a5b;
-        --face: #ebdcbe;
-        --warm-white: #f4ecd9;
-      }
-
-      html,
-      body {
-        margin: 0;
-        padding: 0;
-        width: 100%;
-        height: 100%;
-        background: transparent;
-        overflow: hidden;
-        font-family:
-          "Space Grotesk", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont,
-          sans-serif;
-        -webkit-app-region: no-drag;
-        user-select: none;
-      }
-
-      body {
-        display: flex;
-        align-items: flex-end;
-        justify-content: center;
-      }
-
-      #mistr-flow-overlay {
-        width: 292px;
-        height: 172px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: flex-end;
-        pointer-events: none;
-      }
-
-      #mistr-flow-stage {
-        position: relative;
-        width: 280px;
-        height: 112px;
-        pointer-events: none;
-      }
-
-      #mistr-flow-stage::before {
-        content: "";
-        position: absolute;
-        left: 50%;
-        bottom: 0;
-        width: 128px;
-        height: 18px;
-        border-radius: 50%;
-        background: radial-gradient(ellipse, rgba(0, 0, 0, 0.55), transparent 68%);
-        opacity: 0.5;
-        transform: translateX(-50%);
-      }
-
-      #mascot {
-        position: absolute;
-        left: 50%;
-        bottom: 0;
-        width: 132px;
-        height: 112px;
-        pointer-events: auto;
-        transform: translateX(-50%);
-        transform-origin: 50% 92%;
-        animation: shoulder-breathe 3.8s ease-in-out infinite;
-      }
-
-      .gentleman {
-        position: absolute;
-        left: 42px;
-        bottom: 10px;
-        width: 54px;
-        height: 92px;
-        transform-origin: 50% 92%;
-        z-index: 2;
-      }
-
-      .top-hat {
-        position: absolute;
-        left: 13px;
-        top: 4px;
-        width: 29px;
-        height: 20px;
-        border-radius: 7px 7px 2px 2px;
-        background: var(--ink);
-        box-shadow: inset 0 -5px 0 var(--brass);
-        transform-origin: 18% 90%;
-        z-index: 3;
-      }
-
-      .top-hat::after {
-        content: "";
-        position: absolute;
-        left: -12px;
-        top: 18px;
-        width: 53px;
-        height: 5px;
-        border-radius: 999px;
-        background: var(--ink);
-      }
-
-      .face {
-        position: absolute;
-        left: 11px;
-        top: 24px;
-        width: 33px;
-        height: 33px;
-        border-radius: 50%;
-        background: var(--face);
-      }
-
-      .brow {
-        position: absolute;
-        top: 32px;
-        width: 12px;
-        height: 3px;
-        border-radius: 999px;
-        background: var(--ink);
-      }
-
-      .brow.left {
-        left: 13px;
-        transform: rotate(4deg);
-      }
-
-      .brow.right {
-        left: 31px;
-        transform: rotate(-4deg);
-      }
-
-      .eye {
-        position: absolute;
-        top: 39px;
-        width: 5px;
-        height: 5px;
-        border-radius: 50%;
-        background: var(--ink);
-      }
-
-      .eye.left {
-        left: 19px;
-      }
-
-      .eye.right {
-        left: 33px;
-      }
-
-      .moustache {
-        position: absolute;
-        left: 17px;
-        top: 47px;
-        width: 22px;
-        height: 9px;
-        transform-origin: center;
-      }
-
-      .moustache::before,
-      .moustache::after {
-        content: "";
-        position: absolute;
-        top: 0;
-        width: 14px;
-        height: 8px;
-        border-radius: 50% 50% 45% 45%;
-        background: var(--ink);
-      }
-
-      .moustache::before {
-        right: 10px;
-        transform: rotate(-13deg);
-      }
-
-      .moustache::after {
-        left: 10px;
-        transform: rotate(13deg);
-      }
-
-      .torso {
-        position: absolute;
-        left: 17px;
-        top: 56px;
-        width: 23px;
-        height: 36px;
-        background: linear-gradient(90deg, var(--ink) 0 28%, var(--warm-white) 29% 67%, var(--ink) 68%);
-        clip-path: polygon(12% 0, 88% 0, 72% 100%, 28% 100%);
-      }
-
-      .bowtie {
-        position: absolute;
-        left: 20px;
-        top: 57px;
-        width: 17px;
-        height: 9px;
-        background: var(--brass);
-        clip-path: polygon(0 0, 45% 50%, 0 100%, 100% 100%, 55% 50%, 100% 0);
-      }
-
-      .arm {
-        position: absolute;
-        right: 8px;
-        top: 57px;
-        width: 7px;
-        height: 24px;
-        border-radius: 999px;
-        background: #4a4036;
-        transform: rotate(-34deg);
-        transform-origin: 50% 0;
-      }
-
-      .glove {
-        position: absolute;
-        right: 0;
-        top: 62px;
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        background: var(--warm-white);
-        border: 1px solid rgba(42, 36, 31, 0.45);
-      }
-
-      .cane {
-        position: absolute;
-        right: 5px;
-        bottom: -6px;
-        width: 3px;
-        height: 36px;
-        border-radius: 999px;
-        background: #4a4036;
-        transform: rotate(-10deg);
-        transform-origin: 50% 0;
-        z-index: 1;
-      }
-
-      .ribbon {
-        position: absolute;
-        left: 82px;
-        bottom: 30px;
-        width: 76px;
-        height: 28px;
-        border-radius: 3px;
-        background: var(--card-cream);
-        opacity: 0;
-        transform: rotate(-5deg) translateY(7px);
-      }
-
-      .ribbon::before,
-      .ribbon::after {
-        content: "";
-        position: absolute;
-        left: 12px;
-        width: 42px;
-        height: 3px;
-        border-radius: 999px;
-        background: rgba(107, 94, 76, 0.36);
-      }
-
-      .ribbon::before {
-        top: 9px;
-      }
-
-      .ribbon::after {
-        top: 18px;
-        width: 54px;
-      }
-
-      .sparkle {
-        position: absolute;
-        left: 153px;
-        bottom: 55px;
-        width: 9px;
-        height: 9px;
-        background: var(--light-brass);
-        clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
-        opacity: 0;
-      }
-
-      .microphone {
-        position: absolute;
-        right: -24px;
-        bottom: 32px;
-        width: 30px;
-        height: 48px;
-        z-index: 1;
-      }
-
-      .mic-head {
-        position: absolute;
-        left: 1px;
-        top: 0;
-        width: 28px;
-        height: 38px;
-        border: 3px solid var(--brass);
-        border-radius: 999px;
-        box-sizing: border-box;
-      }
-
-      .mic-head::before {
-        content: "";
-        position: absolute;
-        left: 6px;
-        right: 6px;
-        top: 9px;
-        height: 2px;
-        background: var(--brass);
-        box-shadow: 0 8px 0 var(--brass), 0 16px 0 var(--brass);
-        opacity: 0.7;
-      }
-
-      .mic-stand {
-        position: absolute;
-        left: 14px;
-        top: 38px;
-        width: 4px;
-        height: 39px;
-        border-radius: 999px;
-        background: #4a4036;
-      }
-
-      .mic-wave {
-        position: absolute;
-        right: 6px;
-        top: 19px;
-        width: 18px;
-        height: 42px;
-        border-right: 3px solid rgba(216, 176, 104, 0.5);
-        border-radius: 50%;
-        opacity: 0;
-      }
-
-      .flourish {
-        position: absolute;
-        right: -10px;
-        bottom: 45px;
-        width: 52px;
-        height: 52px;
-        border: 3px dashed rgba(184, 137, 60, 0.75);
-        border-radius: 50%;
-        opacity: 0;
-      }
-
-      #mistr-flow-card {
-        box-sizing: border-box;
-        width: 280px;
-        height: 56px;
-        display: grid;
-        grid-template-columns: 30px 1fr 22px;
-        align-items: center;
-        gap: 10px;
-        padding: 8px 12px;
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        background: var(--card-cream);
-        color: var(--ink);
-        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
-        pointer-events: auto;
-        transition:
-          border-color 120ms ease,
-          opacity 120ms ease,
-          transform 120ms ease;
-      }
-
-      #compact-mascot {
-        position: relative;
-        display: none;
-        width: 24px;
-        height: 24px;
-        border-radius: 7px;
-        background:
-          radial-gradient(circle at 50% 48%, rgba(244, 236, 217, 0.18), transparent 58%),
-          var(--stage);
-      }
-
-      #compact-mascot::before {
-        content: "🎩";
-        position: absolute;
-        left: 2px;
-        top: 0;
-        font-size: 17px;
-        line-height: 1;
-      }
-
-      #compact-mascot::after {
-        content: "⌒⌒";
-        position: absolute;
-        left: 5px;
-        bottom: 2px;
-        color: var(--warm-white);
-        font-size: 9px;
-        font-weight: 700;
-        letter-spacing: -0.18em;
-      }
-
-      .copy {
-        grid-column: 2;
-        min-width: 0;
-      }
-
-      .brand {
-        display: block;
-        color: var(--warm-charcoal);
-        font-size: 9px;
-        font-weight: 700;
-        letter-spacing: 0.16em;
-        line-height: 1;
-        text-transform: uppercase;
-      }
-
-      #status-copy {
-        display: block;
-        overflow: hidden;
-        color: var(--ink);
-        font-size: 13px;
-        font-weight: 700;
-        letter-spacing: 0.01em;
-        line-height: 1.3;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      #state-indicator {
-        grid-column: 3;
-        justify-self: center;
-        width: 9px;
-        height: 9px;
-        border-radius: 50%;
-        background: var(--brass);
-        box-shadow: 0 0 0 3px rgba(184, 137, 60, 0.18);
-      }
-
-      #toast {
-        position: absolute;
-        bottom: 62px;
-        left: 0;
-        right: 0;
-        text-align: center;
-        color: var(--warm-white);
-        font-size: 12px;
-        text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
-      }
-
-      #mistr-flow-overlay[data-phase="idle"] #mascot {
-        animation: shoulder-breathe 3.8s ease-in-out infinite;
-      }
-
-      #mistr-flow-overlay[data-phase="listening"] .gentleman {
-        animation: hat-tip 380ms cubic-bezier(0.2, 0.8, 0.2, 1);
-      }
-
-      #mistr-flow-overlay[data-phase="listening"] .top-hat {
-        transform: rotate(-13deg) translateY(-3px);
-      }
-
-      #mistr-flow-overlay[data-phase="recording"] .moustache {
-        animation: moustache-wiggle 1.1s ease-in-out infinite;
-      }
-
-      #mistr-flow-overlay[data-phase="recording"] .mic-wave {
-        animation: wave-pulse 1.1s ease-in-out infinite;
-      }
-
-      #mistr-flow-overlay[data-phase="recording"] .cane {
-        animation: cane-recording-sway 1.1s ease-in-out infinite;
-      }
-
-      #mistr-flow-overlay[data-phase="recording"] .gentleman {
-        animation: gentle-nod 1.4s ease-in-out infinite;
-      }
-
-      #mistr-flow-overlay[data-phase="processing"] .cane {
-        animation: cane-twirl 560ms cubic-bezier(0.45, 0, 0.55, 1);
-      }
-
-      #mistr-flow-overlay[data-phase="processing"] .flourish {
-        animation: flourish-spin 560ms cubic-bezier(0.45, 0, 0.55, 1);
-      }
-
-      #mistr-flow-overlay[data-phase="polishing"] .ribbon,
-      #mistr-flow-overlay[data-phase="polishing"] .sparkle {
-        animation: brush-reveal 680ms ease-in-out forwards;
-      }
-
-      #mistr-flow-overlay[data-phase="polishing"] .arm {
-        animation: brush-arm 680ms ease-in-out;
-      }
-
-      #mistr-flow-overlay[data-phase="done"] #state-indicator {
-        background: var(--success);
-        box-shadow: 0 0 0 3px rgba(31, 138, 91, 0.16);
-      }
-
-      #mistr-flow-overlay[data-phase="done"] .gentleman {
-        animation: polite-bow 520ms cubic-bezier(0.34, 1.56, 0.64, 1);
-      }
-
-      #mistr-flow-overlay[data-phase="done"] .top-hat {
-        transform: rotate(-16deg) translate(-3px, -8px);
-      }
-
-      #mistr-flow-overlay[data-phase="error"] .top-hat {
-        animation: hat-fall 460ms cubic-bezier(0.5, 0, 0.75, 0) forwards;
-      }
-
-      #mistr-flow-overlay[data-phase="error"] .brow.left {
-        transform: rotate(-18deg) translateY(-2px);
-      }
-
-      #mistr-flow-overlay[data-phase="error"] .brow.right {
-        transform: rotate(18deg) translateY(-2px);
-      }
-
-      #mistr-flow-overlay[data-phase="cancelled"] #mascot {
-        animation: exit-stage-left 640ms cubic-bezier(0.4, 0, 1, 1) forwards;
-      }
-
-      #mistr-flow-overlay[data-phase="cancelled"] #mistr-flow-card {
-        opacity: 0.78;
-      }
-
-      @keyframes shoulder-breathe {
-        0%,
-        100% {
-          transform: translateX(-50%) translateY(0) scaleY(1);
-        }
-        50% {
-          transform: translateX(-50%) translateY(1px) scaleY(0.985);
-        }
-      }
-
-      @keyframes hat-tip {
-        0%,
-        100% {
-          transform: rotate(0) translateX(0);
-        }
-        50% {
-          transform: rotate(-3deg) translateX(5px);
-        }
-      }
-
-      @keyframes moustache-wiggle {
-        0%,
-        100% {
-          transform: scaleX(1);
-        }
-        50% {
-          transform: scaleX(1.22);
-        }
-      }
-
-      @keyframes wave-pulse {
-        0%,
-        100% {
-          opacity: 0.2;
-          transform: translateX(0) scaleX(0.72);
-        }
-        50% {
-          opacity: 1;
-          transform: translateX(11px) scaleX(1.35);
-        }
-      }
-
-      @keyframes cane-recording-sway {
-        0%,
-        100% {
-          transform: rotate(-10deg);
-        }
-        50% {
-          transform: rotate(-4deg) translateX(1px);
-        }
-      }
-
-      @keyframes gentle-nod {
-        0%,
-        100% {
-          transform: rotate(0deg);
-        }
-        50% {
-          transform: rotate(1.5deg) translateY(1px);
-        }
-      }
-
-      @keyframes cane-twirl {
-        from {
-          transform: rotate(-10deg);
-        }
-        to {
-          transform: rotate(350deg);
-        }
-      }
-
-      @keyframes flourish-spin {
-        0% {
-          opacity: 0;
-          transform: rotate(0deg) scale(0.72);
-        }
-        35% {
-          opacity: 0.9;
-        }
-        100% {
-          opacity: 0;
-          transform: rotate(1turn) scale(1.08);
-        }
-      }
-
-      @keyframes brush-reveal {
-        0% {
-          opacity: 0;
-          transform: rotate(-5deg) translateY(7px);
-        }
-        45%,
-        100% {
-          opacity: 1;
-          transform: rotate(-5deg) translateY(0);
-        }
-      }
-
-      @keyframes brush-arm {
-        0%,
-        100% {
-          transform: rotate(-12deg);
-        }
-        45% {
-          transform: rotate(-54deg) translateX(7px);
-        }
-      }
-
-      @keyframes polite-bow {
-        0%,
-        100% {
-          transform: rotate(0deg);
-        }
-        55% {
-          transform: rotate(8deg) translateY(4px);
-        }
-      }
-
-      @keyframes hat-fall {
-        0% {
-          transform: rotate(0) translate(0, 0);
-        }
-        100% {
-          transform: rotate(122deg) translate(16px, 27px);
-        }
-      }
-
-      @keyframes exit-stage-left {
-        0% {
-          opacity: 1;
-          transform: translateX(-50%);
-        }
-        100% {
-          opacity: 0.34;
-          transform: translateX(-105%) translateY(5px);
-        }
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        #mistr-flow-stage {
-          display: block;
-        }
-
-        #compact-mascot {
-          display: none;
-        }
-
-        #mistr-flow-overlay {
-          height: 172px;
-          justify-content: flex-end;
-        }
-
-        #mistr-flow-card {
-          grid-template-columns: 30px 1fr 22px;
-          transition-duration: 120ms;
-        }
-
-        #mistr-flow-overlay *,
-        #mistr-flow-overlay *::before,
-        #mistr-flow-overlay *::after {
-          animation-duration: 220ms !important;
-          animation-iteration-count: 1 !important;
-        }
-
-        #mistr-flow-overlay[data-phase="recording"] .moustache,
-        #mistr-flow-overlay[data-phase="recording"] .mic-wave,
-        #mistr-flow-overlay[data-phase="recording"] .gentleman,
-        #mistr-flow-overlay[data-phase="recording"] .cane {
-          animation-duration: 1.1s !important;
-          animation-iteration-count: infinite !important;
-        }
-      }
+
+:root {
+  --card-cream: #f8f1e1;
+  --stage: #221d19;
+  --ink: #2a241f;
+  --warm-charcoal: #6b5e4c;
+  --brass: #b8893c;
+  --border: #e0d4bc;
+  --success: #1f8a5b;
+  --warm-white: #f4ecd9;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: "Space Grotesk", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-app-region: no-drag;
+  user-select: none;
+}
+body {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+#mistr-flow-overlay {
+  width: 292px;
+  height: 172px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+#mistr-flow-stage {
+  position: relative;
+  width: 280px;
+  height: 112px;
+  pointer-events: none;
+}
+#mistr-flow-stage::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 128px;
+  height: 18px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(0, 0, 0, 0.55), transparent 68%);
+  opacity: 0.5;
+  transform: translateX(-50%);
+}
+#mascot {
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  width: 96px;
+  height: 111px;
+  pointer-events: auto;
+  transform: translateX(-50%);
+  overflow: visible;
+}
+#mascot .mf-root-offset {
+  transform: translateX(18px);
+}
+.mf-recording-only,
+.mf-polishing-only {
+  display: none;
+}
+.mf-state-recording .mf-recording-only,
+.mf-state-polishing .mf-polishing-only {
+  display: inline;
+}
+#mistr-flow-card {
+  box-sizing: border-box;
+  width: 280px;
+  height: 56px;
+  display: grid;
+  grid-template-columns: 30px 1fr 22px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-cream);
+  color: var(--ink);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+}
+#compact-mascot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+#compact-mascot svg {
+  display: block;
+}
+.copy {
+  grid-column: 2;
+  min-width: 0;
+}
+.brand {
+  display: block;
+  color: var(--warm-charcoal);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+#status-copy {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#state-indicator {
+  grid-column: 3;
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+}
+#state-indicator > * { display: none; }
+.mf-state-listening #indicator-dot,
+.mf-state-recording #indicator-bars,
+.mf-state-processing #indicator-spinner,
+.mf-state-polishing #indicator-polishing,
+.mf-state-done #indicator-check,
+.mf-state-error #indicator-warn,
+.mf-state-cancelled #indicator-cancelled { display: block; }
+#toast {
+  position: absolute;
+  bottom: 62px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  color: var(--warm-white);
+  font-size: 12px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+}
+@media (prefers-reduced-motion: reduce) {
+  #mistr-flow-stage { display: block; }
+  #compact-mascot { display: block; }
+  #mistr-flow-overlay { height: 172px; justify-content: flex-end; }
+}
+
+/*
+ * mistr-flow.css
+ * All @keyframes and state-driven animation classes for Mistr Flow.
+ * Import once in your app entry point: import './mistr-flow.css';
+ *
+ * Class hooks expected on SVG elements:
+ *   .mf-mascot          root <svg> — also carries .mf-state-{state}
+ *   .mf-figure          outermost group (exits on cancelled)
+ *   .mf-body            body + head group (breathe / lean / nod / tilt / bow)
+ *   .mf-hat             hat group inside .mf-body (tiphat / hatfall)
+ *   .mf-eyes            eyes group inside .mf-body (blink)
+ *   .mf-brows           brows group inside .mf-body (fret — error only)
+ *   .mf-moustache       moustache path (wiggle — recording only)
+ *   .mf-cane            cane group (twirl / flick)
+ *   .mf-arm             arm + glove group (brush — polishing)
+ *   .mf-wave            sound-wave paths (rendered only when recording)
+ *   .mf-words-messy     sentence ribbon text before clean (polishing)
+ *   .mf-words-clean     sentence ribbon text after clean (polishing)
+ */
+
+/* ── Keyframes ────────────────────────────────────────────────────────────── */
+
+@keyframes mf-breathe {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-2.5px); }
+}
+
+@keyframes mf-blink {
+  0%, 94%, 100% { transform: scaleY(1); }
+  97%            { transform: scaleY(0.1); }
+}
+
+@keyframes mf-tiphat {
+  0%, 8%    { transform: rotate(0deg) translateY(0); }
+  22%       { transform: rotate(-15deg) translateY(-3px); }
+  60%       { transform: rotate(-15deg) translateY(-3px); }
+  76%, 100% { transform: rotate(0deg) translateY(0); }
+}
+
+@keyframes mf-lean {
+  0%, 8%    { transform: rotate(0deg); }
+  24%       { transform: rotate(5deg); }
+  60%       { transform: rotate(5deg); }
+  80%, 100% { transform: rotate(0deg); }
+}
+
+@keyframes mf-wiggle {
+  0%, 100% { transform: rotate(-3deg); }
+  25%      { transform: rotate(3deg) scaleX(1.05); }
+  50%      { transform: rotate(-2.5deg); }
+  75%      { transform: rotate(2.5deg); }
+}
+
+@keyframes mf-nod {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(2.5deg); }
+}
+
+@keyframes mf-wave {
+  0%   { opacity: 0; transform: translateX(-3px) scale(0.7); }
+  35%  { opacity: 1; }
+  100% { opacity: 0; transform: translateX(5px) scale(1.2); }
+}
+
+@keyframes mf-twirl {
+  0%, 12%   { transform: rotate(0deg); }
+  56%       { transform: rotate(360deg); }
+  72%, 100% { transform: rotate(360deg); }
+}
+
+@keyframes mf-tilt {
+  0%, 12%, 72%, 100% { transform: rotate(0deg); }
+  30%, 56%            { transform: rotate(-5deg); }
+}
+
+@keyframes mf-brush {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  25%      { transform: translate(-6px, -1px) rotate(-7deg); }
+  50%      { transform: translate(5px, 1px) rotate(5deg); }
+  75%      { transform: translate(-3px, 0) rotate(-4deg); }
+}
+
+@keyframes mf-fadeout {
+  0%, 38%   { opacity: 1; }
+  54%, 100% { opacity: 0; }
+}
+
+@keyframes mf-fadein {
+  0%, 40%   { opacity: 0; }
+  56%, 100% { opacity: 1; }
+}
+
+@keyframes mf-bow {
+  0%, 16% { transform: rotate(0deg); }
+  42%     { transform: rotate(13deg); }
+  60%     { transform: rotate(13deg); }
+  80%     { transform: rotate(-3deg); }
+  100%    { transform: rotate(0deg); }
+}
+
+@keyframes mf-flick {
+  0%, 16%   { transform: rotate(0deg); }
+  40%       { transform: rotate(-22deg); }
+  60%       { transform: rotate(-22deg); }
+  82%, 100% { transform: rotate(0deg); }
+}
+
+@keyframes mf-hatfall {
+  0%, 20%   { transform: translateY(0) rotate(0deg); }
+  46%       { transform: translateY(40px) rotate(40deg); }
+  56%       { transform: translateY(35px) rotate(34deg); }
+  64%, 86%  { transform: translateY(39px) rotate(38deg); }
+  96%, 100% { transform: translateY(0) rotate(0deg); }
+}
+
+@keyframes mf-fret {
+  0%, 100%   { transform: translateY(0); }
+  30%, 60%   { transform: translateY(-2px); }
+}
+
+@keyframes mf-exit {
+  0%, 12%   { transform: translateX(0); opacity: 1; }
+  46%       { transform: translateX(-58px); opacity: 0; }
+  60%, 88%  { transform: translateX(-58px); opacity: 0; }
+  100%      { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes mf-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+
+@keyframes mf-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes mf-bar {
+  0%, 100% { transform: scaleY(0.4); }
+  50%      { transform: scaleY(1); }
+}
+
+/* ── Base transform properties ────────────────────────────────────────────── */
+/* Applied unconditionally so animations have correct origins. */
+
+.mf-body {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+
+.mf-hat {
+  transform-box: fill-box;
+  transform-origin: 50% 88%;
+}
+
+.mf-eyes {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+
+.mf-brows {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+
+.mf-moustache {
+  transform-box: fill-box;
+  transform-origin: 50% 30%;
+}
+
+.mf-cane {
+  transform-box: fill-box;
+  transform-origin: 42% 6%;
+}
+
+.mf-arm {
+  transform-box: fill-box;
+  transform-origin: 0% 0%;
+}
+
+.mf-figure {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+
+/* ── State: idle ──────────────────────────────────────────────────────────── */
+
+.mf-state-idle .mf-body {
+  animation: mf-breathe 3.8s ease-in-out infinite;
+}
+.mf-state-idle .mf-eyes {
+  animation: mf-blink 5s ease-in-out infinite;
+}
+
+/* ── State: listening ─────────────────────────────────────────────────────── */
+
+.mf-state-listening .mf-body {
+  animation: mf-lean 380ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+.mf-state-listening .mf-hat {
+  animation: mf-tiphat 380ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+/* ── State: recording ─────────────────────────────────────────────────────── */
+
+.mf-state-recording .mf-body {
+  animation: mf-nod 1.6s ease-in-out infinite;
+}
+.mf-state-recording .mf-moustache {
+  animation: mf-wiggle 1.1s ease-in-out infinite;
+}
+.mf-state-recording .mf-wave-1 {
+  animation: mf-wave 1.4s ease-out infinite;
+}
+.mf-state-recording .mf-wave-2 {
+  animation: mf-wave 1.4s ease-out 0.35s infinite;
+}
+
+/* ── State: processing ────────────────────────────────────────────────────── */
+
+.mf-state-processing .mf-cane {
+  animation: mf-twirl 560ms cubic-bezier(0.45, 0, 0.55, 1) forwards;
+}
+.mf-state-processing .mf-body {
+  animation: mf-tilt 560ms ease-in-out forwards;
+}
+
+/* ── State: polishing ─────────────────────────────────────────────────────── */
+
+.mf-state-polishing .mf-arm {
+  animation: mf-brush 0.68s ease-in-out infinite;
+}
+.mf-state-polishing .mf-words-messy {
+  animation: mf-fadeout 680ms ease-in-out forwards;
+}
+.mf-state-polishing .mf-words-clean {
+  animation: mf-fadein 680ms ease-in-out forwards;
+}
+
+/* ── State: done ──────────────────────────────────────────────────────────── */
+
+.mf-state-done .mf-body {
+  animation: mf-bow 520ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+.mf-state-done .mf-cane {
+  animation: mf-flick 520ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* ── State: error ─────────────────────────────────────────────────────────── */
+
+.mf-state-error .mf-hat {
+  animation: mf-hatfall 460ms cubic-bezier(0.5, 0, 0.75, 0) forwards;
+}
+.mf-state-error .mf-brows {
+  animation: mf-fret 1.8s ease-in-out infinite;
+}
+
+/* ── State: cancelled ─────────────────────────────────────────────────────── */
+
+.mf-state-cancelled .mf-figure {
+  animation: mf-exit 640ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+/* ── Overlay card ─────────────────────────────────────────────────────────── */
+
+.mf-overlay {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #F8F1E1;
+  border: 1px solid #E0D4BC;
+  border-radius: 12px;
+  padding: 9px 14px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22), 0 1px 4px rgba(0, 0, 0, 0.12);
+  width: 280px;
+  box-sizing: border-box;
+  /* Prevent clicks propagating — Electron handles click-through at window level */
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+}
+
+.mf-overlay-avatar {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mf-overlay-text {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: #2A241F;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mf-overlay-indicator {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Indicator: pulsing dot (listening) */
+.mf-indicator-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #B8893C;
+  animation: mf-pulse 1.4s ease-in-out infinite;
+}
+
+/* Indicator: waveform bars (recording) */
+.mf-indicator-bars {
+  width: 16px;
+  height: 16px;
+}
+.mf-indicator-bars rect {
+  transform-origin: bottom;
+  transform-box: fill-box;
+}
+.mf-indicator-bars rect:nth-child(1) { animation: mf-bar 0.7s ease-in-out infinite; }
+.mf-indicator-bars rect:nth-child(2) { animation: mf-bar 0.7s ease-in-out 0.2s infinite; }
+.mf-indicator-bars rect:nth-child(3) { animation: mf-bar 0.7s ease-in-out 0.4s infinite; }
+
+/* Indicator: spinner (processing) */
+.mf-indicator-spinner {
+  width: 13px;
+  height: 13px;
+  animation: mf-spin 0.9s linear infinite;
+}
+
+.mf-indicator-polishing {
+  width: 14px;
+  height: 14px;
+}
+
+/* Indicator: success check (done) */
+.mf-indicator-check {
+  width: 18px;
+  height: 18px;
+}
+
+/* Indicator: warning (error) */
+.mf-indicator-warn {
+  width: 18px;
+  height: 18px;
+}
+
+.mf-indicator-cancelled {
+  width: 18px;
+  height: 18px;
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  /* Strip all mascot animations */
+  .mf-body,
+  .mf-hat,
+  .mf-eyes,
+  .mf-brows,
+  .mf-moustache,
+  .mf-cane,
+  .mf-arm,
+  .mf-figure,
+  .mf-wave-1,
+  .mf-wave-2,
+  .mf-words-messy,
+  .mf-words-clean {
+    animation: none !important;
+  }
+
+  /* Cancelled: just hide — no slide */
+  .mf-state-cancelled .mf-figure {
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  /* Strip overlay indicators */
+  .mf-indicator-dot,
+  .mf-indicator-bars rect,
+  .mf-indicator-spinner {
+    animation: none !important;
+  }
+
+  .mf-indicator-dot {
+    opacity: 0.6;
+  }
+}
+
+.mf-brows-worried { display: none; }
+.mf-state-error .mf-brows-normal { display: none; }
+.mf-state-error .mf-brows-worried { display: inline; }
     </style>
   </head>
   <body>
-    <div id="mistr-flow-overlay" data-phase="idle">
+    <div id="mistr-flow-overlay" class="mf-state-idle" data-phase="idle">
+
       <div id="mistr-flow-stage" aria-hidden="true">
-        <div id="mascot">
-          <div class="gentleman">
-            <div class="top-hat"></div>
-            <div class="face"></div>
-            <div class="brow left"></div>
-            <div class="brow right"></div>
-            <div class="eye left"></div>
-            <div class="eye right"></div>
-            <div class="moustache"></div>
-            <div class="torso"></div>
-            <div class="bowtie"></div>
-            <div class="arm"></div>
-            <div class="glove"></div>
-            <div class="cane"></div>
-          </div>
-          <div class="ribbon"></div>
-          <div class="sparkle"></div>
-          <div class="microphone">
-            <div class="mic-head"></div>
-            <div class="mic-stand"></div>
-          </div>
-          <div class="mic-wave"></div>
-          <div class="flourish"></div>
-        </div>
+        <svg id="mascot" class="mf-mascot mf-state-idle" viewBox="0 0 160 185" width="96" height="111" aria-hidden="true">
+          <ellipse cx="62" cy="170" rx="38" ry="6" fill="rgba(0,0,0,0.35)" />
+          <g>
+            <ellipse cx="120" cy="170" rx="13" ry="3.5" fill="#1A1613" />
+            <rect x="118" y="120" width="4" height="50" fill="#4A4038" />
+            <rect x="111" y="94" width="18" height="28" rx="9" fill="#2A241F" stroke="#B8893C" stroke-width="1.5" />
+            <line x1="114" y1="101" x2="126" y2="101" stroke="#B8893C" stroke-width="1.1" />
+            <line x1="114" y1="106" x2="126" y2="106" stroke="#B8893C" stroke-width="1.1" />
+            <line x1="114" y1="111" x2="126" y2="111" stroke="#B8893C" stroke-width="1.1" />
+          </g>
+          <g class="mf-recording-only">
+            <path d="M133,98 Q139,108 133,118" stroke="#D8B068" stroke-width="2" fill="none" class="mf-wave mf-wave-1" />
+            <path d="M139,93 Q148,108 139,123" stroke="#B8893C" stroke-width="2" fill="none" class="mf-wave mf-wave-2" />
+          </g>
+          <g class="mf-polishing-only">
+            <rect x="92" y="120" width="56" height="26" rx="3" fill="#F4ECD9" transform="rotate(-6 120 133)" />
+            <g transform="rotate(-6 120 133)">
+              <g class="mf-words-messy">
+                <rect x="98" y="127" width="30" height="2.4" rx="1.2" fill="#C9BCA0" />
+                <rect x="98" y="133" width="40" height="2.4" rx="1.2" fill="#C9BCA0" />
+                <rect x="98" y="139" width="22" height="2.4" rx="1.2" fill="#C9BCA0" />
+              </g>
+              <g class="mf-words-clean" style="opacity: 0">
+                <rect x="98" y="127" width="34" height="2.6" rx="1.3" fill="#2A241F" />
+                <rect x="98" y="133" width="26" height="2.6" rx="1.3" fill="#2A241F" />
+              </g>
+            </g>
+          </g>
+          <g class="mf-figure">
+            <g class="mf-cane">
+              <line x1="89" y1="110" x2="99" y2="164" stroke="#463C34" stroke-width="3.2" stroke-linecap="round" />
+              <circle cx="88" cy="109" r="4.2" fill="#B8893C" />
+            </g>
+            <g class="mf-body">
+              <path d="M47,150 L50,99 Q62,91 74,99 L77,150 Z" fill="#2A241F" />
+              <path d="M56,98 L68,98 L65,142 L59,142 Z" fill="#F4ECD9" />
+              <circle cx="62" cy="116" r="1.5" fill="#B8893C" />
+              <circle cx="62" cy="126" r="1.5" fill="#B8893C" />
+              <path d="M55.5,93.5 L62,98 L55.5,102.5 Z M68.5,93.5 L62,98 L68.5,102.5 Z" fill="#B8893C" />
+              <circle cx="62" cy="98" r="2.1" fill="#9A6F2E" />
+              <g class="mf-arm">
+                <path d="M74,100 Q84,104 88,110" stroke="#2A241F" stroke-width="7" fill="none" stroke-linecap="round" />
+                <circle cx="88" cy="111" r="4.6" fill="#F4ECD9" stroke="#2A241F" stroke-width="1" />
+              </g>
+              <circle cx="62" cy="73" r="18" fill="#EBDCBE" stroke="#2A241F" stroke-width="1.4" />
+              <g class="mf-eyes">
+                <circle cx="54" cy="70" r="2.3" fill="#2A241F" />
+                <circle cx="68" cy="70" r="2.3" fill="#2A241F" />
+              </g>
+              <g class="mf-brows mf-brows-normal">
+                <rect x="49.5" y="63.5" width="9" height="2.6" rx="1.3" fill="#2A241F" />
+                <rect x="65.5" y="63.5" width="9" height="2.6" rx="1.3" fill="#2A241F" />
+              </g>
+              <g class="mf-brows mf-brows-worried">
+                <path d="M49,62 Q54,58 59,61" stroke="#2A241F" stroke-width="2.6" fill="none" stroke-linecap="round" />
+                <path d="M65,61 Q70,58 75,62" stroke="#2A241F" stroke-width="2.6" fill="none" stroke-linecap="round" />
+              </g>
+              <circle cx="62" cy="76" r="1.5" fill="#C8A877" />
+              <path class="mf-moustache" d="M62,80.5 C59.5,79 55,79 51,81 C48,82.5 48,85.5 51,86.5 C53.5,87.5 57.5,86.5 60,85 C61,84 61.5,82.5 62,82 C62.5,82.5 63,84 64,85 C66.5,86.5 70.5,87.5 73,86.5 C76,85.5 76,82.5 73,81 C69,79 64.5,79 62,80.5 Z" fill="#2A241F" />
+              <g class="mf-hat">
+                <ellipse cx="62" cy="58" rx="26" ry="5" fill="#1F1A17" />
+                <path d="M49,59 L47.5,39.5 Q47.5,37 51,37 L73,37 Q76.5,37 76.5,39.5 L75,59 Z" fill="#2A241F" />
+                <ellipse cx="62" cy="37" rx="14.5" ry="2.8" fill="#332B25" />
+                <path d="M49.5,50.5 L74.5,50.5 L74.5,54.5 Q62,56.5 49.5,54.5 Z" fill="#B8893C" />
+              </g>
+            </g>
+          </g>
+        </svg>
       </div>
-      <section id="mistr-flow-card" aria-live="polite">
-        <div id="compact-mascot" aria-hidden="true"></div>
+      <section id="mistr-flow-card" aria-live="polite" role="status" aria-atomic="true">
+        <div id="compact-mascot" aria-hidden="true">
+          <svg viewBox="0 0 40 40" width="24" height="24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <ellipse cx="20" cy="21" rx="11" ry="2" fill="#1F1A17" />
+            <path d="M10,21 L8.8,9 Q8.8,7 11,7 L29,7 Q31.2,7 31.2,9 L30,21 Z" fill="#2A241F" />
+            <ellipse cx="20" cy="7" rx="11.2" ry="2" fill="#332B25" />
+            <path d="M9.5,15.5 L30.5,15.5 L30.5,18.5 Q20,19.8 9.5,18.5 Z" fill="#B8893C" />
+            <circle cx="20" cy="29" r="6.5" fill="#EBDCBE" />
+            <path d="M20,30.5 C18.5,29.5 16,29.5 14.5,31 C13.5,32 13.5,34 14.5,35 C15.5,36 17.5,35.5 19,34.5 C19.5,34 19.8,33 20,32.5 C20.2,33 20.5,34 21,34.5 C22.5,35.5 24.5,36 25.5,35 C26.5,34 26.5,32 25.5,31 C24,29.5 21.5,29.5 20,30.5 Z" fill="#2A241F" />
+          </svg>
+        </div>
         <div class="copy">
           <span class="brand">Mistr Flow</span>
           <span id="status-copy">Ready when you are, sir.</span>
         </div>
-        <div id="state-indicator" aria-hidden="true"></div>
+        <div id="state-indicator" aria-hidden="true">
+          <span id="indicator-dot" class="mf-indicator-dot"></span>
+          <svg id="indicator-bars" class="mf-indicator-bars" viewBox="0 0 14 14" width="16" height="16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect x="1" y="8" width="3" height="6" rx="1.5" fill="#B8893C" />
+            <rect x="5.5" y="2" width="3" height="12" rx="1.5" fill="#B8893C" />
+            <rect x="10" y="6" width="3" height="8" rx="1.5" fill="#B8893C" />
+          </svg>
+          <svg id="indicator-spinner" class="mf-indicator-spinner" viewBox="0 0 14 14" width="14" height="14" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="7" cy="7" r="5.5" fill="none" stroke="#E0D4BC" stroke-width="2" />
+            <path d="M7,1.5 A5.5,5.5 0 0,1 12.5,7" fill="none" stroke="#B8893C" stroke-width="2" stroke-linecap="round" />
+          </svg>
+          <svg id="indicator-polishing" class="mf-indicator-polishing" viewBox="0 0 14 14" width="14" height="14" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M7,1 L8,6 L13,7 L8,8 L7,13 L6,8 L1,7 L6,6 Z" fill="#B8893C" />
+          </svg>
+          <svg id="indicator-check" class="mf-indicator-check" viewBox="0 0 18 18" width="18" height="18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="9" cy="9" r="9" fill="#1F8A5B" />
+            <path d="M4.5,9.5 L7.5,12.5 L13.5,6.5" fill="none" stroke="#F8F1E1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <svg id="indicator-warn" class="mf-indicator-warn" viewBox="0 0 18 18" width="18" height="18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="9" cy="9" r="8.25" fill="#F3EAD6" stroke="#B8893C" stroke-width="1.5" />
+            <rect x="8" y="5" width="2" height="5.5" rx="1" fill="#9A6F2E" />
+            <circle cx="9" cy="13" r="1.1" fill="#9A6F2E" />
+          </svg>
+          <svg id="indicator-cancelled" class="mf-indicator-cancelled" viewBox="0 0 18 18" width="18" height="18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <ellipse cx="9" cy="11" rx="7" ry="1.6" fill="#C8C0B4" />
+            <path d="M4,11 L3.2,3.5 Q3.2,2 5,2 L13,2 Q14.8,2 14.8,3.5 L14,11 Z" fill="#C8C0B4" />
+            <rect x="3.2" y="7" width="11.6" height="2" fill="#B0A898" />
+          </svg>
+        </div>
       </section>
     </div>
     <div id="toast"></div>
