@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   getConfigPath,
+  readMuteSystemAudioWhileRecording,
   readOpenAiApiKey,
   readOverlayPosition,
   writeOverlayPosition,
@@ -33,6 +34,36 @@ test("readOpenAiApiKey reads the runtime config file", async () => {
   const apiKey = await readOpenAiApiKey({ APPDATA: tempRoot }, fs);
 
   assert.equal(apiKey, "test-api-key");
+});
+
+test("readMuteSystemAudioWhileRecording defaults to enabled", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key" }),
+    "utf8",
+  );
+
+  const shouldMute = await readMuteSystemAudioWhileRecording({ APPDATA: tempRoot }, fs);
+
+  assert.equal(shouldMute, true);
+});
+
+test("readMuteSystemAudioWhileRecording allows config opt-out", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key", muteSystemAudioWhileRecording: false }),
+    "utf8",
+  );
+
+  const shouldMute = await readMuteSystemAudioWhileRecording({ APPDATA: tempRoot }, fs);
+
+  assert.equal(shouldMute, false);
 });
 
 test("writeOverlayPosition persists the overlay position without dropping existing config", async () => {

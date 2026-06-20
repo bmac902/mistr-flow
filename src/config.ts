@@ -8,6 +8,7 @@ export interface AppConfig {
   apiKey?: unknown;
   OPENAI_API_KEY?: unknown;
   overlayPosition?: unknown;
+  muteSystemAudioWhileRecording?: unknown;
 }
 
 export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -49,6 +50,16 @@ export async function readOverlayPosition(
   const rawConfig = await fileSystem.readFile(configPath, "utf8");
   const parsed = JSON.parse(rawConfig) as AppConfig;
   return isFiniteOverlayPosition(parsed.overlayPosition) ? parsed.overlayPosition : null;
+}
+
+export async function readMuteSystemAudioWhileRecording(
+  env: NodeJS.ProcessEnv = process.env,
+  fileSystem = fs,
+): Promise<boolean> {
+  const configPath = getConfigPath(env);
+  const rawConfig = await fileSystem.readFile(configPath, "utf8");
+  const parsed = JSON.parse(rawConfig) as AppConfig;
+  return parsed.muteSystemAudioWhileRecording !== false;
 }
 
 export async function writeOverlayPosition(
