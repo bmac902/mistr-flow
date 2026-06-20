@@ -34,6 +34,7 @@ import {
   resolveOverlayPosition,
   type OverlayPosition,
 } from "./overlayPosition";
+import { createSessionIdleReturn, type SessionIdleReturn } from "./sessionIdleReturn";
 import { muteSystemAudio, type SystemAudioMuteHandle } from "./systemAudio";
 
 let overlayWindow: BrowserWindow | null = null;
@@ -45,6 +46,7 @@ interface ActiveSession {
   rejectAudio(error: Error): void;
   systemAudioMutePromise: Promise<SystemAudioMuteHandle | null>;
   cleanupPromise: Promise<void> | null;
+  idleReturn: SessionIdleReturn;
 }
 
 let activeSession: ActiveSession | null = null;
@@ -117,7 +119,15 @@ function startSession(): void {
   });
 
   const systemAudioMutePromise = muteSystemAudioForRecording();
-  activeSession = { resolveAudio, rejectAudio, systemAudioMutePromise, cleanupPromise: null };
+  let session!: ActiveSession;
+  const idleReturn = createSessionIdleReturn({
+    isActive: () => activeSession === session,
+    hasActiveSession: () => activeSession !== null,
+    sendIdle: () => sendToRenderer("overlay-state", buildOverlaySnapshot("idle")),
+    setTimeout,
+  });
+  session = { resolveAudio, rejectAudio, systemAudioMutePromise, cleanupPromise: null, idleReturn };
+  activeSession = session;
   globalShortcut.register("Escape", () => {
     if (activeSession) endSession("escape");
   });
@@ -137,13 +147,7 @@ function startSession(): void {
   })
     .then((result) => console.log("[mistr-flow] session result:", result.kind))
     .catch((error) => console.error("[mistr-flow] dictation session failed:", error))
-    .finally(() => scheduleReturnToIdle());
-}
-
-function scheduleReturnToIdle(): void {
-  setTimeout(() => {
-    if (!activeSession) sendToRenderer("overlay-state", buildOverlaySnapshot("idle"));
-  }, 5000);
+    .finally(() => session.idleReturn.schedule());
 }
 
 async function muteSystemAudioForRecording(): Promise<SystemAudioMuteHandle | null> {
@@ -174,6 +178,7 @@ function beginSessionCleanup(session: ActiveSession, cleanup: Promise<void>): vo
   globalShortcut.unregister("Escape");
   session.cleanupPromise = cleanup.finally(() => {
     if (activeSession === session) activeSession = null;
+    session.idleReturn.afterCleanup();
 
     if (quitAfterSessionCleanup) {
       quitAfterSessionCleanup = false;
