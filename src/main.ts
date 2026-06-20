@@ -44,9 +44,11 @@ interface ActiveSession {
   resolveAudio(buffer: Buffer): void;
   rejectAudio(error: Error): void;
   systemAudioMutePromise: Promise<SystemAudioMuteHandle | null>;
+  cleanupPromise: Promise<void> | null;
 }
 
 let activeSession: ActiveSession | null = null;
+let quitAfterSessionCleanup = false;
 
 function sendToRenderer(channel: string, payload?: unknown): void {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
@@ -115,7 +117,7 @@ function startSession(): void {
   });
 
   const systemAudioMutePromise = muteSystemAudioForRecording();
-  activeSession = { resolveAudio, rejectAudio, systemAudioMutePromise };
+  activeSession = { resolveAudio, rejectAudio, systemAudioMutePromise, cleanupPromise: null };
   globalShortcut.register("Escape", () => {
     if (activeSession) endSession("escape");
   });
@@ -155,34 +157,49 @@ async function muteSystemAudioForRecording(): Promise<SystemAudioMuteHandle | nu
   }
 }
 
-function restoreSystemAudioAfterRecording(
+async function restoreSystemAudioAfterRecording(
   mutePromise: Promise<SystemAudioMuteHandle | null>,
-): void {
-  void mutePromise
-    .then((handle) => handle?.restore())
-    .catch((error) => {
-      console.warn("[mistr-flow] failed to restore system audio after recording:", error);
-    });
+): Promise<void> {
+  try {
+    const handle = await mutePromise;
+    await handle?.restore();
+  } catch (error) {
+    console.warn("[mistr-flow] failed to restore system audio after recording:", error);
+  }
+}
+
+function beginSessionCleanup(session: ActiveSession, cleanup: Promise<void>): void {
+  if (session.cleanupPromise) return;
+
+  globalShortcut.unregister("Escape");
+  session.cleanupPromise = cleanup.finally(() => {
+    if (activeSession === session) activeSession = null;
+
+    if (quitAfterSessionCleanup) {
+      quitAfterSessionCleanup = false;
+      app.quit();
+    }
+  });
 }
 
 function endSession(reason: "release" | "escape"): void {
   if (!activeSession) return;
-  const { resolveAudio, rejectAudio, systemAudioMutePromise } = activeSession;
-  activeSession = null;
-  globalShortcut.unregister("Escape");
+  const session = activeSession;
+  const { resolveAudio, rejectAudio, systemAudioMutePromise } = session;
+  if (session.cleanupPromise) return;
 
   if (reason === "escape") {
     sendToRenderer("cancel-recording");
     rejectAudio(createDictationCancelledError("escape"));
-    restoreSystemAudioAfterRecording(systemAudioMutePromise);
+    beginSessionCleanup(session, restoreSystemAudioAfterRecording(systemAudioMutePromise));
     return;
   }
 
   bloop();
-  requestStopRecording()
+  beginSessionCleanup(session, requestStopRecording()
     .then(resolveAudio)
     .catch(rejectAudio)
-    .finally(() => restoreSystemAudioAfterRecording(systemAudioMutePromise));
+    .finally(() => restoreSystemAudioAfterRecording(systemAudioMutePromise)));
 }
 
 const TOGGLE_ACCELERATOR = "Control+Alt+D";
@@ -353,6 +370,14 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => {
   // Mistr Flow has no tray icon by design — the overlay bar is the only UI
   // surface, and quitting happens via its right-click context menu.
+});
+
+app.on("before-quit", (event) => {
+  if (!activeSession || quitAfterSessionCleanup) return;
+
+  event.preventDefault();
+  quitAfterSessionCleanup = true;
+  endSession("escape");
 });
 
 app.on("will-quit", () => {
