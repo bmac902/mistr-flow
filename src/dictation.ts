@@ -62,6 +62,11 @@ export async function runDictationSession(
     throw error;
   }
 
+  if (audioBuffer.length < 100) {
+    void dependencies.showOverlay(buildCancelledOverlaySnapshot());
+    return { kind: "cancelled", reason: "dead-zone" };
+  }
+
   void dependencies.showOverlay(buildOverlaySnapshot("processing"));
 
   const result = await runSession(audioBuffer, {

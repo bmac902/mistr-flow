@@ -42,7 +42,7 @@ test("runDictationSession drives the happy path from recording through paste", a
       return recordAudio.promise;
     },
     async transcribe(audioBuffer) {
-      calls.push(`transcribe:${audioBuffer.toString("utf8")}`);
+      calls.push(`transcribe:${audioBuffer.length}`);
       return transcribe.promise;
     },
     async polish(rawTranscript) {
@@ -58,10 +58,10 @@ test("runDictationSession drives the happy path from recording through paste", a
   assert.deepEqual(states, ["listening", "recording"]);
   assert.deepEqual(calls, ["beep", "record"]);
 
-  recordAudio.resolve(Buffer.from("audio"));
+  recordAudio.resolve(Buffer.alloc(200));
   await flush();
   assert.deepEqual(states, ["listening", "recording", "processing"]);
-  assert.deepEqual(calls, ["beep", "record", "transcribe:audio"]);
+  assert.deepEqual(calls, ["beep", "record", "transcribe:200"]);
 
   transcribe.resolve("raw transcript");
   await flush();
@@ -69,7 +69,7 @@ test("runDictationSession drives the happy path from recording through paste", a
   assert.deepEqual(calls, [
     "beep",
     "record",
-    "transcribe:audio",
+    "transcribe:200",
     "polish:raw transcript",
   ]);
 
@@ -88,10 +88,49 @@ test("runDictationSession drives the happy path from recording through paste", a
   assert.deepEqual(calls, [
     "beep",
     "record",
-    "transcribe:audio",
+    "transcribe:200",
     "polish:raw transcript",
     "paste:polished transcript",
   ]);
+});
+
+test("runDictationSession silently cancels when the audio buffer is empty", async () => {
+  const states: string[] = [];
+  const calls: string[] = [];
+  const recordAudio = deferred<Buffer>();
+
+  const session = runDictationSession({
+    showOverlay(snapshot) {
+      states.push(snapshot.phase);
+    },
+    async playBeep() {
+      calls.push("beep");
+    },
+    async recordAudio() {
+      calls.push("record");
+      return recordAudio.promise;
+    },
+    async transcribe() {
+      calls.push("transcribe");
+      return "should not be used";
+    },
+    async polish() {
+      calls.push("polish");
+      return "should not be used";
+    },
+    async pasteText(text) {
+      calls.push(`paste:${text}`);
+    },
+  });
+
+  await flush();
+  recordAudio.resolve(Buffer.alloc(0));
+
+  const result = await session;
+
+  assert.deepEqual(states, ["listening", "recording", "cancelled"]);
+  assert.deepEqual(calls, ["beep", "record"]);
+  assert.deepEqual(result, { kind: "cancelled", reason: "dead-zone" });
 });
 
 test("runDictationSession cancels in the dead zone without API calls or paste", async () => {
@@ -196,7 +235,7 @@ test("runDictationSession pastes the raw transcript when Polish fails", async ()
       return recordAudio.promise;
     },
     async transcribe(audioBuffer) {
-      calls.push(`transcribe:${audioBuffer.toString("utf8")}`);
+      calls.push(`transcribe:${audioBuffer.length}`);
       return transcribe.promise;
     },
     async polish() {
@@ -208,7 +247,7 @@ test("runDictationSession pastes the raw transcript when Polish fails", async ()
   });
 
   await flush();
-  recordAudio.resolve(Buffer.from("audio"));
+  recordAudio.resolve(Buffer.alloc(200));
   await flush();
   transcribe.resolve("raw transcript");
   await flush();
@@ -226,7 +265,7 @@ test("runDictationSession pastes the raw transcript when Polish fails", async ()
   assert.deepEqual(calls, [
     "beep",
     "record",
-    "transcribe:audio",
+    "transcribe:200",
     "paste:raw transcript",
   ]);
 });
@@ -252,7 +291,7 @@ test("runDictationSession does not paste anything when transcription fails", asy
       return recordAudio.promise;
     },
     async transcribe(audioBuffer) {
-      calls.push(`transcribe:${audioBuffer.toString("utf8")}`);
+      calls.push(`transcribe:${audioBuffer.length}`);
       throw new Error("transcription failed");
     },
     async polish() {
@@ -265,7 +304,7 @@ test("runDictationSession does not paste anything when transcription fails", asy
   });
 
   await flush();
-  recordAudio.resolve(Buffer.from("audio"));
+  recordAudio.resolve(Buffer.alloc(200));
   await flush();
 
   const result = await session;
@@ -273,5 +312,5 @@ test("runDictationSession does not paste anything when transcription fails", asy
   assert.equal(result.kind, "hard-error");
   assert.deepEqual(states, ["listening", "recording", "processing", "error"]);
   assert.equal(errorSnapshot?.toastCopy, "transcription failed");
-  assert.deepEqual(calls, ["beep", "record", "transcribe:audio"]);
+  assert.deepEqual(calls, ["beep", "record", "transcribe:200"]);
 });
