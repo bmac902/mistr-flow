@@ -9,7 +9,24 @@ export interface AppConfig {
   OPENAI_API_KEY?: unknown;
   overlayPosition?: unknown;
   muteSystemAudioWhileRecording?: unknown;
+  vocabulary?: unknown;
 }
+
+export interface VocabularyReplacement {
+  wrong: string;
+  right: string;
+}
+
+export interface VocabularyConfig {
+  terms: string[];
+  phrases: string[];
+  replacements: VocabularyReplacement[];
+}
+
+const MAX_TERMS = 200;
+const MAX_PHRASES = 100;
+const MAX_REPLACEMENTS = 100;
+const MAX_STRING_LENGTH = 120;
 
 export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   const appData = env.APPDATA;
@@ -52,6 +69,43 @@ export async function readOverlayPosition(
   return isFiniteOverlayPosition(parsed.overlayPosition) ? parsed.overlayPosition : null;
 }
 
+export async function readVocabularyConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  fileSystem = fs,
+): Promise<VocabularyConfig | null> {
+  const configPath = getConfigPath(env);
+
+  let rawConfig: string;
+  try {
+    rawConfig = await fileSystem.readFile(configPath, "utf8");
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return null;
+    throw error;
+  }
+
+  const parsed = JSON.parse(rawConfig) as AppConfig;
+  const raw = parsed.vocabulary;
+
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+
+  const vocab = raw as {
+    enabled?: unknown;
+    terms?: unknown;
+    phrases?: unknown;
+    replacements?: unknown;
+  };
+
+  if (vocab.enabled === false) return null;
+
+  const terms = normalizeStringArray(vocab.terms).slice(0, MAX_TERMS);
+  const phrases = normalizeStringArray(vocab.phrases).slice(0, MAX_PHRASES);
+  const replacements = normalizeReplacements(vocab.replacements).slice(0, MAX_REPLACEMENTS);
+
+  if (terms.length === 0 && phrases.length === 0 && replacements.length === 0) return null;
+
+  return { terms, phrases, replacements };
+}
+
 export async function readMuteSystemAudioWhileRecording(
   env: NodeJS.ProcessEnv = process.env,
   fileSystem = fs,
@@ -91,6 +145,37 @@ export async function writeOverlayPosition(
     "utf8",
   );
   await fileSystem.rename(tmpPath, configPath);
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const trimmed = item.trim().slice(0, MAX_STRING_LENGTH);
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function normalizeReplacements(value: unknown): VocabularyReplacement[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const result: VocabularyReplacement[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const { wrong, right } = item as { wrong?: unknown; right?: unknown };
+    if (typeof wrong !== "string" || typeof right !== "string") continue;
+    const w = wrong.trim().slice(0, MAX_STRING_LENGTH);
+    const r = right.trim().slice(0, MAX_STRING_LENGTH);
+    if (!w || !r || seen.has(w)) continue;
+    seen.add(w);
+    result.push({ wrong: w, right: r });
+  }
+  return result;
 }
 
 function pickApiKey(config: AppConfig): string | null {

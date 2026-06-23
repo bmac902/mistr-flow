@@ -9,6 +9,7 @@ import {
   readMuteSystemAudioWhileRecording,
   readOpenAiApiKey,
   readOverlayPosition,
+  readVocabularyConfig,
   writeOverlayPosition,
 } from "../src/config";
 
@@ -77,6 +78,78 @@ test("writeOverlayPosition persists the overlay position without dropping existi
 
   assert.deepEqual(await readOverlayPosition({ APPDATA: tempRoot }, fs), { x: 321, y: 654 });
   assert.equal(JSON.parse(await fs.readFile(configPath, "utf8")).openaiApiKey, "test-api-key");
+});
+
+test("readVocabularyConfig returns null when vocabulary is absent", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key" }),
+    "utf8",
+  );
+
+  const vocab = await readVocabularyConfig({ APPDATA: tempRoot }, fs);
+
+  assert.equal(vocab, null);
+});
+
+test("readVocabularyConfig returns null when enabled is false", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      openaiApiKey: "test-api-key",
+      vocabulary: { enabled: false, terms: ["ProjectZephyr"] },
+    }),
+    "utf8",
+  );
+
+  const vocab = await readVocabularyConfig({ APPDATA: tempRoot }, fs);
+
+  assert.equal(vocab, null);
+});
+
+test("readVocabularyConfig normalizes terms, phrases, and replacements", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      openaiApiKey: "test-api-key",
+      vocabulary: {
+        terms: ["ProjectZephyr", "  ExampleCorp  ", "", "ProjectZephyr", 42],
+        phrases: ["agent memory service"],
+        replacements: [
+          { wrong: "mister flow", right: "Mistr Flow" },
+          { wrong: "", right: "ignored" },
+          { wrong: "clod code", right: "Claude Code" },
+        ],
+      },
+    }),
+    "utf8",
+  );
+
+  const vocab = await readVocabularyConfig({ APPDATA: tempRoot }, fs);
+
+  assert.deepEqual(vocab?.terms, ["ProjectZephyr", "ExampleCorp"]);
+  assert.deepEqual(vocab?.phrases, ["agent memory service"]);
+  assert.deepEqual(vocab?.replacements, [
+    { wrong: "mister flow", right: "Mistr Flow" },
+    { wrong: "clod code", right: "Claude Code" },
+  ]);
+});
+
+test("readVocabularyConfig returns null when config file does not exist", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+
+  const vocab = await readVocabularyConfig({ APPDATA: tempRoot }, fs);
+
+  assert.equal(vocab, null);
 });
 
 test("writeOverlayPosition tolerates a transient empty config file while dragging", async () => {
