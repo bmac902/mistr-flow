@@ -2,3 +2,7 @@ node_modules/
 dist/
 *.log
 .claude/
+
+# Local/private Mistr Flow vocabulary exports
+vocabulary*.json
+*.private.json

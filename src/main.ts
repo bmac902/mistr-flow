@@ -23,10 +23,12 @@ import {
   readMuteSystemAudioWhileRecording,
   readOpenAiApiKey,
   readOverlayPosition,
+  readVocabularyConfig,
   writeOverlayPosition,
 } from "./config";
 import { createDictationCancelledError, runDictationSession } from "./dictation";
 import { polishTranscript, transcribeAudio } from "./openai";
+import { buildPolishVocabularyInstruction, buildWhisperVocabularyPrompt } from "./vocabulary";
 import { pasteText as pasteTextImpl } from "./paste";
 import { buildOverlaySnapshot } from "./overlay";
 import {
@@ -40,6 +42,8 @@ import { muteSystemAudio, type SystemAudioMuteHandle } from "./systemAudio";
 let overlayWindow: BrowserWindow | null = null;
 let apiKey = "";
 let muteSystemAudioWhileRecording = true;
+let whisperVocabularyPrompt: string | null = null;
+let polishVocabularyInstruction: string | null = null;
 
 interface ActiveSession {
   resolveAudio(buffer: Buffer): void;
@@ -137,8 +141,8 @@ function startSession(): void {
     showOverlay: (snapshot) => sendToRenderer("overlay-state", snapshot),
     playBeep: () => beep(),
     recordAudio: () => audioPromise,
-    transcribe: (buffer) => transcribeAudio(buffer, { apiKey }),
-    polish: (rawTranscript) => polishTranscript(rawTranscript, { apiKey }),
+    transcribe: (buffer) => transcribeAudio(buffer, { apiKey, vocabularyPrompt: whisperVocabularyPrompt }),
+    polish: (rawTranscript) => polishTranscript(rawTranscript, { apiKey, vocabularyInstruction: polishVocabularyInstruction }),
     pasteText: (text) =>
       pasteTextImpl(text, {
         writeClipboard: (t) => clipboard.writeText(t),
@@ -350,6 +354,13 @@ app.whenReady().then(async () => {
     app.quit();
     return;
   }
+
+  const vocabulary = await readVocabularyConfig().catch((error) => {
+    console.warn("[mistr-flow] failed to read vocabulary config:", error);
+    return null;
+  });
+  whisperVocabularyPrompt = buildWhisperVocabularyPrompt(vocabulary);
+  polishVocabularyInstruction = buildPolishVocabularyInstruction(vocabulary);
 
   const savedOverlayPosition = await readOverlayPosition().catch((error) => {
     console.warn("[mistr-flow] failed to read saved overlay position:", error);
