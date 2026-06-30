@@ -1,4 +1,5 @@
-export { getConfigPath, readOpenAiApiKey } from "./config";
+export { getConfigPath, readAzureOpenAiConfig } from "./config";
+export type { AzureOpenAiConfig } from "./config";
 export {
   buildBarContextMenu,
   openConfigFileWithDefaultHandler,

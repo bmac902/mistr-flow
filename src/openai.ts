@@ -1,16 +1,29 @@
-const whisperUrl = "https://api.openai.com/v1/audio/transcriptions";
-const polishModel = "gpt-4o-mini";
+// Transcription and polish run against Azure AI Foundry (Azure OpenAI) deployments.
+// The deployment name lives in the URL path; auth is the `api-key` header.
 
-export interface TranscribeOptions {
+export interface AzureTarget {
+  /** Resource endpoint, e.g. https://<resource>.cognitiveservices.azure.com/ */
+  endpoint: string;
   apiKey: string;
+  /** Azure OpenAI api-version query string, e.g. 2025-04-01-preview */
+  apiVersion: string;
+  /** Name of the model deployment to call (not the underlying model id). */
+  deployment: string;
+}
+
+export interface TranscribeOptions extends AzureTarget {
   vocabularyPrompt?: string | null;
   fetchImpl?: typeof fetch;
 }
 
-export interface PolishOptions {
-  apiKey: string;
+export interface PolishOptions extends AzureTarget {
   vocabularyInstruction?: string | null;
   fetchImpl?: typeof fetch;
+}
+
+function buildAzureUrl(target: AzureTarget, path: string): string {
+  const base = target.endpoint.replace(/\/+$/, "");
+  return `${base}/openai/deployments/${target.deployment}/${path}?api-version=${target.apiVersion}`;
 }
 
 export async function transcribeAudio(
@@ -19,16 +32,16 @@ export async function transcribeAudio(
 ): Promise<string> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const body = new FormData();
-  body.append("model", "whisper-1");
+  // Azure takes the model from the deployment in the URL — no `model` field needed.
   body.append("file", new Blob([new Uint8Array(audioBuffer)]), "audio.webm");
   if (options.vocabularyPrompt?.trim()) {
     body.append("prompt", options.vocabularyPrompt.trim());
   }
 
-  const response = await fetchImpl(whisperUrl, {
+  const response = await fetchImpl(buildAzureUrl(options, "audio/transcriptions"), {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${options.apiKey}`,
+      "api-key": options.apiKey,
     },
     body,
   });
@@ -36,7 +49,7 @@ export async function transcribeAudio(
   await ensureOk(response, "transcription");
   const payload = (await response.json()) as { text?: unknown };
   if (typeof payload.text !== "string") {
-    throw new Error("OpenAI transcription response did not contain text.");
+    throw new Error("Azure transcription response did not contain text.");
   }
 
   return payload.text;
@@ -47,15 +60,16 @@ export async function polishTranscript(
   options: PolishOptions,
 ): Promise<string> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const response = await fetchImpl("https://api.openai.com/v1/chat/completions", {
+  const response = await fetchImpl(buildAzureUrl(options, "chat/completions"), {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${options.apiKey}`,
+      "api-key": options.apiKey,
       "Content-Type": "application/json",
     },
+    // gpt-5 deployments only accept the default temperature, so we omit it and
+    // rely on the strict system prompt. Minimal reasoning keeps polish latency low.
     body: JSON.stringify({
-      model: polishModel,
-      temperature: 0,
+      reasoning_effort: "minimal",
       messages: [
         {
           role: "system",
@@ -84,7 +98,7 @@ export async function polishTranscript(
   };
   const content = payload.choices?.[0]?.message?.content;
   if (typeof content !== "string") {
-    throw new Error("OpenAI Polish response did not contain text.");
+    throw new Error("Azure Polish response did not contain text.");
   }
 
   return content;
@@ -96,7 +110,7 @@ async function ensureOk(response: Response, operation: string): Promise<void> {
   }
 
   const detail = await safeResponseText(response);
-  throw new Error(`OpenAI ${operation} failed: ${response.status} ${response.statusText}${detail}`);
+  throw new Error(`Azure ${operation} failed: ${response.status} ${response.statusText}${detail}`);
 }
 
 async function safeResponseText(response: Response): Promise<string> {

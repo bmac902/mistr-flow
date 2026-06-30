@@ -7,10 +7,27 @@ export interface AppConfig {
   openaiApiKey?: unknown;
   apiKey?: unknown;
   OPENAI_API_KEY?: unknown;
+  azureEndpoint?: unknown;
+  azureApiKey?: unknown;
+  azureApiVersion?: unknown;
+  transcribeDeployment?: unknown;
+  polishDeployment?: unknown;
   overlayPosition?: unknown;
   muteSystemAudioWhileRecording?: unknown;
   vocabulary?: unknown;
 }
+
+export interface AzureOpenAiConfig {
+  endpoint: string;
+  apiKey: string;
+  apiVersion: string;
+  transcribeDeployment: string;
+  polishDeployment: string;
+}
+
+const DEFAULT_AZURE_API_VERSION = "2025-04-01-preview";
+const DEFAULT_TRANSCRIBE_DEPLOYMENT = "gpt-4o-transcribe";
+const DEFAULT_POLISH_DEPLOYMENT = "gpt-5-mini";
 
 export interface VocabularyReplacement {
   wrong: string;
@@ -37,26 +54,52 @@ export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(appData, "MistrFlow", "config.json");
 }
 
-export async function readOpenAiApiKey(
+export async function readAzureOpenAiConfig(
   env: NodeJS.ProcessEnv = process.env,
   fileSystem = fs,
-): Promise<string> {
-  if (typeof env.OPENAI_API_KEY === "string" && env.OPENAI_API_KEY.trim()) {
-    return env.OPENAI_API_KEY.trim();
+): Promise<AzureOpenAiConfig> {
+  const configPath = getConfigPath(env);
+
+  let parsed: AppConfig = {};
+  try {
+    const rawConfig = await fileSystem.readFile(configPath, "utf8");
+    if (rawConfig.trim()) parsed = JSON.parse(rawConfig) as AppConfig;
+  } catch (error) {
+    if (!(isNodeError(error) && error.code === "ENOENT")) throw error;
   }
 
-  const configPath = getConfigPath(env);
-  const rawConfig = await fileSystem.readFile(configPath, "utf8");
-  const parsed = JSON.parse(rawConfig) as AppConfig;
-  const apiKey = pickApiKey(parsed);
-
-  if (!apiKey) {
+  const endpoint = pickString(env.AZURE_OPENAI_ENDPOINT, parsed.azureEndpoint);
+  if (!endpoint) {
     throw new Error(
-      `Missing openaiApiKey in ${configPath}. Expected a JSON string field.`,
+      `Missing azureEndpoint in ${configPath} (or AZURE_OPENAI_ENDPOINT). ` +
+        `Expected your Azure AI Foundry endpoint, e.g. https://<resource>.cognitiveservices.azure.com/.`,
     );
   }
 
-  return apiKey;
+  const apiKey = pickString(
+    env.AZURE_OPENAI_API_KEY,
+    parsed.azureApiKey,
+    parsed.apiKey,
+    parsed.openaiApiKey,
+    parsed.OPENAI_API_KEY,
+  );
+  if (!apiKey) {
+    throw new Error(
+      `Missing azureApiKey in ${configPath} (or AZURE_OPENAI_API_KEY). Expected a JSON string field.`,
+    );
+  }
+
+  return {
+    endpoint,
+    apiKey,
+    apiVersion:
+      pickString(env.AZURE_OPENAI_API_VERSION, parsed.azureApiVersion) ??
+      DEFAULT_AZURE_API_VERSION,
+    transcribeDeployment:
+      pickString(parsed.transcribeDeployment) ?? DEFAULT_TRANSCRIBE_DEPLOYMENT,
+    polishDeployment:
+      pickString(parsed.polishDeployment) ?? DEFAULT_POLISH_DEPLOYMENT,
+  };
 }
 
 export async function readOverlayPosition(
@@ -178,8 +221,7 @@ function normalizeReplacements(value: unknown): VocabularyReplacement[] {
   return result;
 }
 
-function pickApiKey(config: AppConfig): string | null {
-  const candidates = [config.openaiApiKey, config.apiKey, config.OPENAI_API_KEY];
+function pickString(...candidates: unknown[]): string | null {
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.trim()) {
       return candidate.trim();

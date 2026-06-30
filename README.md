@@ -14,7 +14,7 @@ This is a personal project, actively used day to day, and still evolving as the 
 
 - Starts dictation from a global hotkey: `Ctrl+Alt+D`.
 - Records until you press the hotkey again.
-- Sends the audio to OpenAI Whisper for transcription.
+- Sends the audio to Azure AI Foundry (Azure OpenAI) for transcription.
 - Uses an LLM polish pass for punctuation, grammar, and spoken-list formatting.
 - Copies the polished text to the clipboard and pastes it into the active app.
 - Shows a small always-on-top overlay so you know what state it is in.
@@ -33,7 +33,7 @@ The overlay is intentionally small and expressive. The mascot gives just enough 
 Mistr Flow is a personal Windows-first Electron app built with TypeScript. It currently assumes:
 
 - Windows desktop.
-- An OpenAI API key.
+- An Azure AI Foundry (Azure OpenAI) resource with a transcription deployment (e.g. `gpt-4o-transcribe`) and a chat deployment for polish (e.g. `gpt-5-mini`).
 - English dictation.
 - A hand-edited JSON config file rather than a settings UI.
 
@@ -49,10 +49,19 @@ Create the config file at `%APPDATA%\MistrFlow\config.json`:
 
 ```json
 {
-  "openaiApiKey": "sk-...",
+  "azureEndpoint": "https://<your-resource>.cognitiveservices.azure.com/",
+  "azureApiKey": "<azure-api-key>",
   "muteSystemAudioWhileRecording": true
 }
 ```
+
+`azureEndpoint` and `azureApiKey` come from your Azure AI Foundry resource (Keys and Endpoint). Optional fields:
+
+- `azureApiVersion` (default `2025-04-01-preview`)
+- `transcribeDeployment` (default `gpt-4o-transcribe`)
+- `polishDeployment` (default `gpt-5-mini`)
+
+These can also be supplied via the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_API_VERSION` environment variables.
 
 Build and run:
 

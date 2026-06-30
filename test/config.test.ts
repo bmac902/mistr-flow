@@ -6,12 +6,20 @@ import test from "node:test";
 
 import {
   getConfigPath,
+  readAzureOpenAiConfig,
   readMuteSystemAudioWhileRecording,
-  readOpenAiApiKey,
   readOverlayPosition,
   readVocabularyConfig,
   writeOverlayPosition,
 } from "../src/config";
+
+async function writeConfig(contents: Record<string, unknown>): Promise<string> {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(path.join(configDir, "config.json"), JSON.stringify(contents), "utf8");
+  return tempRoot;
+}
 
 test("getConfigPath resolves the Windows config location from APPDATA", () => {
   const configPath = getConfigPath({ APPDATA: "C:\\Users\\alice\\AppData\\Roaming" });
@@ -22,19 +30,57 @@ test("getConfigPath resolves the Windows config location from APPDATA", () => {
   );
 });
 
-test("readOpenAiApiKey reads the runtime config file", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
-  const configDir = path.join(tempRoot, "MistrFlow");
-  await fs.mkdir(configDir, { recursive: true });
-  await fs.writeFile(
-    path.join(configDir, "config.json"),
-    JSON.stringify({ openaiApiKey: "test-api-key" }),
-    "utf8",
+test("readAzureOpenAiConfig reads endpoint and key and applies deployment defaults", async () => {
+  const tempRoot = await writeConfig({
+    azureEndpoint: "https://example.cognitiveservices.azure.com/",
+    azureApiKey: "azure-key",
+  });
+
+  const config = await readAzureOpenAiConfig({ APPDATA: tempRoot }, fs);
+
+  assert.deepEqual(config, {
+    endpoint: "https://example.cognitiveservices.azure.com/",
+    apiKey: "azure-key",
+    apiVersion: "2025-04-01-preview",
+    transcribeDeployment: "gpt-4o-transcribe",
+    polishDeployment: "gpt-5-mini",
+  });
+});
+
+test("readAzureOpenAiConfig honors explicit deployments and api-version", async () => {
+  const tempRoot = await writeConfig({
+    azureEndpoint: "https://example.cognitiveservices.azure.com/",
+    azureApiKey: "azure-key",
+    azureApiVersion: "2025-03-01-preview",
+    transcribeDeployment: "whisper",
+    polishDeployment: "gpt-4o",
+  });
+
+  const config = await readAzureOpenAiConfig({ APPDATA: tempRoot }, fs);
+
+  assert.equal(config.apiVersion, "2025-03-01-preview");
+  assert.equal(config.transcribeDeployment, "whisper");
+  assert.equal(config.polishDeployment, "gpt-4o");
+});
+
+test("readAzureOpenAiConfig falls back to the legacy apiKey/openaiApiKey fields", async () => {
+  const tempRoot = await writeConfig({
+    azureEndpoint: "https://example.cognitiveservices.azure.com/",
+    openaiApiKey: "legacy-key",
+  });
+
+  const config = await readAzureOpenAiConfig({ APPDATA: tempRoot }, fs);
+
+  assert.equal(config.apiKey, "legacy-key");
+});
+
+test("readAzureOpenAiConfig throws when the endpoint is missing", async () => {
+  const tempRoot = await writeConfig({ azureApiKey: "azure-key" });
+
+  await assert.rejects(
+    readAzureOpenAiConfig({ APPDATA: tempRoot }, fs),
+    /azureEndpoint/,
   );
-
-  const apiKey = await readOpenAiApiKey({ APPDATA: tempRoot }, fs);
-
-  assert.equal(apiKey, "test-api-key");
 });
 
 test("readMuteSystemAudioWhileRecording defaults to enabled", async () => {

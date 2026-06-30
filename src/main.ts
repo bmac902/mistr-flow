@@ -20,11 +20,12 @@ import {
 } from "./barControls";
 import {
   getConfigPath,
+  readAzureOpenAiConfig,
   readMuteSystemAudioWhileRecording,
-  readOpenAiApiKey,
   readOverlayPosition,
   readVocabularyConfig,
   writeOverlayPosition,
+  type AzureOpenAiConfig,
 } from "./config";
 import { createDictationCancelledError, runDictationSession } from "./dictation";
 import { polishTranscript, transcribeAudio } from "./openai";
@@ -40,7 +41,7 @@ import { createSessionIdleReturn, type SessionIdleReturn } from "./sessionIdleRe
 import { muteSystemAudio, type SystemAudioMuteHandle } from "./systemAudio";
 
 let overlayWindow: BrowserWindow | null = null;
-let apiKey = "";
+let azureConfig: AzureOpenAiConfig | null = null;
 let muteSystemAudioWhileRecording = true;
 let whisperVocabularyPrompt: string | null = null;
 let polishVocabularyInstruction: string | null = null;
@@ -141,8 +142,22 @@ function startSession(): void {
     showOverlay: (snapshot) => sendToRenderer("overlay-state", snapshot),
     playBeep: () => beep(),
     recordAudio: () => audioPromise,
-    transcribe: (buffer) => transcribeAudio(buffer, { apiKey, vocabularyPrompt: whisperVocabularyPrompt }),
-    polish: (rawTranscript) => polishTranscript(rawTranscript, { apiKey, vocabularyInstruction: polishVocabularyInstruction }),
+    transcribe: (buffer) =>
+      transcribeAudio(buffer, {
+        endpoint: azureConfig!.endpoint,
+        apiKey: azureConfig!.apiKey,
+        apiVersion: azureConfig!.apiVersion,
+        deployment: azureConfig!.transcribeDeployment,
+        vocabularyPrompt: whisperVocabularyPrompt,
+      }),
+    polish: (rawTranscript) =>
+      polishTranscript(rawTranscript, {
+        endpoint: azureConfig!.endpoint,
+        apiKey: azureConfig!.apiKey,
+        apiVersion: azureConfig!.apiVersion,
+        deployment: azureConfig!.polishDeployment,
+        vocabularyInstruction: polishVocabularyInstruction,
+      }),
     pasteText: (text) =>
       pasteTextImpl(text, {
         writeClipboard: (t) => clipboard.writeText(t),
@@ -325,12 +340,20 @@ async function ensureConfigExists(): Promise<boolean> {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(
     configPath,
-    JSON.stringify({ openaiApiKey: "", muteSystemAudioWhileRecording: true }, null, 2),
+    JSON.stringify(
+      {
+        azureEndpoint: "https://<your-resource>.cognitiveservices.azure.com/",
+        azureApiKey: "",
+        muteSystemAudioWhileRecording: true,
+      },
+      null,
+      2,
+    ),
     "utf8",
   );
   dialog.showErrorBox(
-    "Mistr Flow needs an OpenAI API key",
-    `Created ${configPath}. Add your OpenAI API key as "openaiApiKey" and restart Mistr Flow.`,
+    "Mistr Flow needs your Azure AI Foundry details",
+    `Created ${configPath}. Set "azureEndpoint" and "azureApiKey" for your Azure AI Foundry resource, then restart Mistr Flow.`,
   );
   return false;
 }
@@ -347,7 +370,7 @@ app.whenReady().then(async () => {
   }
 
   try {
-    apiKey = await readOpenAiApiKey();
+    azureConfig = await readAzureOpenAiConfig();
     muteSystemAudioWhileRecording = await readMuteSystemAudioWhileRecording();
   } catch (error) {
     dialog.showErrorBox("Mistr Flow config error", String(error));
