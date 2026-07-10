@@ -1,5 +1,9 @@
 # Mistr Flow — Context
 
+A Windows dictation app that transcribes speech, lightly polishes the result, and pastes it into the active application.
+
+## Terms
+
 ## Glossary
 
 **Session** — one press-to-release cycle of the hotkey: from hold-to-record start, through recording, transcription, and Polish, to paste (or error/cancel).
