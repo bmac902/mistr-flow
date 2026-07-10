@@ -27,7 +27,7 @@
   },
   "homepage": "https://github.com/bmac902/mistr-flow#readme",
   "devDependencies": {
-    "@ai-hero/sandcastle": "^0.10.0",
+    "@ai-hero/sandcastle": "^0.12.0",
     "@types/node": "^22.15.30",
     "electron": "^42.4.1",
     "tsx": "^4.20.5",
