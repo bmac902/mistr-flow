@@ -72,12 +72,30 @@ npm start
 
 Once running, press `Ctrl+Alt+D` to start recording, press it again to stop, and press `Esc` during a recording to cancel.
 
-## Development
+## Local Development
+
+Install dependencies:
 
 ```sh
-npm run test
+npm install
+```
+
+Start the app (compiles TypeScript then launches Electron):
+
+```sh
+npm start
+```
+
+Run the test suite:
+
+```sh
+npm test
+```
+
+For a type-check without building:
+
+```sh
 npm run typecheck
-npm run build
 ```
 
 The production entry point is `src/main.ts`; the overlay lives in `public/overlay.html` and `public/overlay-renderer.js`. Design references and extracted mascot assets live under `docs/design/`.
