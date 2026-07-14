@@ -44,7 +44,7 @@ await run({
 
   // Sandbox provider — runs the agent inside an isolated container.
   sandbox: docker({
-    imageName: "sandcastle-mistr-flow",
+    imageName: "sandcastle:mistr-flow",
   }),
 
   // The agent provider. gpt-5.4-mini is plenty for tracer-bullet vertical
