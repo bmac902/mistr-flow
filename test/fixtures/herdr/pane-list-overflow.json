@@ -1,0 +1,12 @@
+[
+  { "pane_id": "%0", "target_id": "trm_overflow_01", "label": "agent", "agent_name": "claude", "agent_status": "idle", "title": "repo-01" },
+  { "pane_id": "%1", "target_id": "trm_overflow_02", "label": "agent", "agent_name": "claude", "agent_status": "working", "title": "repo-02" },
+  { "pane_id": "%2", "target_id": "trm_overflow_03", "label": "agent", "agent_name": "codex", "agent_status": "idle", "title": "repo-03" },
+  { "pane_id": "%3", "target_id": "trm_overflow_04", "label": "agent", "agent_name": "codex", "agent_status": "working", "title": "repo-04" },
+  { "pane_id": "%4", "target_id": "trm_overflow_05", "label": "agent", "agent_name": "claude", "agent_status": "idle", "title": "repo-05" },
+  { "pane_id": "%5", "target_id": "trm_overflow_06", "label": "agent", "agent_name": "claude", "agent_status": "working", "title": "repo-06" },
+  { "pane_id": "%6", "target_id": "trm_overflow_07", "label": "agent", "agent_name": "codex", "agent_status": "idle", "title": "repo-07" },
+  { "pane_id": "%7", "target_id": "trm_overflow_08", "label": "agent", "agent_name": "codex", "agent_status": "working", "title": "repo-08" },
+  { "pane_id": "%8", "target_id": "trm_overflow_09", "label": "agent", "agent_name": "claude", "agent_status": "idle", "title": "repo-09" },
+  { "pane_id": "%9", "target_id": "trm_overflow_10", "label": "agent", "agent_name": "codex", "agent_status": "working", "title": "repo-10" }
+]

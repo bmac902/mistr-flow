@@ -1,0 +1,58 @@
+[
+  {
+    "pane_id": "%0",
+    "target_id": "trm_01HZY8AK4M0000000000000001",
+    "label": "agent",
+    "agent_name": "claude",
+    "agent_status": "idle",
+    "agent_session": "ses_01HZY8AK4M0000000000000001",
+    "title": "mistr-flow — capture adapter"
+  },
+  {
+    "pane_id": "%1",
+    "target_id": "trm_01HZY8AK4M0000000000000002",
+    "label": "agent",
+    "agent_name": "codex",
+    "agent_status": "working",
+    "agent_session": "ses_01HZY8AK4M0000000000000002",
+    "title": "herdr — pane list"
+  },
+  {
+    "pane_id": "%2",
+    "target_id": "trm_01HZY8AK4M0000000000000003",
+    "label": "agent",
+    "agent_name": "claude",
+    "agent_status": "dead",
+    "agent_session": "ses_01HZY8AK4M0000000000000003",
+    "title": "old-branch — abandoned"
+  },
+  {
+    "pane_id": "%3",
+    "target_id": "trm_01HZY8AK4M0000000000000004",
+    "label": "agent",
+    "agent_name": "codex",
+    "agent_status": "done",
+    "agent_session": "ses_01HZY8AK4M0000000000000004",
+    "title": "release — shipped"
+  },
+  {
+    "pane_id": "%4",
+    "target_id": "trm_01HZY8AK4M0000000000000005",
+    "label": "shell",
+    "title": "~/work — zsh"
+  },
+  {
+    "pane_id": "%5",
+    "target_id": "trm_01HZY8AK4M0000000000000006",
+    "label": "agent",
+    "agent_name": "claude",
+    "agent_status": "idle",
+    "title": "docs — no session metadata yet"
+  },
+  {
+    "pane_id": "%6",
+    "target_id": "trm_01HZY8AK4M0000000000000007",
+    "label": "editor",
+    "title": "nvim — notes.md"
+  }
+]
