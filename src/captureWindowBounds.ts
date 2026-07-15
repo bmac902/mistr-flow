@@ -20,16 +20,28 @@ export const CAPTURE_PICKER_ENTRY_HEIGHT = 26;
 /** Placeholder padding between the resting card and the entry list pending #29. */
 export const CAPTURE_PICKER_LIST_PADDING = 8;
 
+/**
+ * Vertical budget for the capture preview block (#35): the 146px image box,
+ * its caption line, and the frame padding + gap around them. Must stay in
+ * sync with #capture-preview's CSS in overlay.html — the window is sized from
+ * here, the DOM lays itself out from there.
+ */
+export const CAPTURE_PREVIEW_BLOCK_HEIGHT = 186;
+
 /** Digit slot 1 (Clipboard) is always rendered, plus up to 8 Herdr targets. */
 export function capturePickerEntryCount(targetCount: number): number {
   return 1 + Math.min(targetCount, CAPTURE_PICKER_MAX_TARGETS);
 }
 
-export function capturePickerWindowHeight(targetCount: number): number {
+export function capturePickerWindowHeight(
+  targetCount: number,
+  hasPreview = false,
+): number {
   return (
     OVERLAY_WINDOW_HEIGHT +
     CAPTURE_PICKER_LIST_PADDING +
-    capturePickerEntryCount(targetCount) * CAPTURE_PICKER_ENTRY_HEIGHT
+    capturePickerEntryCount(targetCount) * CAPTURE_PICKER_ENTRY_HEIGHT +
+    (hasPreview ? CAPTURE_PREVIEW_BLOCK_HEIGHT : 0)
   );
 }
 

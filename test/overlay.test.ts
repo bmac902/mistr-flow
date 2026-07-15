@@ -347,3 +347,61 @@ test("runHappyPathOverlaySession advances through real phase boundaries without 
     "paste:polished transcript",
   ]);
 });
+
+test("buildCapturePickerOverlaySnapshot carries the capture preview when one exists (issue #35)", () => {
+  const preview = {
+    dataUrl: "data:image/png;base64,Zm9v",
+    windowTitle: "Mozilla Firefox — GitHub",
+  };
+  const target = {
+    target: "herdr-session-a",
+    label: "claude · idle — pane a",
+    agentStatus: "idle" as const,
+  };
+
+  // Present on every picker call site: summoning, populated, and local-only.
+  assert.deepEqual(
+    buildCapturePickerOverlaySnapshot([], undefined, preview).capturePreview,
+    preview,
+  );
+  assert.deepEqual(
+    buildCapturePickerOverlaySnapshot([target], undefined, preview).capturePreview,
+    preview,
+  );
+  assert.deepEqual(
+    buildCapturePickerOverlaySnapshot([], "Herdr isn't answering — Clipboard only, sir.", preview)
+      .capturePreview,
+    preview,
+  );
+
+  // A failed thumbnail is absent, not null — the picker just renders without it.
+  assert.equal(buildCapturePickerOverlaySnapshot([], undefined, null).capturePreview, undefined);
+  assert.equal(buildCapturePickerOverlaySnapshot([]).capturePreview, undefined);
+});
+
+test("overlay html gates the capture preview on the picker state and contains it in its box", () => {
+  const html = readFileSync(path.join(rootDir, "public", "overlay.html"), "utf8");
+
+  assert.match(html, /id="capture-preview"/);
+  assert.match(html, /id="capture-preview-image"/);
+  assert.match(html, /id="capture-preview-title"/);
+  // Hidden by default, shown only for the picker phase — never leaks into the
+  // delivering/delivered/failed beats.
+  assert.match(html, /#capture-preview\s*\{[\s\S]*?display:\s*none/);
+  assert.match(html, /\.mf-state-capture-picker #capture-preview\.has-preview\s*\{[\s\S]*?display:\s*flex/);
+  // Letterboxed, never stretched.
+  assert.match(html, /#capture-preview-image[\s\S]*?object-fit:\s*contain/);
+});
+
+test("overlay renderer populates and clears the capture preview", () => {
+  const renderer = readFileSync(
+    path.join(rootDir, "public", "overlay-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(renderer, /snapshot\.capturePreview/);
+  assert.match(renderer, /previewImageEl\.src\s*=\s*preview\.dataUrl/);
+  assert.match(renderer, /previewTitleEl\.textContent\s*=\s*preview\.windowTitle/);
+  // Cleared rather than left holding a stale capture's data URL.
+  assert.match(renderer, /previewImageEl\.removeAttribute\("src"\)/);
+});

@@ -1,4 +1,5 @@
 import type { CaptureArtifact, CaptureFailureCode } from "./capture";
+import type { CapturePreview } from "./captureThumbnail";
 import type { EligibleTarget, HerdrQueryResult } from "./herdr";
 import { PANE_QUERY_TIMEOUT_MS, safeMessageFor as herdrSafeMessageFor } from "./herdr";
 import {
@@ -87,6 +88,12 @@ export interface RunCaptureSessionDependencies {
   /** Rejects with a {@link CaptureGrabFailedError} on a bad grab — never a fake artifact. */
   captureActiveWindow(): Promise<CaptureArtifact>;
   openPicker(): CapturePickerHandle;
+  /**
+   * Best-effort preview of the grab for the picker (#35). Returning null — or
+   * rejecting — renders the picker without a preview; it never fails the
+   * capture or changes a delivery outcome.
+   */
+  renderThumbnail?(artifact: CaptureArtifact): Promise<CapturePreview | null>;
   queryEligibleTargets(): Promise<HerdrQueryResult>;
   copyToClipboard(artifact: CaptureArtifact): void | Promise<void>;
   deliver(
@@ -139,6 +146,17 @@ export async function runCaptureSession(
     return { kind: "capture-failed", code: error.code, message: error.message };
   }
 
+  // Best-effort: a thumbnail failure must never cost the user their capture,
+  // so this swallows everything and falls back to a preview-less picker.
+  let preview: CapturePreview | null = null;
+  if (dependencies.renderThumbnail) {
+    try {
+      preview = await dependencies.renderThumbnail(artifact);
+    } catch {
+      preview = null;
+    }
+  }
+
   const picker = dependencies.openPicker();
   let pickerClosed = false;
   function closePicker(): void {
@@ -147,7 +165,7 @@ export async function runCaptureSession(
     picker.close();
   }
 
-  void dependencies.showOverlay(buildCapturePickerOverlaySnapshot([]));
+  void dependencies.showOverlay(buildCapturePickerOverlaySnapshot([], undefined, preview));
 
   void queryTargetsWithDeadline(
     dependencies.queryEligibleTargets,
@@ -161,11 +179,11 @@ export async function runCaptureSession(
     if (result.kind === "targets") {
       picker.appendTargets(result.targets);
       void dependencies.showOverlay(
-        buildCapturePickerOverlaySnapshot(result.targets),
+        buildCapturePickerOverlaySnapshot(result.targets, undefined, preview),
       );
     } else {
       void dependencies.showOverlay(
-        buildCapturePickerOverlaySnapshot([], result.message),
+        buildCapturePickerOverlaySnapshot([], result.message, preview),
       );
     }
   });

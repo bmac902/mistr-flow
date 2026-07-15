@@ -9,6 +9,7 @@ import {
   screen,
   session as electronSession,
   dialog,
+  type NativeImage,
 } from "electron";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
@@ -48,6 +49,11 @@ import {
   type CapturePickerHandle,
 } from "./captureSession";
 import { createCapturePickerHandle } from "./capturePickerHandle";
+import {
+  renderCapturePreview,
+  type CapturePreview,
+  type ThumbnailImagePort,
+} from "./captureThumbnail";
 import { createHerdrDeliveryAdapter } from "./deliver";
 import { queryHerdr } from "./herdr";
 import {
@@ -103,7 +109,10 @@ function applyCaptureWindowBounds(snapshot: OverlaySnapshot): void {
   if (snapshot.phase === "capture-picker") {
     const bounds = resolveGrownWindowBounds({
       restingBounds: captureRestingBounds,
-      grownHeight: capturePickerWindowHeight(snapshot.captureTargets?.length ?? 0),
+      grownHeight: capturePickerWindowHeight(
+        snapshot.captureTargets?.length ?? 0,
+        Boolean(snapshot.capturePreview),
+      ),
       workArea: screen.getPrimaryDisplay().workArea,
     });
     overlayWindow.setBounds(bounds);
@@ -330,6 +339,29 @@ function copyCaptureToClipboard(artifact: CaptureArtifact): void {
   clipboard.writeImage(nativeImage.createFromPath(artifact.pngPath));
 }
 
+/**
+ * Adapts Electron's `nativeImage` to the pure module's port. `resize` returns
+ * a fresh NativeImage, so wrapping on the way out keeps the chain typed
+ * without leaking Electron into captureThumbnail.ts.
+ */
+function toThumbnailPort(image: NativeImage): ThumbnailImagePort {
+  return {
+    getSize: () => image.getSize(),
+    resize: (size) => toThumbnailPort(image.resize(size)),
+    toDataURL: () => image.toDataURL(),
+    isEmpty: () => image.isEmpty(),
+  };
+}
+
+async function renderCaptureThumbnail(
+  artifact: CaptureArtifact,
+): Promise<CapturePreview | null> {
+  return renderCapturePreview(
+    (pngPath) => toThumbnailPort(nativeImage.createFromPath(pngPath)),
+    artifact,
+  );
+}
+
 // One adapter instance for the app's lifetime: its delivery ledger must
 // persist across a session's unknown → retry digit presses (#32). Rebuilt
 // once at startup once config (focusOnDeliver) is known — see whenReady.
@@ -353,6 +385,7 @@ function startCapture(): void {
     showOverlay: (snapshot) => showCaptureOverlay(snapshot),
     captureActiveWindow: () => grabActiveWindow(),
     openPicker: () => openCapturePicker(),
+    renderThumbnail: (artifact) => renderCaptureThumbnail(artifact),
     queryEligibleTargets: () => queryHerdr({}),
     copyToClipboard: (artifact) => copyCaptureToClipboard(artifact),
     deliver: (capture, target) => deliverCapture(capture, target),

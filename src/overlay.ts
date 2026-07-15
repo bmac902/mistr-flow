@@ -1,3 +1,4 @@
+import type { CapturePreview } from "./captureThumbnail";
 import type { EligibleTarget } from "./herdr";
 
 export type OverlayPhase =
@@ -27,6 +28,12 @@ export interface OverlaySnapshot {
   captureTargets?: readonly EligibleTarget[];
   /** True only during the brief pre-target "summoning" sub-beat of capture-picker. */
   pickerSummoning?: boolean;
+  /**
+   * Preview of what was actually captured (issue #35) — picker phase only, so
+   * it never leaks into the delivering/delivered/failed beats. Absent when
+   * thumbnail rendering failed: the picker renders fine without it.
+   */
+  capturePreview?: CapturePreview;
 }
 
 const STATUS_COPY: Record<OverlayPhase, string> = {
@@ -168,6 +175,7 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
 export function buildCapturePickerOverlaySnapshot(
   targets: readonly EligibleTarget[],
   message?: string,
+  preview?: CapturePreview | null,
 ): OverlaySnapshot {
   const summoning = targets.length === 0 && message === undefined;
   return {
@@ -179,6 +187,7 @@ export function buildCapturePickerOverlaySnapshot(
     toastCopy: message,
     captureTargets: targets,
     pickerSummoning: summoning,
+    capturePreview: preview ?? undefined,
   };
 }
 

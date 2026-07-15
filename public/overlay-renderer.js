@@ -4,6 +4,9 @@ const mascotEl = document.getElementById("mascot");
 const statusCopyEl = document.getElementById("status-copy");
 const toastEl = document.getElementById("toast");
 const pickerEntriesEl = document.getElementById("capture-picker-entries");
+const previewEl = document.getElementById("capture-preview");
+const previewImageEl = document.getElementById("capture-preview-image");
+const previewTitleEl = document.getElementById("capture-preview-title");
 
 let mediaRecorder = null;
 let chunks = [];
@@ -121,6 +124,25 @@ function renderCapturePickerEntries(snapshot) {
   }
 }
 
+// Preview is picker-only and best-effort: no preview on the snapshot (or a
+// non-picker phase) simply hides the block. Clearing the src releases the
+// data URL rather than holding a stale capture in the DOM.
+function renderCapturePreview(snapshot) {
+  const preview =
+    snapshot.phase === "capture-picker" ? snapshot.capturePreview : undefined;
+
+  if (!preview) {
+    previewEl.classList.remove("has-preview");
+    previewImageEl.removeAttribute("src");
+    previewTitleEl.textContent = "";
+    return;
+  }
+
+  previewImageEl.src = preview.dataUrl;
+  previewTitleEl.textContent = preview.windowTitle;
+  previewEl.classList.add("has-preview");
+}
+
 window.mistrFlow.onOverlayState((snapshot) => {
   const previousPhase = overlayEl.dataset.phase || "idle";
   overlayEl.dataset.phase = snapshot.phase;
@@ -131,6 +153,7 @@ window.mistrFlow.onOverlayState((snapshot) => {
   mascotEl.classList.toggle("mf-picker-summoning", Boolean(snapshot.pickerSummoning));
   statusCopyEl.textContent = snapshot.statusCopy;
   toastEl.textContent = snapshot.toastCopy || "";
+  renderCapturePreview(snapshot);
   renderCapturePickerEntries(snapshot);
 });
 

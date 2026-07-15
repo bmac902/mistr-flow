@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   CAPTURE_PICKER_ENTRY_HEIGHT,
   CAPTURE_PICKER_LIST_PADDING,
+  CAPTURE_PREVIEW_BLOCK_HEIGHT,
   capturePickerEntryCount,
   capturePickerWindowHeight,
   resolveGrownWindowBounds,
@@ -33,6 +34,22 @@ test("capturePickerWindowHeight grows with entry count off the resting height", 
     capturePickerWindowHeight(2),
     OVERLAY_WINDOW_HEIGHT + CAPTURE_PICKER_LIST_PADDING + 3 * CAPTURE_PICKER_ENTRY_HEIGHT,
   );
+});
+
+test("capturePickerWindowHeight adds the preview block only when a preview exists", () => {
+  assert.equal(
+    capturePickerWindowHeight(2, true),
+    capturePickerWindowHeight(2) + CAPTURE_PREVIEW_BLOCK_HEIGHT,
+  );
+  // Defaults to no preview, so existing callers keep their height.
+  assert.equal(capturePickerWindowHeight(2, false), capturePickerWindowHeight(2));
+});
+
+test("capturePickerWindowHeight stays inside a realistic work area at full stretch", () => {
+  // Worst case: Clipboard + 8 targets + preview. The grow-bounds helper pins
+  // to the top of the work area rather than shrinking, so this must not
+  // exceed the shortest display anyone runs this on.
+  assert.ok(capturePickerWindowHeight(8, true) < 800);
 });
 
 test("resolveGrownWindowBounds grows upward with the resting bottom edge and center anchored", () => {

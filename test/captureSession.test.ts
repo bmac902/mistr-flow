@@ -483,3 +483,170 @@ test("runCaptureSession: delivery-ack deadline treats a hung deliver() as unknow
   picker.resolveSelection({ kind: "escape" });
   await session;
 });
+
+// ---------------------------------------------------------------------------
+// Capture preview thumbnail (#35) — picker-only, best-effort
+// ---------------------------------------------------------------------------
+
+const PREVIEW = {
+  dataUrl: "data:image/png;base64,Zm9v",
+  windowTitle: "Untitled — Notepad",
+};
+
+test("runCaptureSession: the preview reaches the picker snapshot from the first frame", async () => {
+  const { deps, states, picker } = baseDeps({
+    async renderThumbnail() {
+      return PREVIEW;
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+
+  // First frame — before Herdr has answered — already carries the preview.
+  assert.equal(states[0].phase, "capture-picker");
+  assert.deepEqual(states[0].capturePreview, PREVIEW);
+
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});
+
+test("runCaptureSession: renderThumbnail is called exactly once, after a successful grab", async () => {
+  const seen: CaptureArtifact[] = [];
+  const { deps, calls, picker } = baseDeps({
+    async renderThumbnail(artifact) {
+      seen.push(artifact);
+      return PREVIEW;
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+
+  assert.deepEqual(seen, [ARTIFACT]);
+  // Ordering matters: the grab must succeed before we try to preview it.
+  assert.ok(calls.indexOf("capture") < calls.indexOf("open-picker"));
+});
+
+test("runCaptureSession: the preview survives the targets-appended re-render", async () => {
+  const { deps, states, picker } = baseDeps({
+    async renderThumbnail() {
+      return PREVIEW;
+    },
+    async queryEligibleTargets(): Promise<HerdrQueryResult> {
+      return { kind: "targets", targets: [TARGET_A] };
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  await flush();
+
+  const withTargets = states.filter((s) => (s.captureTargets?.length ?? 0) > 0);
+  assert.ok(withTargets.length > 0, "targets were appended");
+  assert.deepEqual(withTargets.at(-1)!.capturePreview, PREVIEW);
+
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});
+
+test("runCaptureSession: the preview survives the Herdr-unavailable re-render", async () => {
+  const { deps, states, picker } = baseDeps({
+    async renderThumbnail() {
+      return PREVIEW;
+    },
+    async queryEligibleTargets(): Promise<HerdrQueryResult> {
+      return {
+        kind: "unavailable",
+        code: "herdr-not-found",
+        message: "Herdr isn't installed or running — Clipboard only, sir.",
+      };
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  await flush();
+
+  const localOnly = states.filter((s) => s.toastCopy !== undefined);
+  assert.ok(localOnly.length > 0, "local-only state rendered");
+  assert.deepEqual(localOnly.at(-1)!.capturePreview, PREVIEW);
+
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});
+
+test("runCaptureSession: a null thumbnail still opens the picker and delivers", async () => {
+  const { deps, states, calls, picker } = baseDeps({
+    async renderThumbnail() {
+      return null;
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+
+  assert.equal(states[0].phase, "capture-picker");
+  assert.equal(states[0].capturePreview, undefined);
+
+  picker.resolveSelection({ kind: "clipboard" });
+  const result = await session;
+
+  assert.deepEqual(result, { kind: "clipboard-delivered" });
+  assert.ok(calls.includes(`clipboard:${ARTIFACT.id}`));
+});
+
+test("runCaptureSession: a throwing thumbnail never fails the capture", async () => {
+  const { deps, states, picker } = baseDeps({
+    async renderThumbnail() {
+      throw new Error("nativeImage exploded");
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+
+  assert.equal(states[0].phase, "capture-picker");
+  assert.equal(states[0].capturePreview, undefined);
+
+  picker.resolveSelection({ kind: "target", target: TARGET_A });
+  const result = await session;
+
+  assert.deepEqual(result, { kind: "target-delivered", target: TARGET_A });
+});
+
+test("runCaptureSession: the preview never leaks past the picker phase", async () => {
+  const { deps, states, picker } = baseDeps({
+    async renderThumbnail() {
+      return PREVIEW;
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  picker.resolveSelection({ kind: "target", target: TARGET_A });
+  await session;
+
+  for (const snapshot of states.filter((s) => s.phase !== "capture-picker")) {
+    assert.equal(
+      snapshot.capturePreview,
+      undefined,
+      `${snapshot.phase} must not carry a preview`,
+    );
+  }
+});
+
+test("runCaptureSession: no renderThumbnail dependency at all is fine", async () => {
+  const { deps, states, picker } = baseDeps();
+
+  const session = runCaptureSession(deps);
+  await flush();
+
+  assert.equal(states[0].phase, "capture-picker");
+  assert.equal(states[0].capturePreview, undefined);
+
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});

@@ -170,6 +170,49 @@ body {
   font-size: 12px;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
 }
+/*
+ * Capture preview (#35) — shows what was actually grabbed, so a wrong capture
+ * is caught here rather than after a live agent asks "what is this?".
+ * Its total height budget is mirrored by CAPTURE_PREVIEW_BLOCK_HEIGHT in
+ * src/captureWindowBounds.ts, which sizes the window: 146 image box + 8*2
+ * frame padding + 2 border + 4 gap + 16 caption + 8 margin = 186.
+ */
+#capture-preview {
+  display: none;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 4px;
+  width: 280px;
+  /* figure's UA default margin is 1em 40px — reset it, keep only the gap. */
+  margin: 0 0 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-cream);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+.mf-state-capture-picker #capture-preview.has-preview {
+  display: flex;
+}
+#capture-preview-image {
+  display: block;
+  width: 100%;
+  height: 146px;
+  border-radius: 4px;
+  background: var(--stage);
+  object-fit: contain;
+}
+#capture-preview-title {
+  overflow: hidden;
+  height: 16px;
+  line-height: 16px;
+  color: var(--warm-charcoal);
+  font-size: 11px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 #capture-picker-entries {
   display: none;
   flex-direction: column;
@@ -927,6 +970,10 @@ body {
           </g>
         </svg>
       </div>
+      <figure id="capture-preview">
+        <img id="capture-preview-image" alt="" />
+        <figcaption id="capture-preview-title"></figcaption>
+      </figure>
       <div id="capture-picker-entries" aria-live="polite"></div>
       <section id="mistr-flow-card" aria-live="polite" role="status" aria-atomic="true">
         <div id="compact-mascot" aria-hidden="true">
