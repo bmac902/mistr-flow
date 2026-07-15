@@ -44,10 +44,10 @@ import { captureActiveWindow as captureActiveWindowImpl, type CaptureArtifact } 
 import {
   createCaptureGrabFailedError,
   runCaptureSession,
-  type CaptureDeliverOutcome,
   type CapturePickerHandle,
 } from "./captureSession";
 import { createCapturePickerHandle } from "./capturePickerHandle";
+import { createHerdrDeliveryAdapter } from "./deliver";
 import { queryHerdr } from "./herdr";
 import {
   capturePickerWindowHeight,
@@ -329,15 +329,9 @@ function copyCaptureToClipboard(artifact: CaptureArtifact): void {
   clipboard.writeImage(nativeImage.createFromPath(artifact.pngPath));
 }
 
-async function deliverCapture(): Promise<CaptureDeliverOutcome> {
-  // Delivery execution lands in #32, gated on the live delivery spike (#28) —
-  // truthfully "not yet possible" rather than a fake success.
-  return {
-    kind: "failed",
-    code: "delivery-not-implemented",
-    message: "Delivery isn't wired up yet — Clipboard only, sir.",
-  };
-}
+// One adapter instance for the app's lifetime: its delivery ledger must
+// persist across a session's unknown → retry digit presses (#32).
+const deliverCapture = createHerdrDeliveryAdapter();
 
 function openCapturePicker(): CapturePickerHandle {
   return createCapturePickerHandle({
@@ -359,7 +353,7 @@ function startCapture(): void {
     openPicker: () => openCapturePicker(),
     queryEligibleTargets: () => queryHerdr({}),
     copyToClipboard: (artifact) => copyCaptureToClipboard(artifact),
-    deliver: () => deliverCapture(),
+    deliver: (capture, target) => deliverCapture(capture, target),
   })
     .then((result) => console.log("[mistr-flow] capture session result:", result.kind))
     .catch((error) => console.error("[mistr-flow] capture session failed:", error))
