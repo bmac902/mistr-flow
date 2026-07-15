@@ -5,11 +5,14 @@ import test from "node:test";
 
 import {
   buildCancelledOverlaySnapshot,
+  buildCaptureDeliveryFailedOverlaySnapshot,
+  buildCapturePickerOverlaySnapshot,
   buildOverlaySnapshot,
   buildErrorOverlaySnapshot,
   buildRefusedOverlaySnapshot,
   runHappyPathOverlaySession,
 } from "../src/overlay";
+import type { EligibleTarget } from "../src/herdr";
 
 const rootDir = path.join(__dirname, "..");
 
@@ -100,6 +103,53 @@ test("buildOverlaySnapshot exposes exact Mistr Flow status copy for every phase"
 
     assert.equal(snapshot.statusCopy, statusCopy);
   }
+});
+
+test("buildOverlaySnapshot pins placeholder copy for every Capture phase (issue #30, PRD #24)", () => {
+  const target: EligibleTarget = {
+    target: "herdr-session-a",
+    label: "claude · idle — pane a",
+    agentStatus: "idle",
+  };
+
+  const summoning = buildCapturePickerOverlaySnapshot([]);
+  assert.equal(summoning.phase, "capture-picker");
+  assert.equal(summoning.statusCopy, "Summoning targets…");
+  assert.deepEqual(summoning.captureTargets, []);
+  assert.equal(summoning.toastCopy, undefined);
+
+  const populated = buildCapturePickerOverlaySnapshot([target]);
+  assert.equal(populated.statusCopy, "Pick your target, sir.");
+  assert.deepEqual(populated.captureTargets, [target]);
+
+  const localOnly = buildCapturePickerOverlaySnapshot(
+    [],
+    "Herdr isn't installed or running — Clipboard only, sir.",
+  );
+  assert.equal(localOnly.statusCopy, "Pick your target, sir.");
+  assert.equal(
+    localOnly.toastCopy,
+    "Herdr isn't installed or running — Clipboard only, sir.",
+  );
+
+  const delivering = buildOverlaySnapshot("capture-delivering");
+  assert.equal(delivering.statusCopy, "Delivering to the pane…");
+
+  const delivered = buildOverlaySnapshot("capture-delivered");
+  assert.equal(delivered.statusCopy, "Delivered, sir.");
+
+  const deliveryUnknown = buildOverlaySnapshot("capture-delivery-unknown");
+  assert.equal(
+    deliveryUnknown.statusCopy,
+    "Not sure that landed — try again?",
+  );
+
+  const deliveryFailed = buildCaptureDeliveryFailedOverlaySnapshot(
+    "That pane has left the building.",
+  );
+  assert.equal(deliveryFailed.phase, "capture-delivery-failed");
+  assert.equal(deliveryFailed.statusCopy, "That pane didn't take it.");
+  assert.equal(deliveryFailed.toastCopy, "That pane has left the building.");
 });
 
 test("overlay html contains Mistr Flow card, mascot, state hooks, and reduced motion rules", () => {

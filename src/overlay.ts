@@ -1,3 +1,5 @@
+import type { EligibleTarget } from "./herdr";
+
 export type OverlayPhase =
   | "idle"
   | "listening"
@@ -7,7 +9,12 @@ export type OverlayPhase =
   | "polishing"
   | "done"
   | "error"
-  | "refused";
+  | "refused"
+  | "capture-picker"
+  | "capture-delivering"
+  | "capture-delivered"
+  | "capture-delivery-failed"
+  | "capture-delivery-unknown";
 
 export interface OverlaySnapshot {
   phase: OverlayPhase;
@@ -16,6 +23,8 @@ export interface OverlaySnapshot {
   mascotCopy: string;
   statusCopy: string;
   toastCopy?: string;
+  /** Eligible-target entries for the capture picker (slot 1 Clipboard is implicit/pinned). */
+  captureTargets?: readonly EligibleTarget[];
 }
 
 const STATUS_COPY: Record<OverlayPhase, string> = {
@@ -28,7 +37,14 @@ const STATUS_COPY: Record<OverlayPhase, string> = {
   done: "Pasted, sir.",
   error: "Mistr Flo tripped over the microphone.",
   refused: "One thing at a time, sir.",
+  "capture-picker": "Pick your target, sir.",
+  "capture-delivering": "Delivering to the pane…",
+  "capture-delivered": "Delivered, sir.",
+  "capture-delivery-failed": "That pane didn't take it.",
+  "capture-delivery-unknown": "Not sure that landed — try again?",
 };
+
+const SUMMONING_STATUS_COPY = "Summoning targets…";
 
 const MASCOT_COPY: Record<OverlayPhase, string> = {
   idle: "hat + eyes",
@@ -40,6 +56,11 @@ const MASCOT_COPY: Record<OverlayPhase, string> = {
   done: "top hat bow",
   error: "top hat askew",
   refused: "wags a scolding finger",
+  "capture-picker": "counts on gloved fingers",
+  "capture-delivering": "leans toward the pane",
+  "capture-delivered": "tips hat toward the pane",
+  "capture-delivery-failed": "hat droops",
+  "capture-delivery-unknown": "tilts head, puzzled",
 };
 
 export interface HappyPathOverlayDependencies {
@@ -119,7 +140,56 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
         mascotCopy: MASCOT_COPY[phase],
         statusCopy: STATUS_COPY[phase],
       };
+    case "capture-picker":
+      return buildCapturePickerOverlaySnapshot([]);
+    case "capture-delivering":
+    case "capture-delivered":
+    case "capture-delivery-unknown":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: false,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
+    case "capture-delivery-failed":
+      return buildCaptureDeliveryFailedOverlaySnapshot();
   }
+}
+
+/**
+ * The picker phase covers both the two-phase-render "summoning" beat (no
+ * targets yet, no message) and the populated/local-only states — same
+ * phase, different copy, so a late Herdr response only ever changes copy,
+ * never resurrects a closed picker.
+ */
+export function buildCapturePickerOverlaySnapshot(
+  targets: readonly EligibleTarget[],
+  message?: string,
+): OverlaySnapshot {
+  const summoning = targets.length === 0 && message === undefined;
+  return {
+    phase: "capture-picker",
+    barMode: "expanded",
+    waveformVisible: false,
+    mascotCopy: MASCOT_COPY["capture-picker"],
+    statusCopy: summoning ? SUMMONING_STATUS_COPY : STATUS_COPY["capture-picker"],
+    toastCopy: message,
+    captureTargets: targets,
+  };
+}
+
+export function buildCaptureDeliveryFailedOverlaySnapshot(
+  message?: string,
+): OverlaySnapshot {
+  return {
+    phase: "capture-delivery-failed",
+    barMode: "expanded",
+    waveformVisible: false,
+    mascotCopy: MASCOT_COPY["capture-delivery-failed"],
+    statusCopy: STATUS_COPY["capture-delivery-failed"],
+    toastCopy: message,
+  };
 }
 
 export function buildErrorOverlaySnapshot(
