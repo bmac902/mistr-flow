@@ -128,7 +128,7 @@ test("integration: unknown (ack timeout) then retry with the same capture id del
   picker.resolveSelection({ kind: "target", target: TARGET });
   await flush();
 
-  // The real herdr pane run is in flight — the orchestrator's 3s ack
+  // The real herdr agent send is in flight — the orchestrator's 3s ack
   // deadline fires before the CLI call itself resolves.
   assert.equal(execFileCalls.length, 1);
   fakeClock.fire();
@@ -150,8 +150,8 @@ test("integration: unknown (ack timeout) then retry with the same capture id del
   assert.deepEqual(result, { kind: "target-delivered", target: TARGET });
   assert.equal(execFileCalls.length, 1);
   assert.deepEqual(execFileCalls[0]!.args, [
-    "pane",
-    "run",
+    "agent",
+    "send",
     TARGET.target,
     ARTIFACT.pngPath,
   ]);

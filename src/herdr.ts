@@ -11,8 +11,13 @@ export const MAX_ELIGIBLE_TARGETS = 8;
 /** Default deadline for the `herdr pane list` query. */
 export const PANE_QUERY_TIMEOUT_MS = 2000;
 
-/** CLI protocol versions this adapter knows how to speak. */
-const SUPPORTED_PROTOCOLS: ReadonlySet<number> = new Set([1]);
+/**
+ * CLI protocol versions this adapter knows how to speak — verified live
+ * against a real `herdr status --json` (0.7.2-preview, protocol 16).
+ * Bump this when a newer Herdr protocol is verified compatible; a mismatch
+ * must produce a clear incompatible state, not a mysterious failure.
+ */
+const SUPPORTED_PROTOCOLS: ReadonlySet<number> = new Set([16]);
 
 /** Actionable agent statuses — the only ones that make a pane an Eligible Target. */
 const ACTIONABLE_STATUSES: ReadonlySet<string> = new Set(["idle", "working"]);
@@ -156,7 +161,7 @@ export async function checkHerdrAvailability(
   deps: HerdrAdapterDeps,
 ): Promise<HerdrAvailabilityResult> {
   const execFile = deps.execFile ?? defaultExecFile;
-  const outcome = await runHerdr(execFile, ["version", "--format", "json"]);
+  const outcome = await runHerdr(execFile, ["status", "--json"]);
 
   if (outcome.error) {
     if (typeof outcome.error.code === "string") {
@@ -167,15 +172,18 @@ export async function checkHerdrAvailability(
     return failure("unavailable", "herdr-daemon-unreachable");
   }
 
-  const version = parseVersion(outcome.stdout);
-  if (!version) {
+  const status = parseHerdrStatus(outcome.stdout);
+  if (!status) {
     return failure("incompatible", "herdr-version-unreadable");
   }
-  if (!SUPPORTED_PROTOCOLS.has(version.protocol)) {
+  if (!status.running) {
+    return failure("unavailable", "herdr-daemon-unreachable");
+  }
+  if (!SUPPORTED_PROTOCOLS.has(status.protocol)) {
     return failure("incompatible", "herdr-protocol-unsupported");
   }
 
-  return { kind: "available", protocol: version.protocol };
+  return { kind: "available", protocol: status.protocol };
 }
 
 /**
@@ -191,7 +199,7 @@ export async function queryEligibleTargets(
 
   const outcome = await runHerdrWithDeadline(
     execFile,
-    ["pane", "list", "--format", "json"],
+    ["pane", "list"],
     clock,
     timeoutMs,
   );
@@ -214,33 +222,36 @@ export async function queryEligibleTargets(
 }
 
 interface RawPane {
-  readonly pane_id?: unknown;
-  readonly target_id?: unknown;
-  readonly label?: unknown;
-  readonly agent_name?: unknown;
+  readonly agent?: unknown;
   readonly agent_status?: unknown;
   readonly agent_session?: unknown;
-  readonly title?: unknown;
+  readonly terminal_id?: unknown;
+  readonly cwd?: unknown;
 }
 
 /**
- * Parse `herdr pane list --format json`. Throws when the output isn't a JSON
- * array — the caller maps that to a safe `pane-list-unreadable` result.
+ * Parse `herdr pane list`. The real CLI wraps the pane array in a
+ * `{ result: { panes: [...] } }` envelope. Throws when that shape isn't
+ * present — the caller maps that to a safe `pane-list-unreadable` result.
  */
 export function parsePaneList(stdout: string): RawPane[] {
   const parsed: unknown = JSON.parse(stdout);
-  if (!Array.isArray(parsed)) {
-    throw new Error("herdr pane list did not return an array");
+  const panes = (parsed as { result?: { panes?: unknown } } | null)?.result
+    ?.panes;
+  if (!Array.isArray(panes)) {
+    throw new Error("herdr pane list did not return a panes array");
   }
-  return parsed as RawPane[];
+  return panes as RawPane[];
 }
 
 /**
- * Eligibility (glossary *Eligible Target*): the pane must carry the `agent`
- * label AND an actionable agent status (idle/working). Presence of the
- * optional `agent_session` metadata is NOT the test — recognised agent panes
- * can lack it. A durable `target_id` is required (never the positional pane
- * id). Bare shells, unknown labels, and completed/dead panes are excluded.
+ * Eligibility (glossary *Eligible Target*): the pane must carry Herdr's
+ * `agent` field AND an actionable agent status (idle/working). Presence of
+ * the optional `agent_session` metadata is NOT the test — recognised agent
+ * panes (confirmed live, e.g. Hermes) can lack it. A durable identity is
+ * required (never the positional pane id): `terminal_id` — present on every
+ * pane and the only field confirmed to work as a real delivery target.
+ * Bare shells, unlabelled panes, and completed/dead panes are excluded.
  * Capped at {@link MAX_ELIGIBLE_TARGETS}.
  */
 export function mapPanesToTargets(
@@ -262,7 +273,7 @@ export function mapPanesToTargets(
 }
 
 function mapPane(pane: RawPane): EligibleTarget | null {
-  if (pane.label !== "agent") {
+  if (typeof pane.agent !== "string" || pane.agent.length === 0) {
     return null;
   }
   if (
@@ -271,39 +282,56 @@ function mapPane(pane: RawPane): EligibleTarget | null {
   ) {
     return null;
   }
-  if (typeof pane.target_id !== "string" || pane.target_id.length === 0) {
-    // A pane with no durable identity cannot be a delivery target — and we
-    // never fall back to the positional pane id.
+
+  const target = durableTargetId(pane);
+  if (!target) {
+    // No durable identity to bind to — never fall back to a positional id.
     return null;
   }
 
   const agentStatus = pane.agent_status as AgentStatus;
   return {
-    target: pane.target_id,
+    target,
     label: buildTargetLabel(pane, agentStatus),
     agentStatus,
   };
 }
 
+/**
+ * `terminal_id` is the only field confirmed live to work as a delivery
+ * target: `herdr agent send` accepts terminal ids, unique agent names, agent
+ * labels, and legacy pane ids — NOT `agent_session.value`. An earlier
+ * version of this adapter preferred `agent_session.value`, which turned out
+ * to be a plausible-looking id `agent send` rejects outright
+ * (`agent_not_found`) — confirmed live 2026-07-15. Do not resurrect that
+ * preference without re-verifying against the real CLI.
+ */
+function durableTargetId(pane: RawPane): string | null {
+  if (typeof pane.terminal_id === "string" && pane.terminal_id.length > 0) {
+    return pane.terminal_id;
+  }
+  return null;
+}
+
 function buildTargetLabel(pane: RawPane, agentStatus: AgentStatus): string {
-  const name =
-    typeof pane.agent_name === "string" && pane.agent_name.length > 0
-      ? pane.agent_name
-      : "agent";
+  const name = typeof pane.agent === "string" ? pane.agent : "agent";
   const base = `${name} · ${agentStatus}`;
-  if (typeof pane.title === "string" && pane.title.length > 0) {
-    return `${base} — ${pane.title}`;
+  if (typeof pane.cwd === "string" && pane.cwd.length > 0) {
+    return `${base} — ${pane.cwd}`;
   }
   return base;
 }
 
-interface ParsedVersion {
-  readonly version: string;
+interface ParsedHerdrStatus {
+  readonly running: boolean;
   readonly protocol: number;
 }
 
-/** Parse `herdr version --format json`; returns null on anything unusable. */
-export function parseVersion(stdout: string): ParsedVersion | null {
+/**
+ * Parse `herdr status --json`. The fields Mistr Flow needs live under
+ * `.server`; returns null on anything unusable.
+ */
+export function parseHerdrStatus(stdout: string): ParsedHerdrStatus | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
@@ -313,14 +341,18 @@ export function parseVersion(stdout: string): ParsedVersion | null {
   if (typeof parsed !== "object" || parsed === null) {
     return null;
   }
-  const record = parsed as { version?: unknown; protocol?: unknown };
+  const server = (parsed as { server?: unknown }).server;
+  if (typeof server !== "object" || server === null) {
+    return null;
+  }
+  const record = server as { running?: unknown; protocol?: unknown };
   if (
-    typeof record.version !== "string" ||
+    typeof record.running !== "boolean" ||
     typeof record.protocol !== "number"
   ) {
     return null;
   }
-  return { version: record.version, protocol: record.protocol };
+  return { running: record.running, protocol: record.protocol };
 }
 
 interface ExecOutcome {

@@ -68,7 +68,7 @@ function recordingExecFile(): {
   };
 }
 
-test("deliver: happy path injects the exact absolute PNG path via herdr pane run", async () => {
+test("deliver: happy path injects the exact absolute PNG path via herdr agent send", async () => {
   const recorder = recordingExecFile();
   const deliver = createHerdrDeliveryAdapter({
     execFile: recorder.execFile,
@@ -82,7 +82,7 @@ test("deliver: happy path injects the exact absolute PNG path via herdr pane run
 
   assert.deepEqual(outcome, { kind: "delivered" });
   assert.deepEqual(recorder.calls, [
-    { file: "herdr", args: ["pane", "run", TARGET_A.target, ARTIFACT.pngPath] },
+    { file: "herdr", args: ["agent", "send", TARGET_A.target, ARTIFACT.pngPath] },
   ]);
 });
 
@@ -221,6 +221,82 @@ test("deliver: reused capture id with a mismatched payload (pngPath) is rejected
     message: safeMessageFor("delivery-id-mismatch"),
   });
   assert.equal(recorder.calls.length, 1);
+});
+
+test("deliver: focusOnDeliver disabled (default) never calls herdr agent focus", async () => {
+  const recorder = recordingExecFile();
+  const deliver = createHerdrDeliveryAdapter({
+    execFile: recorder.execFile,
+    pathExists: async () => true,
+  });
+
+  const outcomePromise = deliver(ARTIFACT, TARGET_A);
+  await flush();
+  recorder.respond(null);
+  await outcomePromise;
+
+  assert.deepEqual(recorder.calls, [
+    { file: "herdr", args: ["agent", "send", TARGET_A.target, ARTIFACT.pngPath] },
+  ]);
+});
+
+test("deliver: focusOnDeliver enabled focuses the target after a successful delivery", async () => {
+  const recorder = recordingExecFile();
+  const deliver = createHerdrDeliveryAdapter({
+    execFile: recorder.execFile,
+    pathExists: async () => true,
+    focusOnDeliver: true,
+  });
+
+  const outcomePromise = deliver(ARTIFACT, TARGET_A);
+  await flush();
+  recorder.respond(null);
+  await flush();
+  recorder.respond(null);
+  const outcome = await outcomePromise;
+
+  assert.deepEqual(outcome, { kind: "delivered" });
+  assert.deepEqual(recorder.calls, [
+    { file: "herdr", args: ["agent", "send", TARGET_A.target, ARTIFACT.pngPath] },
+    { file: "herdr", args: ["agent", "focus", TARGET_A.target] },
+  ]);
+});
+
+test("deliver: focusOnDeliver enabled does not focus after a failed delivery", async () => {
+  const recorder = recordingExecFile();
+  const deliver = createHerdrDeliveryAdapter({
+    execFile: recorder.execFile,
+    pathExists: async () => true,
+    focusOnDeliver: true,
+  });
+
+  const outcomePromise = deliver(ARTIFACT, TARGET_A);
+  await flush();
+  recorder.respond(new Error("exit 1"));
+  const outcome = await outcomePromise;
+
+  assert.equal(outcome.kind, "failed");
+  assert.deepEqual(recorder.calls, [
+    { file: "herdr", args: ["agent", "send", TARGET_A.target, ARTIFACT.pngPath] },
+  ]);
+});
+
+test("deliver: a focus failure is swallowed — delivery still reports delivered", async () => {
+  const recorder = recordingExecFile();
+  const deliver = createHerdrDeliveryAdapter({
+    execFile: recorder.execFile,
+    pathExists: async () => true,
+    focusOnDeliver: true,
+  });
+
+  const outcomePromise = deliver(ARTIFACT, TARGET_A);
+  await flush();
+  recorder.respond(null);
+  await flush();
+  recorder.respond(new Error("focus failed"));
+  const outcome = await outcomePromise;
+
+  assert.deepEqual(outcome, { kind: "delivered" });
 });
 
 test("TTL: the capture TTL comfortably outlives the delivery ack window and a retry", () => {

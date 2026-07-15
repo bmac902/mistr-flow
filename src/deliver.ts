@@ -8,9 +8,15 @@ import type { EligibleTarget } from "./herdr";
 // Delivery execution (issue #32, PRD #24) — the mechanism proven by the live
 // spike (#28 findings, 2026-07-15) and only that mechanism: inject the
 // capture's exact absolute PNG path as the message text of
-// `herdr pane run <target> <path>`. Herdr's own image-path detection
+// `herdr agent send <target> <path>`. Herdr's own image-path detection
 // upgrades the injected reference into a real multimodal attachment in the
 // pane — MF never focuses the pane or sends keystrokes into it (ADR 0001).
+// `agent send` (not `pane run`) is required for two reasons, both confirmed
+// live: `pane run` only accepts the compact/positional pane_id, not the
+// durable target identity this adapter is handed; and `agent send` writes
+// text only, never Enter — the reference lands in the pane's input box for
+// the human to add context to and send themselves, deliberately not
+// auto-submitted (CONTEXT.md, 2026-07-15).
 // The spike also found a bad/nonexistent path doesn't fail cleanly — it can
 // stall on an interactive prompt at the human's pane — so deliver() verifies
 // the file exists itself before ever injecting anything.
@@ -46,6 +52,13 @@ export type DeliverExecFile = (
 export interface DeliveryAdapterDeps {
   readonly execFile?: DeliverExecFile;
   readonly pathExists?: (filePath: string) => Promise<boolean>;
+  /**
+   * Opt-in only (config `focusOnDeliver`, default false). A deliberate,
+   * user-chosen exception to "never steal focus" — the delivery mechanism
+   * itself never needs it. Best-effort: a focus failure never turns a
+   * successful delivery into a failed one.
+   */
+  readonly focusOnDeliver?: boolean;
 }
 
 const defaultExecFile: DeliverExecFile = (file, args, callback) => {
@@ -87,6 +100,7 @@ export function createHerdrDeliveryAdapter(
 ): DeliverFn {
   const execFile = deps.execFile ?? defaultExecFile;
   const pathExists = deps.pathExists ?? defaultPathExists;
+  const focusOnDeliver = deps.focusOnDeliver ?? false;
   const ledger = new Map<string, DeliveryRecord>();
 
   return function deliver(
@@ -101,7 +115,7 @@ export function createHerdrDeliveryAdapter(
       return existing.outcome;
     }
 
-    const outcome = runDelivery(execFile, pathExists, capture, target);
+    const outcome = runDelivery(execFile, pathExists, capture, target, focusOnDeliver);
     ledger.set(capture.id, {
       pngPath: capture.pngPath,
       target: target.target,
@@ -116,22 +130,41 @@ async function runDelivery(
   pathExists: (filePath: string) => Promise<boolean>,
   capture: CaptureArtifact,
   target: EligibleTarget,
+  focusOnDeliver: boolean,
 ): Promise<CaptureDeliverOutcome> {
   const exists = await pathExists(capture.pngPath);
   if (!exists) {
     return failure("delivery-file-missing");
   }
 
-  return runHerdrPaneRun(execFile, target.target, capture.pngPath);
+  const outcome = await runHerdrAgentSend(execFile, target.target, capture.pngPath);
+  if (outcome.kind === "delivered" && focusOnDeliver) {
+    await runHerdrAgentFocus(execFile, target.target);
+  }
+  return outcome;
 }
 
-function runHerdrPaneRun(
+/** Best-effort only — a focus failure never turns a delivery into a failure. */
+function runHerdrAgentFocus(execFile: DeliverExecFile, target: string): Promise<void> {
+  return new Promise((resolve) => {
+    execFile("herdr", ["agent", "focus", target], (error, _stdout, stderr) => {
+      if (error) {
+        console.warn("[mistr-flow] focusOnDeliver: herdr agent focus failed:", stderr || error.message);
+      } else {
+        console.log("[mistr-flow] focusOnDeliver: focused target", target);
+      }
+      resolve();
+    });
+  });
+}
+
+function runHerdrAgentSend(
   execFile: DeliverExecFile,
   target: string,
   pngPath: string,
 ): Promise<CaptureDeliverOutcome> {
   return new Promise((resolve) => {
-    execFile("herdr", ["pane", "run", target, pngPath], (error) => {
+    execFile("herdr", ["agent", "send", target, pngPath], (error) => {
       if (!error) {
         resolve({ kind: "delivered" });
         return;

@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   getConfigPath,
+  readFocusOnDeliver,
   readMuteSystemAudioWhileRecording,
   readOpenAiApiKey,
   readOverlayPosition,
@@ -65,6 +66,36 @@ test("readMuteSystemAudioWhileRecording allows config opt-out", async () => {
   const shouldMute = await readMuteSystemAudioWhileRecording({ APPDATA: tempRoot }, fs);
 
   assert.equal(shouldMute, false);
+});
+
+test("readFocusOnDeliver defaults to disabled — never steal focus unless opted in", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key" }),
+    "utf8",
+  );
+
+  const shouldFocus = await readFocusOnDeliver({ APPDATA: tempRoot }, fs);
+
+  assert.equal(shouldFocus, false);
+});
+
+test("readFocusOnDeliver allows explicit opt-in", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key", focusOnDeliver: true }),
+    "utf8",
+  );
+
+  const shouldFocus = await readFocusOnDeliver({ APPDATA: tempRoot }, fs);
+
+  assert.equal(shouldFocus, true);
 });
 
 test("writeOverlayPosition persists the overlay position without dropping existing config", async () => {

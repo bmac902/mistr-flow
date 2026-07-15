@@ -10,8 +10,8 @@ import {
   MAX_ELIGIBLE_TARGETS,
   checkHerdrAvailability,
   mapPanesToTargets,
+  parseHerdrStatus,
   parsePaneList,
-  parseVersion,
   queryEligibleTargets,
   queryHerdr,
   safeMessageFor,
@@ -42,15 +42,15 @@ function makeExec(handler: ExecHandler): HerdrExecFile {
   };
 }
 
-/** Dispatch version vs. pane-list responses; pane-list may be a hang. */
+/** Dispatch status vs. pane-list responses; pane-list may be a hang. */
 function makeAdapterExec(opts: {
-  version?: MockResponse;
+  status?: MockResponse;
   paneList?: MockResponse | "hang";
 }): HerdrExecFile {
   return makeExec((args, callback) => {
     const sub = args[0];
-    if (sub === "version") {
-      const r = opts.version ?? { stdout: fixture("version-ok.json") };
+    if (sub === "status") {
+      const r = opts.status ?? { stdout: fixture("status-ok.json") };
       callback(r.error ?? null, r.stdout ?? "", r.stderr ?? "");
       return;
     }
@@ -112,30 +112,39 @@ test("mixed pane list maps only idle/working agent panes to targets", () => {
 
   assert.deepEqual(targets, [
     {
-      target: "trm_01HZY8AK4M0000000000000001",
+      target: "term_A1",
       label: "claude · idle — mistr-flow — capture adapter",
       agentStatus: "idle",
     },
     {
-      target: "trm_01HZY8AK4M0000000000000002",
+      target: "term_B1",
       label: "codex · working — herdr — pane list",
       agentStatus: "working",
     },
     {
-      target: "trm_01HZY8AK4M0000000000000006",
+      target: "term_F1",
       label: "claude · idle — docs — no session metadata yet",
       agentStatus: "idle",
     },
   ]);
 });
 
-test("an eligible agent pane missing agent_session is still a target", () => {
+test("an eligible agent pane's target is terminal_id even when agent_session is present", () => {
+  // agent_session.value looks like a plausible durable id but `herdr agent
+  // send` rejects it (agent_not_found) — confirmed live 2026-07-15.
+  // terminal_id is the only field that actually works, present or not.
   const panes = parsePaneList(fixture("pane-list-mixed.json"));
   const targets = mapPanesToTargets(panes);
 
-  const sessionless = targets.find(
-    (t) => t.target === "trm_01HZY8AK4M0000000000000006",
-  );
+  const withSession = targets.find((t) => t.label.startsWith("claude · idle — mistr-flow"));
+  assert.equal(withSession?.target, "term_A1");
+});
+
+test("an eligible agent pane missing agent_session still uses its terminal_id", () => {
+  const panes = parsePaneList(fixture("pane-list-mixed.json"));
+  const targets = mapPanesToTargets(panes);
+
+  const sessionless = targets.find((t) => t.target === "term_F1");
   assert.ok(sessionless, "agent pane without agent_session should be eligible");
   assert.equal(sessionless?.agentStatus, "idle");
 });
@@ -145,25 +154,25 @@ test("dead and completed agent panes are excluded", () => {
   const targets = mapPanesToTargets(panes);
   const ids = targets.map((t) => t.target);
 
-  assert.ok(!ids.includes("trm_01HZY8AK4M0000000000000003"), "dead excluded");
-  assert.ok(!ids.includes("trm_01HZY8AK4M0000000000000004"), "done excluded");
+  assert.ok(!ids.includes("term_C1"), "dead excluded");
+  assert.ok(!ids.includes("term_D1"), "done excluded");
 });
 
-test("bare shells and unknown labels are excluded", () => {
+test("panes with no agent field are excluded", () => {
   const panes = parsePaneList(fixture("pane-list-mixed.json"));
   const targets = mapPanesToTargets(panes);
   const ids = targets.map((t) => t.target);
 
-  assert.ok(!ids.includes("trm_01HZY8AK4M0000000000000005"), "shell excluded");
-  assert.ok(!ids.includes("trm_01HZY8AK4M0000000000000007"), "editor excluded");
+  assert.ok(!ids.includes("term_E1"), "bare shell excluded");
+  assert.ok(!ids.includes("term_G1"), "unlabelled pane excluded");
 });
 
-test("targets carry the durable target id, never the positional pane id", () => {
+test("targets carry the durable terminal_id, never the positional pane id", () => {
   const panes = parsePaneList(fixture("pane-list-mixed.json"));
   const targets = mapPanesToTargets(panes);
 
   for (const t of targets) {
-    assert.ok(t.target.startsWith("trm_"), "durable identity passed verbatim");
+    assert.ok(t.target.startsWith("term_"), "durable identity passed verbatim");
     assert.ok(!t.target.startsWith("%"), "never a positional pane id");
   }
 });
@@ -174,8 +183,8 @@ test("more than 8 eligible panes are capped at 8", () => {
 
   assert.equal(targets.length, MAX_ELIGIBLE_TARGETS);
   // The cap keeps the first N in list order.
-  assert.equal(targets[0].target, "trm_overflow_01");
-  assert.equal(targets[7].target, "trm_overflow_08");
+  assert.equal(targets[0].target, "term_overflow_01");
+  assert.equal(targets[7].target, "term_overflow_08");
 });
 
 test("empty pane list yields no targets", () => {
@@ -183,20 +192,20 @@ test("empty pane list yields no targets", () => {
   assert.deepEqual(mapPanesToTargets(panes), []);
 });
 
-test("a pane with no durable target id is excluded", () => {
+test("a pane with no durable identity at all is excluded", () => {
   const targets = mapPanesToTargets([
-    { label: "agent", agent_status: "idle", pane_id: "%0", title: "no id" },
+    { agent: "claude", agent_status: "idle", cwd: "no id" },
   ]);
   assert.deepEqual(targets, []);
 });
 
-test("agent label with a non-actionable status is excluded", () => {
+test("an agent pane with a non-actionable status is excluded", () => {
   const targets = mapPanesToTargets([
     {
-      label: "agent",
+      agent: "claude",
       agent_status: "starting",
-      target_id: "trm_starting",
-      title: "warming up",
+      terminal_id: "term_starting",
+      cwd: "warming up",
     },
   ]);
   assert.deepEqual(targets, []);
@@ -211,7 +220,7 @@ test("missing binary maps to a typed unavailable result", async () => {
     code: "ENOENT",
   });
   const result = await checkHerdrAvailability({
-    execFile: makeAdapterExec({ version: { error: enoent } }),
+    execFile: makeAdapterExec({ status: { error: enoent } }),
   });
 
   assert.equal(result.kind, "unavailable");
@@ -225,7 +234,7 @@ test("daemon-unreachable exit maps to a typed unavailable result", async () => {
   const exit = Object.assign(new Error("herdr: cannot connect"), { code: 1 });
   const result = await checkHerdrAvailability({
     execFile: makeAdapterExec({
-      version: { error: exit, stderr: "connect /run/herdr.sock: no such file" },
+      status: { error: exit, stderr: "connect /run/herdr.sock: no such file" },
     }),
   });
 
@@ -236,10 +245,10 @@ test("daemon-unreachable exit maps to a typed unavailable result", async () => {
   );
 });
 
-test("an unsupported protocol maps to a typed incompatible result", async () => {
+test("a running server with an unsupported protocol maps to incompatible", async () => {
   const result = await checkHerdrAvailability({
     execFile: makeAdapterExec({
-      version: { stdout: fixture("version-incompatible.json") },
+      status: { stdout: fixture("status-incompatible.json") },
     }),
   });
 
@@ -250,9 +259,23 @@ test("an unsupported protocol maps to a typed incompatible result", async () => 
   );
 });
 
-test("unreadable version output maps to a typed incompatible result", async () => {
+test("a stopped server maps to a typed unavailable result", async () => {
   const result = await checkHerdrAvailability({
-    execFile: makeAdapterExec({ version: { stdout: "not json at all" } }),
+    execFile: makeAdapterExec({
+      status: { stdout: fixture("status-not-running.json") },
+    }),
+  });
+
+  assert.equal(result.kind, "unavailable");
+  assert.equal(
+    result.kind === "unavailable" ? result.code : null,
+    "herdr-daemon-unreachable",
+  );
+});
+
+test("unreadable status output maps to a typed incompatible result", async () => {
+  const result = await checkHerdrAvailability({
+    execFile: makeAdapterExec({ status: { stdout: "not json at all" } }),
   });
 
   assert.equal(result.kind, "incompatible");
@@ -264,22 +287,22 @@ test("unreadable version output maps to a typed incompatible result", async () =
 
 test("a supported protocol reports available", async () => {
   const result = await checkHerdrAvailability({
-    execFile: makeAdapterExec({ version: { stdout: fixture("version-ok.json") } }),
+    execFile: makeAdapterExec({ status: { stdout: fixture("status-ok.json") } }),
   });
 
   assert.equal(result.kind, "available");
-  assert.equal(result.kind === "available" ? result.protocol : null, 1);
+  assert.equal(result.kind === "available" ? result.protocol : null, 16);
 });
 
 test("unavailable and incompatible results each carry safe human copy", async () => {
   const unavailable = await checkHerdrAvailability({
     execFile: makeAdapterExec({
-      version: { error: Object.assign(new Error(""), { code: "ENOENT" }) },
+      status: { error: Object.assign(new Error(""), { code: "ENOENT" }) },
     }),
   });
   const incompatible = await checkHerdrAvailability({
     execFile: makeAdapterExec({
-      version: { stdout: fixture("version-incompatible.json") },
+      status: { stdout: fixture("status-incompatible.json") },
     }),
   });
 
@@ -314,7 +337,7 @@ test("raw socket paths and exception text never leak into the result message", a
   const secret = "connect /run/herdr/agent-42.sock: connection refused";
   const result = await queryHerdr({
     execFile: makeAdapterExec({
-      version: {
+      status: {
         error: Object.assign(new Error(secret), { code: 1 }),
         stderr: secret,
       },
@@ -412,7 +435,7 @@ test("a pane query that answers in time clears the deadline timer", async () => 
 test("queryHerdr returns mapped targets on the happy path", async () => {
   const result = await queryHerdr({
     execFile: makeAdapterExec({
-      version: { stdout: fixture("version-ok.json") },
+      status: { stdout: fixture("status-ok.json") },
       paneList: { stdout: fixture("pane-list-mixed.json") },
     }),
     clock: makeFakeClock().clock,
@@ -426,7 +449,7 @@ test("queryHerdr short-circuits to unavailable without querying panes", async ()
   let paneQueried = false;
   const result = await queryHerdr({
     execFile: makeExec((args, callback) => {
-      if (args[0] === "version") {
+      if (args[0] === "status") {
         callback(Object.assign(new Error(""), { code: "ENOENT" }), "", "");
         return;
       }
@@ -440,12 +463,13 @@ test("queryHerdr short-circuits to unavailable without querying panes", async ()
   assert.equal(paneQueried, false, "panes not queried when Herdr is unavailable");
 });
 
-test("parseVersion rejects missing or wrong-typed fields", () => {
-  assert.equal(parseVersion('{"version":"1.0.0"}'), null);
-  assert.equal(parseVersion('{"protocol":1}'), null);
-  assert.equal(parseVersion('{"version":1,"protocol":1}'), null);
-  assert.deepEqual(parseVersion('{"version":"1.4.0","protocol":1}'), {
-    version: "1.4.0",
-    protocol: 1,
-  });
+test("parseHerdrStatus rejects missing or wrong-typed fields", () => {
+  assert.equal(parseHerdrStatus('{"server":{"running":true}}'), null);
+  assert.equal(parseHerdrStatus('{"server":{"protocol":16}}'), null);
+  assert.equal(parseHerdrStatus('{"server":{"running":"yes","protocol":16}}'), null);
+  assert.equal(parseHerdrStatus('{}'), null);
+  assert.deepEqual(
+    parseHerdrStatus('{"server":{"running":true,"protocol":16}}'),
+    { running: true, protocol: 16 },
+  );
 });

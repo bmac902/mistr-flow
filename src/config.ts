@@ -10,6 +10,7 @@ export interface AppConfig {
   overlayPosition?: unknown;
   muteSystemAudioWhileRecording?: unknown;
   vocabulary?: unknown;
+  focusOnDeliver?: unknown;
 }
 
 export interface VocabularyReplacement {
@@ -114,6 +115,22 @@ export async function readMuteSystemAudioWhileRecording(
   const rawConfig = await fileSystem.readFile(configPath, "utf8");
   const parsed = JSON.parse(rawConfig) as AppConfig;
   return parsed.muteSystemAudioWhileRecording !== false;
+}
+
+/**
+ * Opt-in only — defaults to false. Focusing the delivered-to pane after a
+ * successful Capture delivery is a deliberate exception to "never steal
+ * focus": unlike the delivery mechanism itself (which never needs focus),
+ * this is a user-chosen convenience, off by default (CONTEXT.md, 2026-07-15).
+ */
+export async function readFocusOnDeliver(
+  env: NodeJS.ProcessEnv = process.env,
+  fileSystem = fs,
+): Promise<boolean> {
+  const configPath = getConfigPath(env);
+  const rawConfig = await fileSystem.readFile(configPath, "utf8");
+  const parsed = JSON.parse(rawConfig) as AppConfig;
+  return parsed.focusOnDeliver === true;
 }
 
 export async function writeOverlayPosition(

@@ -21,6 +21,7 @@ import {
 } from "./barControls";
 import {
   getConfigPath,
+  readFocusOnDeliver,
   readMuteSystemAudioWhileRecording,
   readOpenAiApiKey,
   readOverlayPosition,
@@ -330,8 +331,9 @@ function copyCaptureToClipboard(artifact: CaptureArtifact): void {
 }
 
 // One adapter instance for the app's lifetime: its delivery ledger must
-// persist across a session's unknown → retry digit presses (#32).
-const deliverCapture = createHerdrDeliveryAdapter();
+// persist across a session's unknown → retry digit presses (#32). Rebuilt
+// once at startup once config (focusOnDeliver) is known — see whenReady.
+let deliverCapture = createHerdrDeliveryAdapter();
 
 function openCapturePicker(): CapturePickerHandle {
   return createCapturePickerHandle({
@@ -483,6 +485,9 @@ app.whenReady().then(async () => {
   try {
     apiKey = await readOpenAiApiKey();
     muteSystemAudioWhileRecording = await readMuteSystemAudioWhileRecording();
+    const focusOnDeliver = await readFocusOnDeliver();
+    console.log("[mistr-flow] config: focusOnDeliver =", focusOnDeliver);
+    deliverCapture = createHerdrDeliveryAdapter({ focusOnDeliver });
   } catch (error) {
     dialog.showErrorBox("Mistr Flow config error", String(error));
     app.quit();
