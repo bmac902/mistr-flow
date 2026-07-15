@@ -470,6 +470,41 @@ test("parseHerdrStatus rejects missing or wrong-typed fields", () => {
   assert.equal(parseHerdrStatus('{}'), null);
   assert.deepEqual(
     parseHerdrStatus('{"server":{"running":true,"protocol":16}}'),
-    { running: true, protocol: 16 },
+    { running: true, protocol: 16, socket: null },
   );
+});
+
+// Verbatim stdout of a real `herdr status --json` (herdr 0.7.2-preview,
+// protocol 16, 2026-07-15). Kept real on purpose: #27's adapter passed a full
+// suite against an invented schema and broke the moment it met the actual CLI.
+const REAL_HERDR_STATUS_STDOUT =
+  '{"client":{"version":"0.7.2-preview.2026-07-07-f5354780e4ef","channel":"preview",' +
+  '"protocol":16,"binary":"C:\\\\Users\\\\blair\\\\AppData\\\\Local\\\\Programs\\\\Herdr\\\\bin\\\\herdr.exe",' +
+  '"session":null},"server":{"status":"running","running":true,' +
+  '"version":"0.7.2-preview.2026-07-07-f5354780e4ef","protocol":16,' +
+  '"capabilities":{"live_handoff":false,"detached_server_daemon":false},' +
+  '"compatible":true,"socket":"C:\\\\Users\\\\blair\\\\AppData\\\\Roaming\\\\herdr\\\\herdr.sock",' +
+  '"session":null,"restart_needed":false},"update":{"restart_needed":false}}';
+
+test("parseHerdrStatus reads the socket path from real herdr status output", () => {
+  assert.deepEqual(parseHerdrStatus(REAL_HERDR_STATUS_STDOUT), {
+    running: true,
+    protocol: 16,
+    socket: "C:\\Users\\blair\\AppData\\Roaming\\herdr\\herdr.sock",
+  });
+});
+
+test("parseHerdrStatus treats an absent or empty socket as unknown, not a failure", () => {
+  // An older/other build that doesn't report `socket` must still be usable —
+  // it just can't have its window raised.
+  assert.deepEqual(parseHerdrStatus('{"server":{"running":true,"protocol":16,"socket":""}}'), {
+    running: true,
+    protocol: 16,
+    socket: null,
+  });
+  assert.deepEqual(parseHerdrStatus('{"server":{"running":true,"protocol":16,"socket":42}}'), {
+    running: true,
+    protocol: 16,
+    socket: null,
+  });
 });

@@ -1,8 +1,11 @@
 import { execFile as nodeExecFile } from "node:child_process";
 
-// Mistr Flow talks to Herdr only through the supported `herdr` CLI (ADR 0001) —
-// never the raw unix-socket protocol. This module is the query side of that
-// adapter: availability, version/capability, eligibility, and safe errors.
+// Mistr Flow talks to Herdr through the supported `herdr` CLI (ADR 0001). The
+// single exception is `client.window_title.*`, which has no CLI equivalent and
+// is the only way to identify Herdr's host terminal window — that one call goes
+// over the documented socket from src/herdrSocket.ts (ADR 0002). This module is
+// the query side of the adapter: availability, version/capability, eligibility,
+// socket discovery, and safe errors.
 // Delivery is deliberately absent; it is gated on the live delivery spike.
 
 /** How many pane targets the picker can show (digit slots 2–9). */
@@ -325,6 +328,13 @@ function buildTargetLabel(pane: RawPane, agentStatus: AgentStatus): string {
 interface ParsedHerdrStatus {
   readonly running: boolean;
   readonly protocol: number;
+  /**
+   * Herdr's own report of its socket path (`.server.socket`). Taken from the
+   * CLI rather than reconstructed from APPDATA/XDG guesses, because only Herdr
+   * knows where a `--session`-scoped socket actually lives. Optional: absent on
+   * any build that doesn't report it, which simply disables window raising.
+   */
+  readonly socket: string | null;
 }
 
 /**
@@ -345,14 +355,36 @@ export function parseHerdrStatus(stdout: string): ParsedHerdrStatus | null {
   if (typeof server !== "object" || server === null) {
     return null;
   }
-  const record = server as { running?: unknown; protocol?: unknown };
+  const record = server as {
+    running?: unknown;
+    protocol?: unknown;
+    socket?: unknown;
+  };
   if (
     typeof record.running !== "boolean" ||
     typeof record.protocol !== "number"
   ) {
     return null;
   }
-  return { running: record.running, protocol: record.protocol };
+  return {
+    running: record.running,
+    protocol: record.protocol,
+    socket: typeof record.socket === "string" && record.socket ? record.socket : null,
+  };
+}
+
+/**
+ * Ask Herdr where its socket is. Returns null whenever that can't be answered
+ * — the caller treats an unknown socket as "can't raise the window", never as
+ * a delivery failure.
+ */
+export async function readHerdrSocketPath(
+  deps: HerdrAdapterDeps = {},
+): Promise<string | null> {
+  const execFile = deps.execFile ?? defaultExecFile;
+  const outcome = await runHerdr(execFile, ["status", "--json"]);
+  if (outcome.error) return null;
+  return parseHerdrStatus(outcome.stdout)?.socket ?? null;
 }
 
 interface ExecOutcome {
