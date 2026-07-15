@@ -25,6 +25,8 @@ export interface OverlaySnapshot {
   toastCopy?: string;
   /** Eligible-target entries for the capture picker (slot 1 Clipboard is implicit/pinned). */
   captureTargets?: readonly EligibleTarget[];
+  /** True only during the brief pre-target "summoning" sub-beat of capture-picker. */
+  pickerSummoning?: boolean;
 }
 
 const STATUS_COPY: Record<OverlayPhase, string> = {
@@ -176,6 +178,7 @@ export function buildCapturePickerOverlaySnapshot(
     statusCopy: summoning ? SUMMONING_STATUS_COPY : STATUS_COPY["capture-picker"],
     toastCopy: message,
     captureTargets: targets,
+    pickerSummoning: summoning,
   };
 }
 

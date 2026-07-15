@@ -76,11 +76,21 @@ body {
   transform: translateX(18px);
 }
 .mf-recording-only,
-.mf-polishing-only {
+.mf-polishing-only,
+.mf-summon-only,
+.mf-picker-rest-only,
+.mf-delivering-only,
+.mf-delivery-failed-only,
+.mf-refused-only {
   display: none;
 }
 .mf-state-recording .mf-recording-only,
-.mf-state-polishing .mf-polishing-only {
+.mf-state-polishing .mf-polishing-only,
+.mf-state-capture-picker.mf-picker-summoning .mf-summon-only,
+.mf-state-capture-picker:not(.mf-picker-summoning) .mf-picker-rest-only,
+.mf-state-capture-delivering .mf-delivering-only,
+.mf-state-capture-delivery-failed .mf-delivery-failed-only,
+.mf-state-refused .mf-refused-only {
   display: inline;
 }
 #mistr-flow-card {
@@ -363,6 +373,123 @@ body {
   50%      { transform: scaleY(1); }
 }
 
+@keyframes mf-scold-wag {
+  0%, 10%   { transform: rotate(0deg); }
+  30%       { transform: rotate(-30deg); }
+  50%       { transform: rotate(30deg); }
+  70%       { transform: rotate(-30deg); }
+  90%, 100% { transform: rotate(30deg); }
+}
+
+@keyframes mf-headshake {
+  0%, 100% { transform: rotate(0deg); }
+  20%      { transform: rotate(-4deg); }
+  40%      { transform: rotate(4deg); }
+  60%      { transform: rotate(-4deg); }
+  80%      { transform: rotate(2deg); }
+}
+
+@keyframes mf-summon-scan {
+  0%, 100% { transform: rotate(0deg); }
+  25%      { transform: rotate(-6deg); }
+  75%      { transform: rotate(6deg); }
+}
+
+@keyframes mf-summon-tap {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  25%      { transform: rotate(-10deg) translateY(2px); }
+  50%      { transform: rotate(0deg) translateY(0); }
+  75%      { transform: rotate(-10deg) translateY(2px); }
+}
+
+@keyframes mf-count-fingers {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  20%      { transform: rotate(-9deg) translateY(-1px); }
+  40%      { transform: rotate(5deg); }
+  60%      { transform: rotate(-9deg) translateY(-1px); }
+  80%      { transform: rotate(5deg); }
+}
+
+@keyframes mf-deliver-lean {
+  0%, 100% { transform: rotate(4deg) translateX(1px); }
+  50%      { transform: rotate(7deg) translateX(2px); }
+}
+
+@keyframes mf-offer {
+  0%, 100% { transform: rotate(0deg) translateX(0); }
+  50%      { transform: rotate(-11deg) translateX(3px); }
+}
+
+@keyframes mf-tiphat-toward {
+  0%, 10%   { transform: rotate(0deg) translateY(0); }
+  40%       { transform: rotate(-18deg) translateY(-4px); }
+  65%       { transform: rotate(-18deg) translateY(-4px); }
+  100%      { transform: rotate(0deg) translateY(0); }
+}
+
+@keyframes mf-lean-deliver {
+  0%, 10%   { transform: rotate(0deg); }
+  40%       { transform: rotate(6deg); }
+  65%       { transform: rotate(6deg); }
+  100%      { transform: rotate(0deg); }
+}
+
+@keyframes mf-hat-droop {
+  0%, 15%   { transform: rotate(0deg) translateY(0); }
+  60%, 100% { transform: rotate(15deg) translateY(3px); }
+}
+
+@keyframes mf-slouch {
+  0%, 15%   { transform: translateY(0) rotate(0deg); }
+  100%      { transform: translateY(2px) rotate(-2deg); }
+}
+
+@keyframes mf-puzzled-slump {
+  0%, 10%   { transform: rotate(-6deg); }
+  40%, 100% { transform: rotate(3deg) translateY(1px); }
+}
+
+@keyframes mf-facepalm {
+  0%, 8%    { transform: rotate(0deg) translate(0,0); }
+  32%       { transform: rotate(-98deg) translate(-2px,-3px); }
+  46%, 86%  { transform: rotate(-98deg) translate(-1px,-4px); }
+  100%      { transform: rotate(-98deg) translate(-2px,-3px); }
+}
+
+@keyframes mf-twirl-ccw {
+  0%, 12%   { transform: rotate(0deg); }
+  56%       { transform: rotate(-360deg); }
+  72%, 100% { transform: rotate(-360deg); }
+}
+
+@keyframes mf-terminal-fall {
+  0%, 20%   { transform: translate(0,0) rotate(0deg); }
+  70%       { transform: translate(-14px,54px) rotate(-70deg); }
+  100%      { transform: translate(-14px,58px) rotate(-78deg); }
+}
+
+@keyframes mf-sparkle-a {
+  0%, 100%  { opacity: 0; transform: scale(0.4) rotate(0deg); }
+  40%       { opacity: 1; transform: scale(1) rotate(20deg); }
+  70%       { opacity: 0.6; }
+}
+
+@keyframes mf-sparkle-b {
+  0%, 20%, 100% { opacity: 0; transform: scale(0.4) rotate(0deg); }
+  55%           { opacity: 1; transform: scale(1.1) rotate(-15deg); }
+  85%           { opacity: 0.4; }
+}
+
+@keyframes mf-sparkle-c {
+  0%, 40%, 100% { opacity: 0; transform: scale(0.3) rotate(0deg); }
+  70%           { opacity: 1; transform: scale(0.9) rotate(25deg); }
+}
+
+@keyframes mf-puzzled-tilt {
+  0%, 100%  { transform: rotate(-6deg); }
+  50%       { transform: rotate(6deg); }
+}
+
 /* ── Base transform properties ────────────────────────────────────────────── */
 /* Applied unconditionally so animations have correct origins. */
 
@@ -484,6 +611,69 @@ body {
   animation: mf-exit 640ms cubic-bezier(0.4, 0, 1, 1) forwards;
 }
 
+/* ── State: refused ───────────────────────────────────────────────────────── */
+
+.mf-state-refused .mf-arm {
+  animation: mf-scold-wag 700ms ease-in-out forwards;
+}
+.mf-state-refused .mf-body {
+  animation: mf-headshake 700ms ease-in-out forwards;
+}
+
+/* ── State: capture-picker ────────────────────────────────────────────────── */
+
+.mf-state-capture-picker .mf-body {
+  animation: mf-breathe 3.8s ease-in-out infinite;
+}
+.mf-state-capture-picker .mf-arm {
+  animation: mf-count-fingers 2.4s ease-in-out infinite;
+}
+.mf-state-capture-picker.mf-picker-summoning .mf-body {
+  animation: mf-summon-scan 620ms ease-in-out 1;
+}
+.mf-state-capture-picker.mf-picker-summoning .mf-cane {
+  animation: mf-summon-tap 620ms ease-in-out 1;
+}
+
+/* ── State: capture-delivering ────────────────────────────────────────────── */
+
+.mf-state-capture-delivering .mf-body {
+  animation: mf-deliver-lean 1.6s ease-in-out infinite;
+}
+.mf-state-capture-delivering .mf-arm {
+  animation: mf-offer 1.6s ease-in-out infinite;
+}
+
+/* ── State: capture-delivered ─────────────────────────────────────────────── */
+
+.mf-state-capture-delivered .mf-hat {
+  animation: mf-tiphat-toward 520ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+.mf-state-capture-delivered .mf-body {
+  animation: mf-lean-deliver 520ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+.mf-state-capture-delivered .mf-cane {
+  animation: mf-twirl-ccw 640ms cubic-bezier(0.45, 0, 0.55, 1) forwards;
+}
+
+/* ── State: capture-delivery-failed ───────────────────────────────────────── */
+
+.mf-state-capture-delivery-failed .mf-hat {
+  animation: mf-hat-droop 480ms ease-in forwards;
+}
+.mf-state-capture-delivery-failed .mf-body {
+  animation: mf-slouch 480ms ease-in forwards;
+}
+
+/* ── State: capture-delivery-unknown ──────────────────────────────────────── */
+
+.mf-state-capture-delivery-unknown .mf-body {
+  animation: mf-puzzled-slump 2.2s ease-in-out infinite;
+}
+.mf-state-capture-delivery-unknown .mf-arm {
+  animation: mf-facepalm 2.2s ease-in-out infinite;
+}
+
 /* ── Overlay card ─────────────────────────────────────────────────────────── */
 
 .mf-overlay {
@@ -597,7 +787,10 @@ body {
   .mf-wave-1,
   .mf-wave-2,
   .mf-words-messy,
-  .mf-words-clean {
+  .mf-words-clean,
+  .mf-summon-only,
+  .mf-delivering-only,
+  .mf-delivery-failed-only {
     animation: none !important;
   }
 
@@ -622,6 +815,10 @@ body {
 .mf-brows-worried { display: none; }
 .mf-state-error .mf-brows-normal { display: none; }
 .mf-state-error .mf-brows-worried { display: inline; }
+.mf-state-refused .mf-brows-normal { display: none; }
+.mf-state-refused .mf-brows-worried { display: inline; }
+.mf-state-capture-delivery-failed .mf-brows-normal { display: none; }
+.mf-state-capture-delivery-failed .mf-brows-worried { display: inline; }
     </style>
   </head>
   <body>
@@ -661,6 +858,38 @@ body {
               <line x1="89" y1="110" x2="99" y2="164" stroke="#463C34" stroke-width="3.2" stroke-linecap="round" />
               <circle cx="88" cy="109" r="4.2" fill="#B8893C" />
             </g>
+            <g class="mf-summon-only" style="transform-box:fill-box; transform-origin:88px 109px; animation: mf-sparkle-a 620ms ease-out 1;">
+              <path d="M88,96 L90,103 L97,105 L90,107 L88,114 L86,107 L79,105 L86,103 Z" fill="#D8B068" />
+            </g>
+            <g class="mf-summon-only" style="transform-box:fill-box; transform-origin:104px 100px; animation: mf-sparkle-b 620ms ease-out 1;">
+              <path d="M104,92 L105.4,97 L110,98.5 L105.4,100 L104,105 L102.6,100 L98,98.5 L102.6,97 Z" fill="#B8893C" />
+            </g>
+            <g class="mf-summon-only" style="transform-box:fill-box; transform-origin:73px 96px; animation: mf-sparkle-c 620ms ease-out 1;">
+              <path d="M73,90 L74.1,94 L78,95 L74.1,96 L73,100 L71.9,96 L68,95 L71.9,94 Z" fill="#EBDCBE" />
+            </g>
+            <g class="mf-picker-rest-only">
+              <g transform="translate(6,-8)"><rect x="93" y="96" width="30" height="22" rx="2" fill="#1F1A17" stroke="#B8893C" stroke-width="1.2" /><rect x="93" y="96" width="30" height="5" rx="2" fill="#332B25" /></g>
+              <g transform="translate(3,-4)"><rect x="93" y="96" width="30" height="22" rx="2" fill="#1F1A17" stroke="#B8893C" stroke-width="1.2" /><rect x="93" y="96" width="30" height="5" rx="2" fill="#332B25" /></g>
+              <g>
+                <rect x="93" y="96" width="30" height="22" rx="2" fill="#1F1A17" stroke="#B8893C" stroke-width="1.2" />
+                <rect x="93" y="96" width="30" height="5" rx="2" fill="#332B25" />
+                <path d="M97,107 L101,110.5 L97,114" stroke="#B8893C" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+                <line x1="103" y1="114" x2="109" y2="114" stroke="#B8893C" stroke-width="1.3" stroke-linecap="round" />
+              </g>
+            </g>
+            <g class="mf-delivering-only" style="transform-box:fill-box; transform-origin:0% 0%; animation: mf-offer 1.6s ease-in-out infinite;">
+              <rect x="94" y="98" width="26" height="20" rx="2.5" fill="#F4ECD9" stroke="#2A241F" stroke-width="1.4" />
+              <circle cx="99" cy="103.5" r="2" fill="#B8893C" />
+              <path d="M96,115 L104,106 L109,111 L114,104 L118,115 Z" fill="#2A241F" />
+            </g>
+            <g class="mf-delivery-failed-only" style="transform-box:fill-box; transform-origin:50% 100%; animation: mf-terminal-fall 900ms cubic-bezier(0.4,0,0.7,1) forwards;">
+              <rect x="93" y="96" width="30" height="22" rx="2" fill="#1F1A17" stroke="#B8893C" stroke-width="1.2" />
+              <rect x="93" y="96" width="30" height="5" rx="2" fill="#332B25" />
+              <path d="M97,107 L101,110.5 L97,114" stroke="#B8893C" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+              <line x1="103" y1="114" x2="109" y2="114" stroke="#B8893C" stroke-width="1.3" stroke-linecap="round" />
+              <line x1="95.5" y1="98.5" x2="120.5" y2="115.5" stroke="#C0392B" stroke-width="2.4" stroke-linecap="round" />
+              <line x1="120.5" y1="98.5" x2="95.5" y2="115.5" stroke="#C0392B" stroke-width="2.4" stroke-linecap="round" />
+            </g>
             <g class="mf-body">
               <path d="M47,150 L50,99 Q62,91 74,99 L77,150 Z" fill="#2A241F" />
               <path d="M56,98 L68,98 L65,142 L59,142 Z" fill="#F4ECD9" />
@@ -671,6 +900,7 @@ body {
               <g class="mf-arm">
                 <path d="M74,100 Q84,104 88,110" stroke="#2A241F" stroke-width="7" fill="none" stroke-linecap="round" />
                 <circle cx="88" cy="111" r="4.6" fill="#F4ECD9" stroke="#2A241F" stroke-width="1" />
+                <rect class="mf-refused-only" x="86.3" y="98" width="3.4" height="12" rx="1.7" fill="#F4ECD9" stroke="#2A241F" stroke-width="1" />
               </g>
               <circle cx="62" cy="73" r="18" fill="#EBDCBE" stroke="#2A241F" stroke-width="1.4" />
               <g class="mf-eyes">

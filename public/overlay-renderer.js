@@ -128,6 +128,7 @@ window.mistrFlow.onOverlayState((snapshot) => {
   overlayEl.classList.add(`mf-state-${snapshot.phase}`);
   mascotEl.classList.remove(`mf-state-${previousPhase}`);
   mascotEl.classList.add(`mf-state-${snapshot.phase}`);
+  mascotEl.classList.toggle("mf-picker-summoning", Boolean(snapshot.pickerSummoning));
   statusCopyEl.textContent = snapshot.statusCopy;
   toastEl.textContent = snapshot.toastCopy || "";
   renderCapturePickerEntries(snapshot);
