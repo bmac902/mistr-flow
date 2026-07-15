@@ -1,3 +1,16 @@
+## Latest session handoff
+
+**`docs/handoff/2026-07-15-focus-on-deliver-fixed-next-33-work-machine.md`** — read this first. It states what to pick up next (issue #33), what shipped, and the debugging table for `focusOnDeliver`.
+
+Most handoffs in `docs/handoff/` are machine-local (excluded via `.git/info/exclude`, which does not travel), so on a fresh clone that folder looks empty. The one named above is **force-added and tracked** on purpose, so it survives a `git pull` on another machine. If you write a handoff that a *different machine* needs, `git add -f` it — otherwise it silently never leaves the machine that wrote it.
+
+## Running Mistr Flow on a fresh machine
+
+- `npm start` (= `npm run build && electron .`). **`dist/` is gitignored**, so a fresh clone has no build until this runs.
+- The desktop shortcut (`npm run install:shortcut`) is pinned to the folder it was created from — cloning to a *new* folder does **not** repoint an existing shortcut. Re-run `install:shortcut` in the new folder, or launch with `npm start`.
+- Config is **per-machine** at `%APPDATA%\MistrFlow\config.json` and is **not** in the repo. A new machine starts with none of your flags. Notably `focusOnDeliver` defaults to `false`, so focus-after-delivery does nothing until you set `"focusOnDeliver": true` there.
+- Capture/focus behaviour has **no visible UI change** — do not expect the app to look different. The difference is what happens after delivery.
+
 ## Agent skills
 
 ### Issue tracker
