@@ -5,6 +5,7 @@ import {
   clipboard,
   globalShortcut,
   ipcMain,
+  nativeImage,
   screen,
   session as electronSession,
   dialog,
@@ -30,7 +31,7 @@ import { createDictationCancelledError, runDictationSession } from "./dictation"
 import { polishTranscript, transcribeAudio } from "./openai";
 import { buildPolishVocabularyInstruction, buildWhisperVocabularyPrompt } from "./vocabulary";
 import { pasteText as pasteTextImpl } from "./paste";
-import { buildOverlaySnapshot, buildRefusedOverlaySnapshot } from "./overlay";
+import { buildOverlaySnapshot, buildRefusedOverlaySnapshot, type OverlaySnapshot } from "./overlay";
 import { createActiveVerbLock } from "./activeVerbLock";
 import {
   clampOverlayPosition,
@@ -39,6 +40,21 @@ import {
 } from "./overlayPosition";
 import { createSessionIdleReturn, type SessionIdleReturn } from "./sessionIdleReturn";
 import { muteSystemAudio, type SystemAudioMuteHandle } from "./systemAudio";
+import { captureActiveWindow as captureActiveWindowImpl, type CaptureArtifact } from "./capture";
+import {
+  createCaptureGrabFailedError,
+  runCaptureSession,
+  type CaptureDeliverOutcome,
+  type CapturePickerHandle,
+} from "./captureSession";
+import { createCapturePickerHandle } from "./capturePickerHandle";
+import { queryHerdr } from "./herdr";
+import {
+  capturePickerWindowHeight,
+  resolveGrownWindowBounds,
+  type WindowBounds,
+} from "./captureWindowBounds";
+import { nativeWindowHandleToHwnd } from "./nativeWindowHandle";
 
 let overlayWindow: BrowserWindow | null = null;
 let apiKey = "";
@@ -62,10 +78,45 @@ let quitAfterSessionCleanup = false;
 // near-simultaneous globalShortcut callbacks from starting two verbs at once.
 const verbLock = createActiveVerbLock();
 
+// Bounds the overlay window is grown back down to on dismiss, failure, or
+// completion of a capture session (issue #31, PRD #24) — captured fresh at
+// the start of each session, since the overlay can be dragged between runs.
+let captureRestingBounds: WindowBounds | null = null;
+
+const CAPTURE_WINDOW_RESTORE_PHASES: ReadonlySet<OverlaySnapshot["phase"]> = new Set([
+  "error",
+  "cancelled",
+  "capture-delivered",
+  "capture-delivery-failed",
+]);
+
 function sendToRenderer(channel: string, payload?: unknown): void {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.webContents.send(channel, payload);
   }
+}
+
+function applyCaptureWindowBounds(snapshot: OverlaySnapshot): void {
+  if (!overlayWindow || overlayWindow.isDestroyed() || !captureRestingBounds) return;
+
+  if (snapshot.phase === "capture-picker") {
+    const bounds = resolveGrownWindowBounds({
+      restingBounds: captureRestingBounds,
+      grownHeight: capturePickerWindowHeight(snapshot.captureTargets?.length ?? 0),
+      workArea: screen.getPrimaryDisplay().workArea,
+    });
+    overlayWindow.setBounds(bounds);
+    return;
+  }
+
+  if (CAPTURE_WINDOW_RESTORE_PHASES.has(snapshot.phase)) {
+    overlayWindow.setBounds(captureRestingBounds);
+  }
+}
+
+function showCaptureOverlay(snapshot: OverlaySnapshot): void {
+  sendToRenderer("overlay-state", snapshot);
+  applyCaptureWindowBounds(snapshot);
 }
 
 function beep(): void {
@@ -242,6 +293,82 @@ function registerHotkey(): void {
   }
 }
 
+const CAPTURE_ACCELERATOR = "Control+Shift+`";
+
+function registerCaptureHotkey(): void {
+  const registered = globalShortcut.register(CAPTURE_ACCELERATOR, () => {
+    if (!verbLock.tryStart("capture")) {
+      sendToRenderer("overlay-state", buildRefusedOverlaySnapshot());
+      return;
+    }
+
+    startCapture();
+  });
+
+  if (!registered) {
+    throw new Error(
+      `Failed to register global hotkey "${CAPTURE_ACCELERATOR}". It may already be in use by another app.`,
+    );
+  }
+}
+
+function grabActiveWindow(): Promise<CaptureArtifact> {
+  const excludeHwnd = overlayWindow
+    ? nativeWindowHandleToHwnd(overlayWindow.getNativeWindowHandle())
+    : undefined;
+
+  return captureActiveWindowImpl({ excludeHwnd }).then((result) => {
+    if (result.kind === "capture-failed") {
+      throw createCaptureGrabFailedError(result.code, result.message);
+    }
+    return result.artifact;
+  });
+}
+
+function copyCaptureToClipboard(artifact: CaptureArtifact): void {
+  clipboard.writeImage(nativeImage.createFromPath(artifact.pngPath));
+}
+
+async function deliverCapture(): Promise<CaptureDeliverOutcome> {
+  // Delivery execution lands in #32, gated on the live delivery spike (#28) —
+  // truthfully "not yet possible" rather than a fake success.
+  return {
+    kind: "failed",
+    code: "delivery-not-implemented",
+    message: "Delivery isn't wired up yet — Clipboard only, sir.",
+  };
+}
+
+function openCapturePicker(): CapturePickerHandle {
+  return createCapturePickerHandle({
+    shortcuts: {
+      register: (accelerator, callback) => globalShortcut.register(accelerator, callback),
+      unregister: (accelerator) => globalShortcut.unregister(accelerator),
+    },
+  });
+}
+
+function startCapture(): void {
+  captureRestingBounds = overlayWindow && !overlayWindow.isDestroyed()
+    ? overlayWindow.getBounds()
+    : null;
+
+  void runCaptureSession({
+    showOverlay: (snapshot) => showCaptureOverlay(snapshot),
+    captureActiveWindow: () => grabActiveWindow(),
+    openPicker: () => openCapturePicker(),
+    queryEligibleTargets: () => queryHerdr({}),
+    copyToClipboard: (artifact) => copyCaptureToClipboard(artifact),
+    deliver: () => deliverCapture(),
+  })
+    .then((result) => console.log("[mistr-flow] capture session result:", result.kind))
+    .catch((error) => console.error("[mistr-flow] capture session failed:", error))
+    .finally(() => {
+      verbLock.release("capture");
+      captureRestingBounds = null;
+    });
+}
+
 function createOverlayWindow(savedPosition: OverlayPosition | null = null): BrowserWindow {
   const display = screen.getPrimaryDisplay();
   const winWidth = 292;
@@ -391,6 +518,7 @@ app.whenReady().then(async () => {
 
   try {
     registerHotkey();
+    registerCaptureHotkey();
   } catch (error) {
     dialog.showErrorBox("Mistr Flow hotkey error", String(error));
   }
