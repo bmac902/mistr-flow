@@ -1,0 +1,69 @@
+{
+  "result": {
+    "panes": [
+      {
+        "terminal_id": "term_A1",
+        "agent": "claude",
+        "agent_status": "idle",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "ses_A1"
+        },
+        "cwd": "mistr-flow — capture adapter"
+      },
+      {
+        "terminal_id": "term_B1",
+        "agent": "codex",
+        "agent_status": "working",
+        "agent_session": {
+          "agent": "codex",
+          "kind": "id",
+          "source": "herdr:codex",
+          "value": "ses_B1"
+        },
+        "cwd": "herdr — pane list"
+      },
+      {
+        "terminal_id": "term_C1",
+        "agent": "claude",
+        "agent_status": "dead",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "ses_C1"
+        },
+        "cwd": "old-branch — abandoned"
+      },
+      {
+        "terminal_id": "term_D1",
+        "agent": "codex",
+        "agent_status": "done",
+        "agent_session": {
+          "agent": "codex",
+          "kind": "id",
+          "source": "herdr:codex",
+          "value": "ses_D1"
+        },
+        "cwd": "release — shipped"
+      },
+      {
+        "terminal_id": "term_E1",
+        "agent_status": "unknown",
+        "cwd": "~/work — zsh"
+      },
+      {
+        "terminal_id": "term_F1",
+        "agent": "claude",
+        "agent_status": "idle",
+        "cwd": "docs — no session metadata yet"
+      },
+      {
+        "terminal_id": "term_G1",
+        "cwd": "nvim — notes.md"
+      }
+    ]
+  }
+}

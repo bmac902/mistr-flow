@@ -5,10 +5,14 @@ import test from "node:test";
 
 import {
   buildCancelledOverlaySnapshot,
+  buildCaptureDeliveryFailedOverlaySnapshot,
+  buildCapturePickerOverlaySnapshot,
   buildOverlaySnapshot,
   buildErrorOverlaySnapshot,
+  buildRefusedOverlaySnapshot,
   runHappyPathOverlaySession,
 } from "../src/overlay";
+import type { EligibleTarget } from "../src/herdr";
 
 const rootDir = path.join(__dirname, "..");
 
@@ -21,6 +25,7 @@ const expectedStatusCopy = {
   done: "Pasted, sir.",
   error: "Mistr Flo tripped over the microphone.",
   cancelled: "Very well. We shall pretend that never happened.",
+  refused: "One thing at a time, sir.",
 } as const;
 
 function deferred<T>() {
@@ -80,6 +85,11 @@ test("buildOverlaySnapshot distinguishes idle from active happy-path states", ()
   assert.equal(error.toastCopy, undefined);
 
   assert.equal(erroredWithToast.toastCopy, "Transcription failed.");
+
+  const refused = buildRefusedOverlaySnapshot();
+  assert.equal(refused.barMode, "expanded");
+  assert.equal(refused.waveformVisible, false);
+  assert.equal(refused.mascotCopy, "wags a scolding finger");
 });
 
 test("buildOverlaySnapshot exposes exact Mistr Flow status copy for every phase", () => {
@@ -87,10 +97,59 @@ test("buildOverlaySnapshot exposes exact Mistr Flow status copy for every phase"
     const snapshot =
       phase === "error"
         ? buildErrorOverlaySnapshot()
-        : buildOverlaySnapshot(phase as Parameters<typeof buildOverlaySnapshot>[0]);
+        : phase === "refused"
+          ? buildRefusedOverlaySnapshot()
+          : buildOverlaySnapshot(phase as Parameters<typeof buildOverlaySnapshot>[0]);
 
     assert.equal(snapshot.statusCopy, statusCopy);
   }
+});
+
+test("buildOverlaySnapshot pins placeholder copy for every Capture phase (issue #30, PRD #24)", () => {
+  const target: EligibleTarget = {
+    target: "herdr-session-a",
+    label: "claude · idle — pane a",
+    agentStatus: "idle",
+  };
+
+  const summoning = buildCapturePickerOverlaySnapshot([]);
+  assert.equal(summoning.phase, "capture-picker");
+  assert.equal(summoning.statusCopy, "Summoning targets…");
+  assert.deepEqual(summoning.captureTargets, []);
+  assert.equal(summoning.toastCopy, undefined);
+
+  const populated = buildCapturePickerOverlaySnapshot([target]);
+  assert.equal(populated.statusCopy, "Pick your target, sir.");
+  assert.deepEqual(populated.captureTargets, [target]);
+
+  const localOnly = buildCapturePickerOverlaySnapshot(
+    [],
+    "Herdr isn't installed or running — Clipboard only, sir.",
+  );
+  assert.equal(localOnly.statusCopy, "Pick your target, sir.");
+  assert.equal(
+    localOnly.toastCopy,
+    "Herdr isn't installed or running — Clipboard only, sir.",
+  );
+
+  const delivering = buildOverlaySnapshot("capture-delivering");
+  assert.equal(delivering.statusCopy, "Delivering to the pane…");
+
+  const delivered = buildOverlaySnapshot("capture-delivered");
+  assert.equal(delivered.statusCopy, "Delivered, sir.");
+
+  const deliveryUnknown = buildOverlaySnapshot("capture-delivery-unknown");
+  assert.equal(
+    deliveryUnknown.statusCopy,
+    "Not sure that landed — try again?",
+  );
+
+  const deliveryFailed = buildCaptureDeliveryFailedOverlaySnapshot(
+    "That pane has left the building.",
+  );
+  assert.equal(deliveryFailed.phase, "capture-delivery-failed");
+  assert.equal(deliveryFailed.statusCopy, "That pane didn't take it.");
+  assert.equal(deliveryFailed.toastCopy, "That pane has left the building.");
 });
 
 test("overlay html contains Mistr Flow card, mascot, state hooks, and reduced motion rules", () => {
@@ -183,6 +242,15 @@ test("preload and main expose mouse pass-through and overlay movement IPC", () =
   assert.match(main, /beginSessionCleanup/);
   assert.match(main, /app\.on\("before-quit"/);
   assert.match(main, /quitAfterSessionCleanup/);
+});
+
+test("main consults the authoritative active-verb lock before starting dictation and releases it on cleanup", () => {
+  const main = readFileSync(path.join(rootDir, "src", "main.ts"), "utf8");
+
+  assert.match(main, /createActiveVerbLock/);
+  assert.match(main, /verbLock\.tryStart\("dictation"\)/);
+  assert.match(main, /verbLock\.release\("dictation"\)/);
+  assert.match(main, /buildRefusedOverlaySnapshot/);
 });
 
 test("reusable design components gate animation completion to deterministic finite animations", () => {

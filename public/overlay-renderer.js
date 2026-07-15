@@ -3,6 +3,7 @@ const cardEl = document.getElementById("mistr-flow-card");
 const mascotEl = document.getElementById("mascot");
 const statusCopyEl = document.getElementById("status-copy");
 const toastEl = document.getElementById("toast");
+const pickerEntriesEl = document.getElementById("capture-picker-entries");
 
 let mediaRecorder = null;
 let chunks = [];
@@ -92,6 +93,34 @@ window.mistrFlow.onStartRecording(() => {
 window.mistrFlow.onStopRecording(() => stopAndSendRecording());
 window.mistrFlow.onCancelRecording(() => cancelRecording());
 
+function buildPickerEntryEl(digit, label) {
+  const entry = document.createElement("div");
+  entry.className = "capture-picker-entry";
+  entry.dataset.digit = String(digit);
+
+  const digitEl = document.createElement("span");
+  digitEl.className = "capture-picker-entry-digit";
+  digitEl.textContent = String(digit);
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "capture-picker-entry-label";
+  labelEl.textContent = label;
+
+  entry.appendChild(digitEl);
+  entry.appendChild(labelEl);
+  return entry;
+}
+
+function renderCapturePickerEntries(snapshot) {
+  pickerEntriesEl.textContent = "";
+  if (snapshot.phase !== "capture-picker") return;
+
+  pickerEntriesEl.appendChild(buildPickerEntryEl(1, "Clipboard"));
+  for (const [index, target] of (snapshot.captureTargets || []).entries()) {
+    pickerEntriesEl.appendChild(buildPickerEntryEl(index + 2, target.label));
+  }
+}
+
 window.mistrFlow.onOverlayState((snapshot) => {
   const previousPhase = overlayEl.dataset.phase || "idle";
   overlayEl.dataset.phase = snapshot.phase;
@@ -99,8 +128,10 @@ window.mistrFlow.onOverlayState((snapshot) => {
   overlayEl.classList.add(`mf-state-${snapshot.phase}`);
   mascotEl.classList.remove(`mf-state-${previousPhase}`);
   mascotEl.classList.add(`mf-state-${snapshot.phase}`);
+  mascotEl.classList.toggle("mf-picker-summoning", Boolean(snapshot.pickerSummoning));
   statusCopyEl.textContent = snapshot.statusCopy;
   toastEl.textContent = snapshot.toastCopy || "";
+  renderCapturePickerEntries(snapshot);
 });
 
 window.addEventListener("mousemove", updateMousePassThrough);

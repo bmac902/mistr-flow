@@ -11,6 +11,14 @@ import { execFileSync } from "node:child_process";
 
 function selectIssues(spec,opts){const readyQuery={command:"gh",args:["issue","list","--state","open","--label","ready-for-agent","--limit","100","--json","number,title,body,labels,comments","--jq","[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]"]};if(!spec||spec.mode!=="curated"){return{mode:"attack-all",query:readyQuery}}const handled=new Set(opts&&opts.handled||[]);const seen=new Set;const queue=[];for(const n of spec.issues||[]){if(typeof n!=="number"||!Number.isInteger(n)||n<=0)continue;if(seen.has(n))continue;seen.add(n);if(handled.has(n))continue;queue.push(n)}const cap=typeof spec.maxIterations==="number"&&Number.isInteger(spec.maxIterations)&&spec.maxIterations>0?spec.maxIterations:seen.size;return{mode:"curated",issues:queue.slice(0,cap)}}
 
+function curatedInstruction(count){if(!(count>0))return"";return`CURATED BATCH MODE \u2014 ${count} issue(s) remain, listed below in the exact order the operator chose. That order already encodes every dependency between them, so in this mode:
+
+- Work the FIRST issue in the list this iteration. Do NOT treat an issue's \`## Blocked by\` field or its open/closed state as a gate \u2014 the operator's order is the plan.
+- An earlier issue in this batch still being OPEN is NOT a blocker: RALPH commits but never closes, so completed work stays open by design. Its code is already committed on this branch \u2014 build on it.
+- Do NOT output <promise>COMPLETE</promise> while any issue remains in the list below. Only stop once this list is empty (every issue has been worked and carries a RALPH report), or you are genuinely blocked on the specific issue in front of you.
+
+The ${count} issue(s) to work, in order:`}
+
 function readBatchSpec() {
   try {
     return JSON.parse(readFileSync(".sandcastle/batch.json", "utf8"));
@@ -66,7 +74,11 @@ function main() {
   const plan = selectIssues(spec, { handled });
   const byNumber = new Map(details.map((i) => [i.number, i]));
   const out = plan.issues.map((n) => byNumber.get(n)).filter(Boolean);
-  process.stdout.write(JSON.stringify(out));
+  // #243: prepend the curated-mode instruction so the agent works the operator's
+  // full order and does not self-gate on Blocked-by / open state. Empty queue =>
+  // empty preamble, so a drained batch still completes cleanly.
+  const preamble = curatedInstruction(out.length);
+  process.stdout.write((preamble ? preamble + "\n\n" : "") + JSON.stringify(out));
 }
 
 main();

@@ -23,7 +23,7 @@ Control Room's New Project **Sandcastle module**; edit them to taste.
    ```
 
 3. **Build the sandbox image** once. This tags the image `sandcastle:mistr-flow` — the
-   exact name `.sandcastle/main.ts` runs against:
+   exact name the Sandcastle entrypoint (`.sandcastle/main.mts`) runs against:
 
    ```sh
    npx @ai-hero/sandcastle docker build-image --image-name sandcastle:mistr-flow
@@ -36,3 +36,35 @@ npm run sandcastle              # one iteration
 npm run sandcastle -- -n 5      # five iterations
 npm run sandcastle -- -m claude-opus-4-8   # a harder model
 ```
+
+## Live streaming (Tier-2, opt-in — Control Room #202)
+
+By default a batch is observable **post-hoc**: its captured session appears in the
+fleet on the next poll after each iteration ends (Tier-1). To stream a batch **live**
+as it works, wire Sandcastle's `onAgentStreamEvent` into the tool-owned forwarder
+`.sandcastle/control-room/stream-forward.mjs`, which projects each agent
+`text`/`toolCall` event into a Claude-shaped entry and live-appends it under
+`SANDCASTLE_TRANSCRIPTS_DIR/<slug>/<sessionId>.jsonl` — the directory Control Room's
+backend tails (agent-tagged **Sandcastle**). It carries no secrets and never throws,
+so it degrades gracefully to Tier-1 if it fails.
+
+In `.sandcastle/main.mts`, import the forwarder and add a `logging` block to `run()`:
+
+```ts
+import { createStreamForwarder } from "./control-room/stream-forward.mjs";
+// ...
+await run({
+  // ...
+  logging: {
+    type: "file",
+    // NOTE: setting `logging.path` overrides Sandcastle's default worker-log path,
+    // which Control Room's harvest keys off (`.sandcastle/logs/sandcastle-batch-<runId>-worker.log`).
+    // Set it to that exact derived path if you rely on harvest, or accept the relocation.
+    path: ".sandcastle/logs/worker.log",
+    onAgentStreamEvent: createStreamForwarder({ cwd: process.cwd(), model }),
+  },
+});
+```
+
+Point the backend at the same directory by setting `SANDCASTLE_TRANSCRIPTS_DIR`
+(both default to `~/.sandcastle/live-transcripts`).

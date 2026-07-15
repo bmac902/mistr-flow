@@ -1,0 +1,16 @@
+{
+  "result": {
+    "panes": [
+      { "terminal_id": "term_overflow_01", "agent": "claude", "agent_status": "idle", "agent_session": { "agent": "claude", "kind": "id", "source": "herdr:claude", "value": "ses_overflow_01" }, "cwd": "repo-01" },
+      { "terminal_id": "term_overflow_02", "agent": "claude", "agent_status": "working", "agent_session": { "agent": "claude", "kind": "id", "source": "herdr:claude", "value": "ses_overflow_02" }, "cwd": "repo-02" },
+      { "terminal_id": "term_overflow_03", "agent": "codex", "agent_status": "idle", "agent_session": { "agent": "codex", "kind": "id", "source": "herdr:codex", "value": "ses_overflow_03" }, "cwd": "repo-03" },
+      { "terminal_id": "term_overflow_04", "agent": "codex", "agent_status": "working", "agent_session": { "agent": "codex", "kind": "id", "source": "herdr:codex", "value": "ses_overflow_04" }, "cwd": "repo-04" },
+      { "terminal_id": "term_overflow_05", "agent": "claude", "agent_status": "idle", "agent_session": { "agent": "claude", "kind": "id", "source": "herdr:claude", "value": "ses_overflow_05" }, "cwd": "repo-05" },
+      { "terminal_id": "term_overflow_06", "agent": "claude", "agent_status": "working", "agent_session": { "agent": "claude", "kind": "id", "source": "herdr:claude", "value": "ses_overflow_06" }, "cwd": "repo-06" },
+      { "terminal_id": "term_overflow_07", "agent": "codex", "agent_status": "idle", "agent_session": { "agent": "codex", "kind": "id", "source": "herdr:codex", "value": "ses_overflow_07" }, "cwd": "repo-07" },
+      { "terminal_id": "term_overflow_08", "agent": "codex", "agent_status": "working", "agent_session": { "agent": "codex", "kind": "id", "source": "herdr:codex", "value": "ses_overflow_08" }, "cwd": "repo-08" },
+      { "terminal_id": "term_overflow_09", "agent": "claude", "agent_status": "idle", "agent_session": { "agent": "claude", "kind": "id", "source": "herdr:claude", "value": "ses_overflow_09" }, "cwd": "repo-09" },
+      { "terminal_id": "term_overflow_10", "agent": "codex", "agent_status": "working", "agent_session": { "agent": "codex", "kind": "id", "source": "herdr:codex", "value": "ses_overflow_10" }, "cwd": "repo-10" }
+    ]
+  }
+}

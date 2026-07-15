@@ -5,6 +5,7 @@ import {
   clipboard,
   globalShortcut,
   ipcMain,
+  nativeImage,
   screen,
   session as electronSession,
   dialog,
@@ -21,6 +22,7 @@ import {
 import {
   getConfigPath,
   readAzureOpenAiConfig,
+  readFocusOnDeliver,
   readMuteSystemAudioWhileRecording,
   readOverlayPosition,
   readVocabularyConfig,
@@ -31,7 +33,8 @@ import { createDictationCancelledError, runDictationSession } from "./dictation"
 import { polishTranscript, transcribeAudio } from "./openai";
 import { buildPolishVocabularyInstruction, buildWhisperVocabularyPrompt } from "./vocabulary";
 import { pasteText as pasteTextImpl } from "./paste";
-import { buildOverlaySnapshot } from "./overlay";
+import { buildOverlaySnapshot, buildRefusedOverlaySnapshot, type OverlaySnapshot } from "./overlay";
+import { createActiveVerbLock } from "./activeVerbLock";
 import {
   clampOverlayPosition,
   resolveOverlayPosition,
@@ -39,6 +42,21 @@ import {
 } from "./overlayPosition";
 import { createSessionIdleReturn, type SessionIdleReturn } from "./sessionIdleReturn";
 import { muteSystemAudio, type SystemAudioMuteHandle } from "./systemAudio";
+import { captureActiveWindow as captureActiveWindowImpl, type CaptureArtifact } from "./capture";
+import {
+  createCaptureGrabFailedError,
+  runCaptureSession,
+  type CapturePickerHandle,
+} from "./captureSession";
+import { createCapturePickerHandle } from "./capturePickerHandle";
+import { createHerdrDeliveryAdapter } from "./deliver";
+import { queryHerdr } from "./herdr";
+import {
+  capturePickerWindowHeight,
+  resolveGrownWindowBounds,
+  type WindowBounds,
+} from "./captureWindowBounds";
+import { nativeWindowHandleToHwnd } from "./nativeWindowHandle";
 
 let overlayWindow: BrowserWindow | null = null;
 let azureConfig: AzureOpenAiConfig | null = null;
@@ -57,10 +75,50 @@ interface ActiveSession {
 let activeSession: ActiveSession | null = null;
 let quitAfterSessionCleanup = false;
 
+// Authoritative synchronous check-and-set lock, consulted at the top of
+// every global-hotkey entry point. A pure policy check alone can't prevent
+// near-simultaneous globalShortcut callbacks from starting two verbs at once.
+const verbLock = createActiveVerbLock();
+
+// Bounds the overlay window is grown back down to on dismiss, failure, or
+// completion of a capture session (issue #31, PRD #24) — captured fresh at
+// the start of each session, since the overlay can be dragged between runs.
+let captureRestingBounds: WindowBounds | null = null;
+
+const CAPTURE_WINDOW_RESTORE_PHASES: ReadonlySet<OverlaySnapshot["phase"]> = new Set([
+  "error",
+  "cancelled",
+  "capture-delivered",
+  "capture-delivery-failed",
+]);
+
 function sendToRenderer(channel: string, payload?: unknown): void {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.webContents.send(channel, payload);
   }
+}
+
+function applyCaptureWindowBounds(snapshot: OverlaySnapshot): void {
+  if (!overlayWindow || overlayWindow.isDestroyed() || !captureRestingBounds) return;
+
+  if (snapshot.phase === "capture-picker") {
+    const bounds = resolveGrownWindowBounds({
+      restingBounds: captureRestingBounds,
+      grownHeight: capturePickerWindowHeight(snapshot.captureTargets?.length ?? 0),
+      workArea: screen.getPrimaryDisplay().workArea,
+    });
+    overlayWindow.setBounds(bounds);
+    return;
+  }
+
+  if (CAPTURE_WINDOW_RESTORE_PHASES.has(snapshot.phase)) {
+    overlayWindow.setBounds(captureRestingBounds);
+  }
+}
+
+function showCaptureOverlay(snapshot: OverlaySnapshot): void {
+  sendToRenderer("overlay-state", snapshot);
+  applyCaptureWindowBounds(snapshot);
 }
 
 function beep(): void {
@@ -197,6 +255,7 @@ function beginSessionCleanup(session: ActiveSession, cleanup: Promise<void>): vo
   globalShortcut.unregister("Escape");
   session.cleanupPromise = cleanup.finally(() => {
     if (activeSession === session) activeSession = null;
+    verbLock.release("dictation");
     session.idleReturn.afterCleanup();
 
     if (quitAfterSessionCleanup) {
@@ -232,9 +291,15 @@ function registerHotkey(): void {
   const registered = globalShortcut.register(TOGGLE_ACCELERATOR, () => {
     if (activeSession) {
       endSession("release");
-    } else {
-      startSession();
+      return;
     }
+
+    if (!verbLock.tryStart("dictation")) {
+      sendToRenderer("overlay-state", buildRefusedOverlaySnapshot());
+      return;
+    }
+
+    startSession();
   });
 
   if (!registered) {
@@ -242,6 +307,77 @@ function registerHotkey(): void {
       `Failed to register global hotkey "${TOGGLE_ACCELERATOR}". It may already be in use by another app.`,
     );
   }
+}
+
+const CAPTURE_ACCELERATOR = "Control+Shift+`";
+
+function registerCaptureHotkey(): void {
+  const registered = globalShortcut.register(CAPTURE_ACCELERATOR, () => {
+    if (!verbLock.tryStart("capture")) {
+      sendToRenderer("overlay-state", buildRefusedOverlaySnapshot());
+      return;
+    }
+
+    startCapture();
+  });
+
+  if (!registered) {
+    throw new Error(
+      `Failed to register global hotkey "${CAPTURE_ACCELERATOR}". It may already be in use by another app.`,
+    );
+  }
+}
+
+function grabActiveWindow(): Promise<CaptureArtifact> {
+  const excludeHwnd = overlayWindow
+    ? nativeWindowHandleToHwnd(overlayWindow.getNativeWindowHandle())
+    : undefined;
+
+  return captureActiveWindowImpl({ excludeHwnd }).then((result) => {
+    if (result.kind === "capture-failed") {
+      throw createCaptureGrabFailedError(result.code, result.message);
+    }
+    return result.artifact;
+  });
+}
+
+function copyCaptureToClipboard(artifact: CaptureArtifact): void {
+  clipboard.writeImage(nativeImage.createFromPath(artifact.pngPath));
+}
+
+// One adapter instance for the app's lifetime: its delivery ledger must
+// persist across a session's unknown → retry digit presses (#32). Rebuilt
+// once at startup once config (focusOnDeliver) is known — see whenReady.
+let deliverCapture = createHerdrDeliveryAdapter();
+
+function openCapturePicker(): CapturePickerHandle {
+  return createCapturePickerHandle({
+    shortcuts: {
+      register: (accelerator, callback) => globalShortcut.register(accelerator, callback),
+      unregister: (accelerator) => globalShortcut.unregister(accelerator),
+    },
+  });
+}
+
+function startCapture(): void {
+  captureRestingBounds = overlayWindow && !overlayWindow.isDestroyed()
+    ? overlayWindow.getBounds()
+    : null;
+
+  void runCaptureSession({
+    showOverlay: (snapshot) => showCaptureOverlay(snapshot),
+    captureActiveWindow: () => grabActiveWindow(),
+    openPicker: () => openCapturePicker(),
+    queryEligibleTargets: () => queryHerdr({}),
+    copyToClipboard: (artifact) => copyCaptureToClipboard(artifact),
+    deliver: (capture, target) => deliverCapture(capture, target),
+  })
+    .then((result) => console.log("[mistr-flow] capture session result:", result.kind))
+    .catch((error) => console.error("[mistr-flow] capture session failed:", error))
+    .finally(() => {
+      verbLock.release("capture");
+      captureRestingBounds = null;
+    });
 }
 
 function createOverlayWindow(savedPosition: OverlayPosition | null = null): BrowserWindow {
@@ -372,6 +508,9 @@ app.whenReady().then(async () => {
   try {
     azureConfig = await readAzureOpenAiConfig();
     muteSystemAudioWhileRecording = await readMuteSystemAudioWhileRecording();
+    const focusOnDeliver = await readFocusOnDeliver();
+    console.log("[mistr-flow] config: focusOnDeliver =", focusOnDeliver);
+    deliverCapture = createHerdrDeliveryAdapter({ focusOnDeliver });
   } catch (error) {
     dialog.showErrorBox("Mistr Flow config error", String(error));
     app.quit();
@@ -401,6 +540,7 @@ app.whenReady().then(async () => {
 
   try {
     registerHotkey();
+    registerCaptureHotkey();
   } catch (error) {
     dialog.showErrorBox("Mistr Flow hotkey error", String(error));
   }
