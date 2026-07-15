@@ -7,6 +7,7 @@ import {
   buildCancelledOverlaySnapshot,
   buildOverlaySnapshot,
   buildErrorOverlaySnapshot,
+  buildRefusedOverlaySnapshot,
   runHappyPathOverlaySession,
 } from "../src/overlay";
 
@@ -21,6 +22,7 @@ const expectedStatusCopy = {
   done: "Pasted, sir.",
   error: "Mistr Flo tripped over the microphone.",
   cancelled: "Very well. We shall pretend that never happened.",
+  refused: "One thing at a time, sir.",
 } as const;
 
 function deferred<T>() {
@@ -80,6 +82,11 @@ test("buildOverlaySnapshot distinguishes idle from active happy-path states", ()
   assert.equal(error.toastCopy, undefined);
 
   assert.equal(erroredWithToast.toastCopy, "Transcription failed.");
+
+  const refused = buildRefusedOverlaySnapshot();
+  assert.equal(refused.barMode, "expanded");
+  assert.equal(refused.waveformVisible, false);
+  assert.equal(refused.mascotCopy, "wags a scolding finger");
 });
 
 test("buildOverlaySnapshot exposes exact Mistr Flow status copy for every phase", () => {
@@ -87,7 +94,9 @@ test("buildOverlaySnapshot exposes exact Mistr Flow status copy for every phase"
     const snapshot =
       phase === "error"
         ? buildErrorOverlaySnapshot()
-        : buildOverlaySnapshot(phase as Parameters<typeof buildOverlaySnapshot>[0]);
+        : phase === "refused"
+          ? buildRefusedOverlaySnapshot()
+          : buildOverlaySnapshot(phase as Parameters<typeof buildOverlaySnapshot>[0]);
 
     assert.equal(snapshot.statusCopy, statusCopy);
   }
@@ -183,6 +192,15 @@ test("preload and main expose mouse pass-through and overlay movement IPC", () =
   assert.match(main, /beginSessionCleanup/);
   assert.match(main, /app\.on\("before-quit"/);
   assert.match(main, /quitAfterSessionCleanup/);
+});
+
+test("main consults the authoritative active-verb lock before starting dictation and releases it on cleanup", () => {
+  const main = readFileSync(path.join(rootDir, "src", "main.ts"), "utf8");
+
+  assert.match(main, /createActiveVerbLock/);
+  assert.match(main, /verbLock\.tryStart\("dictation"\)/);
+  assert.match(main, /verbLock\.release\("dictation"\)/);
+  assert.match(main, /buildRefusedOverlaySnapshot/);
 });
 
 test("reusable design components gate animation completion to deterministic finite animations", () => {

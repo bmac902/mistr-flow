@@ -6,7 +6,8 @@ export type OverlayPhase =
   | "processing"
   | "polishing"
   | "done"
-  | "error";
+  | "error"
+  | "refused";
 
 export interface OverlaySnapshot {
   phase: OverlayPhase;
@@ -26,6 +27,7 @@ const STATUS_COPY: Record<OverlayPhase, string> = {
   polishing: "Ahem. Much better…",
   done: "Pasted, sir.",
   error: "Mistr Flo tripped over the microphone.",
+  refused: "One thing at a time, sir.",
 };
 
 const MASCOT_COPY: Record<OverlayPhase, string> = {
@@ -37,6 +39,7 @@ const MASCOT_COPY: Record<OverlayPhase, string> = {
   polishing: "brushes sentence ribbon",
   done: "top hat bow",
   error: "top hat askew",
+  refused: "wags a scolding finger",
 };
 
 export interface HappyPathOverlayDependencies {
@@ -108,6 +111,14 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
       };
     case "error":
       return buildErrorOverlaySnapshot();
+    case "refused":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: false,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
   }
 }
 
@@ -126,6 +137,10 @@ export function buildErrorOverlaySnapshot(
 
 export function buildCancelledOverlaySnapshot(): OverlaySnapshot {
   return buildOverlaySnapshot("cancelled");
+}
+
+export function buildRefusedOverlaySnapshot(): OverlaySnapshot {
+  return buildOverlaySnapshot("refused");
 }
 
 export async function runHappyPathOverlaySession(

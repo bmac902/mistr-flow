@@ -30,7 +30,8 @@ import { createDictationCancelledError, runDictationSession } from "./dictation"
 import { polishTranscript, transcribeAudio } from "./openai";
 import { buildPolishVocabularyInstruction, buildWhisperVocabularyPrompt } from "./vocabulary";
 import { pasteText as pasteTextImpl } from "./paste";
-import { buildOverlaySnapshot } from "./overlay";
+import { buildOverlaySnapshot, buildRefusedOverlaySnapshot } from "./overlay";
+import { createActiveVerbLock } from "./activeVerbLock";
 import {
   clampOverlayPosition,
   resolveOverlayPosition,
@@ -55,6 +56,11 @@ interface ActiveSession {
 
 let activeSession: ActiveSession | null = null;
 let quitAfterSessionCleanup = false;
+
+// Authoritative synchronous check-and-set lock, consulted at the top of
+// every global-hotkey entry point. A pure policy check alone can't prevent
+// near-simultaneous globalShortcut callbacks from starting two verbs at once.
+const verbLock = createActiveVerbLock();
 
 function sendToRenderer(channel: string, payload?: unknown): void {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
@@ -182,6 +188,7 @@ function beginSessionCleanup(session: ActiveSession, cleanup: Promise<void>): vo
   globalShortcut.unregister("Escape");
   session.cleanupPromise = cleanup.finally(() => {
     if (activeSession === session) activeSession = null;
+    verbLock.release("dictation");
     session.idleReturn.afterCleanup();
 
     if (quitAfterSessionCleanup) {
@@ -217,9 +224,15 @@ function registerHotkey(): void {
   const registered = globalShortcut.register(TOGGLE_ACCELERATOR, () => {
     if (activeSession) {
       endSession("release");
-    } else {
-      startSession();
+      return;
     }
+
+    if (!verbLock.tryStart("dictation")) {
+      sendToRenderer("overlay-state", buildRefusedOverlaySnapshot());
+      return;
+    }
+
+    startSession();
   });
 
   if (!registered) {
