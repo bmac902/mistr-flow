@@ -9,10 +9,21 @@ import { raiseHerdrWindow, type HerdrWindowOutcome } from "./herdrWindow";
 // Delivery execution (issue #32, PRD #24) — the mechanism proven by the live
 // spike (#28 findings, 2026-07-15) and only that mechanism: inject the
 // capture's exact absolute PNG path as the message text of
-// `herdr agent send <target> <path>`. Herdr's own image-path detection
-// upgrades the injected reference into a real multimodal attachment in the
-// pane — MF never sends keystrokes into it, and only focuses it when the user
-// opts in via `focusOnDeliver` (ADR 0001; focus mechanics in src/herdrWindow.ts).
+// `herdr agent send <target> <path>`. MF never sends keystrokes into the pane,
+// and only focuses it when the user opts in via `focusOnDeliver` (ADR 0001;
+// focus mechanics in src/herdrWindow.ts).
+//
+// Correction (2026-07-15, live): this used to say "Herdr's own image-path
+// detection upgrades the injected reference into a real multimodal attachment."
+// That is false. **Herdr does nothing with images** — its API schema contains no
+// occurrence of image/attach/multimodal/paste/upload/media, and `agent send` is
+// literally `<target> <text>`. The upgrade is done by the *receiving agent CLI*
+// (Claude Code detecting a path in its own input), not by Herdr.
+// Consequence, proven by delivering the same PNG twice: the receiving agent must
+// be **idle** when the text arrives. Delivered to an idle pane it attaches;
+// delivered mid-turn it lands as inert plain text and stays that way even after
+// the human submits it — detection runs when the text arrives, not on submit.
+// Either way the core guarantee holds: the agent can always `Read` the path.
 // `agent send` (not `pane run`) is required for two reasons, both confirmed
 // live: `pane run` only accepts the compact/positional pane_id, not the
 // durable target identity this adapter is handed; and `agent send` writes
