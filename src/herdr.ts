@@ -107,6 +107,21 @@ export interface WatchedAgent {
   readonly status: WatchedAgentStatus;
 }
 
+/**
+ * The result of a fleet-awareness poll (PRD #44): the current watched set, or
+ * an unreachable Herdr. Unlike {@link HerdrQueryResult} this has no
+ * `incompatible` arm — the poll runs after init, where the version check has
+ * already passed, and it deliberately maps every failure mode to a single
+ * `unavailable` so the fleetState tracker only ever sees "panes" or "not".
+ */
+export type WatchedSetResult =
+  | { readonly kind: "watched"; readonly agents: readonly WatchedAgent[] }
+  | {
+      readonly kind: "unavailable";
+      readonly code: HerdrFailureCode;
+      readonly message: string;
+    };
+
 /** The result of asking Herdr for eligible targets. */
 export type HerdrQueryResult =
   | { readonly kind: "targets"; readonly targets: readonly EligibleTarget[] }
@@ -259,6 +274,51 @@ export async function queryEligibleTargets(
   }
 
   return { kind: "targets", targets: mapPanesToTargets(panes) };
+}
+
+/**
+ * The fleet-awareness poll (PRD #44): a deadline-bounded `herdr pane list`
+ * mapped to the whole {@link mapPanesToWatchedSet Watched Set}. Reuses the same
+ * CLI shell-out (ADR 0001) and parser as the picker — no socket event stream,
+ * no new parse. Skips the version/capability handshake on purpose: this runs on
+ * a repeating timer after init, where availability is already established, so
+ * every failure (timeout, spawn error, unparseable output) collapses to a
+ * single `unavailable`, which the fleetState tracker renders as the honest
+ * `unknown` posture rather than a fake all-clear.
+ */
+export async function queryWatchedSet(
+  deps: HerdrAdapterDeps,
+): Promise<WatchedSetResult> {
+  const execFile = deps.execFile ?? defaultExecFile;
+  const clock = deps.clock ?? defaultClock;
+  const timeoutMs = deps.paneQueryTimeoutMs ?? PANE_QUERY_TIMEOUT_MS;
+
+  const outcome = await runHerdrWithDeadline(
+    execFile,
+    ["pane", "list"],
+    clock,
+    timeoutMs,
+  );
+
+  if (outcome.kind === "timeout") {
+    return unavailableWatchedSet("pane-query-timeout");
+  }
+  if (outcome.error) {
+    return unavailableWatchedSet("pane-query-failed");
+  }
+
+  let panes: RawPane[];
+  try {
+    panes = parsePaneList(outcome.stdout);
+  } catch {
+    return unavailableWatchedSet("pane-list-unreadable");
+  }
+
+  return { kind: "watched", agents: mapPanesToWatchedSet(panes) };
+}
+
+function unavailableWatchedSet(code: HerdrFailureCode): WatchedSetResult {
+  return { kind: "unavailable", code, message: safeMessageFor(code) };
 }
 
 interface RawPane {

@@ -15,6 +15,7 @@ import {
   parsePaneList,
   queryEligibleTargets,
   queryHerdr,
+  queryWatchedSet,
   safeMessageFor,
 } from "../src/herdr";
 
@@ -579,4 +580,81 @@ test("parseHerdrStatus treats an absent or empty socket as unknown, not a failur
     protocol: 16,
     socket: null,
   });
+});
+
+// ---------------------------------------------------------------------------
+// Fleet-awareness poll (queryWatchedSet — PRD #44)
+// ---------------------------------------------------------------------------
+
+test("queryWatchedSet returns the whole watched set, not just eligible targets", async () => {
+  const result = await queryWatchedSet({
+    execFile: makeAdapterExec({ paneList: { stdout: fixture("pane-list-mixed.json") } }),
+    clock: makeFakeClock().clock,
+  });
+
+  assert.equal(result.kind, "watched");
+  const agents = result.kind === "watched" ? result.agents : [];
+  // Every agent-labelled pane with a durable id — idle/working/dead/done/blocked
+  // alike — unlike the picker's 3 eligible (idle/working only) targets.
+  assert.deepEqual(
+    agents.map((a) => a.status).sort(),
+    ["blocked", "done", "idle", "idle", "unknown", "working"],
+  );
+  assert.ok(agents.some((a) => a.status === "blocked"), "keeps the blocked pane");
+});
+
+test("queryWatchedSet skips the version handshake — no status call is made", async () => {
+  let statusQueried = false;
+  const result = await queryWatchedSet({
+    execFile: makeExec((args, callback) => {
+      if (args[0] === "status") {
+        statusQueried = true;
+        callback(null, fixture("status-ok.json"), "");
+        return;
+      }
+      callback(null, fixture("pane-list-empty.json"), "");
+    }),
+    clock: makeFakeClock().clock,
+  });
+
+  assert.equal(result.kind, "watched");
+  assert.equal(statusQueried, false, "poll runs after init; no per-tick handshake");
+});
+
+test("a hung watched-set poll trips the deadline and maps to a single unavailable", async () => {
+  const fake = makeFakeClock();
+  const pending = queryWatchedSet({
+    execFile: makeAdapterExec({ paneList: "hang" }),
+    clock: fake.clock,
+    paneQueryTimeoutMs: 2000,
+  });
+
+  assert.deepEqual(fake.scheduledMs, [2000]);
+  fake.fire();
+
+  const result = await pending;
+  assert.equal(result.kind, "unavailable");
+  assert.equal(result.kind === "unavailable" ? result.code : null, "pane-query-timeout");
+});
+
+test("a watched-set exec error maps to unavailable, never a throw", async () => {
+  const result = await queryWatchedSet({
+    execFile: makeAdapterExec({
+      paneList: { error: Object.assign(new Error("boom"), { code: 2 }) },
+    }),
+    clock: makeFakeClock().clock,
+  });
+
+  assert.equal(result.kind, "unavailable");
+  assert.equal(result.kind === "unavailable" ? result.code : null, "pane-query-failed");
+});
+
+test("malformed watched-set output maps to unavailable, not a crash", async () => {
+  const result = await queryWatchedSet({
+    execFile: makeAdapterExec({ paneList: { stdout: "{ not an array }" } }),
+    clock: makeFakeClock().clock,
+  });
+
+  assert.equal(result.kind, "unavailable");
+  assert.equal(result.kind === "unavailable" ? result.code : null, "pane-list-unreadable");
 });

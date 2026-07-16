@@ -35,7 +35,13 @@ import { resolveAiProvider, type AiProvider } from "./aiProvider";
 import { createDictationCancelledError, runDictationSession } from "./dictation";
 import { buildPolishVocabularyInstruction, buildWhisperVocabularyPrompt } from "./vocabulary";
 import { pasteText as pasteTextImpl } from "./paste";
-import { buildOverlaySnapshot, buildRefusedOverlaySnapshot, type OverlaySnapshot } from "./overlay";
+import {
+  buildFleetPostureOverlaySnapshot,
+  buildOverlaySnapshot,
+  buildRefusedOverlaySnapshot,
+  type OverlaySnapshot,
+} from "./overlay";
+import { createFleetState, type FleetPosture } from "./fleetState";
 import { createActiveVerbLock } from "./activeVerbLock";
 import {
   clampOverlayPosition,
@@ -68,7 +74,7 @@ import {
   type ThumbnailImagePort,
 } from "./captureThumbnail";
 import { captureArtifactToPayload, createHerdrDeliveryAdapter } from "./deliver";
-import { queryHerdr } from "./herdr";
+import { queryHerdr, queryWatchedSet } from "./herdr";
 import {
   capturePickerWindowHeight,
   relayPickerWindowHeight,
@@ -161,6 +167,53 @@ function refuseVerb(): void {
       sendToRenderer("overlay-state", buildOverlaySnapshot("idle"));
     }
   }, REFUSED_HOLD_MS);
+}
+
+// Fleet awareness (PRD #44, issue #49): poll the whole Watched Set on a cheap
+// timer and let the pure fleetState tracker fold each snapshot into an ambient
+// posture. Cadence ~3.5s — spike-confirmed safe, and a real block holds far
+// longer, so polling loses nothing versus the socket stream (which stays out of
+// scope per ADR 0002). Polling runs continuously, even mid-verb, so the instant
+// the bar returns to idle the posture is already current.
+const FLEET_POLL_INTERVAL_MS = 3500;
+const fleetState = createFleetState();
+let fleetPollTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * The fleet posture is an expression of the *resting* bar only. During any
+ * verb the mascot does verb things (and a refusal notice owns the bar until it
+ * self-clears), so posture is rendered solely when nothing else holds the
+ * overlay. Polling itself never pauses — this only gates the render.
+ */
+function overlayIsResting(): boolean {
+  return verbLock.activeVerb() === null && refusedReturnTimer === null;
+}
+
+function renderFleetPosture(posture: FleetPosture): void {
+  if (!overlayIsResting()) return;
+  sendToRenderer("overlay-state", buildFleetPostureOverlaySnapshot(posture.tier));
+}
+
+async function pollFleetOnce(): Promise<void> {
+  const result = await queryWatchedSet({});
+  const posture =
+    result.kind === "watched"
+      ? fleetState.observe({ kind: "panes", agents: result.agents }, Date.now())
+      : fleetState.observe({ kind: "unavailable" }, Date.now());
+  renderFleetPosture(posture);
+}
+
+function startFleetPolling(): void {
+  if (fleetPollTimer) return;
+  void pollFleetOnce();
+  fleetPollTimer = setInterval(() => {
+    void pollFleetOnce().catch((error) => {
+      // A poll should never crash the timer — an unreachable Herdr is already
+      // modelled as the `unknown` posture, so anything reaching here is a bug
+      // we log and shrug off rather than let kill ambient awareness.
+      console.error("[mistr-flow] fleet poll failed:", error);
+    });
+  }, FLEET_POLL_INTERVAL_MS);
 }
 
 function applyCaptureWindowBounds(snapshot: OverlaySnapshot): void {
@@ -853,6 +906,8 @@ app.whenReady().then(async () => {
   } catch (error) {
     dialog.showErrorBox("Mistr Flow hotkey error", String(error));
   }
+
+  startFleetPolling();
 });
 
 app.on("window-all-closed", () => {
@@ -870,4 +925,8 @@ app.on("before-quit", (event) => {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  if (fleetPollTimer) {
+    clearInterval(fleetPollTimer);
+    fleetPollTimer = null;
+  }
 });

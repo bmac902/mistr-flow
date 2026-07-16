@@ -715,6 +715,32 @@ body {
   animation: mf-blink 5s ease-in-out infinite;
 }
 
+/* ── Fleet posture (PRD #44) — PLACEHOLDER visuals + data-phase hooks ──────── */
+/*
+ * Idle-only ambient postures for the blocked-count tiers and the honest
+ * "can't see the fleet" state. These are deliberately un-bespoke: the mascot
+ * keeps breathing/blinking (never frozen) and each phase carries a distinct
+ * data-phase / .mf-state-fleet-* hook for the Claude Design butler postures to
+ * be swapped in later. A slight upward hold hints at escalating attentiveness
+ * without hand-authoring art. Tier 0 is the plain .mf-state-idle bar.
+ */
+.mf-state-fleet-1 .mf-body,
+.mf-state-fleet-2-3 .mf-body,
+.mf-state-fleet-4-plus .mf-body,
+.mf-state-fleet-unknown .mf-body {
+  animation: mf-breathe 3.8s ease-in-out infinite;
+}
+.mf-state-fleet-1 .mf-eyes,
+.mf-state-fleet-2-3 .mf-eyes,
+.mf-state-fleet-4-plus .mf-eyes,
+.mf-state-fleet-unknown .mf-eyes {
+  animation: mf-blink 5s ease-in-out infinite;
+}
+.mf-state-fleet-1 .mf-hat { transform: translateY(-1px); }
+.mf-state-fleet-2-3 .mf-hat { transform: translateY(-2px); }
+.mf-state-fleet-4-plus .mf-hat { transform: translateY(-3px); }
+.mf-state-fleet-unknown .mf-body { transform: rotate(-2deg); }
+
 /* ── State: listening ─────────────────────────────────────────────────────── */
 
 .mf-state-listening .mf-body {
