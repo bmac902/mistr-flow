@@ -66,7 +66,11 @@ import {
   runCaptureSession,
   type CapturePickerHandle,
 } from "./captureSession";
-import { createCapturePickerHandle, type CropSource } from "./capturePickerHandle";
+import {
+  createCapturePickerHandle,
+  type AgainSource,
+  type CropSource,
+} from "./capturePickerHandle";
 import {
   cropCaptureImage,
   type CropImagePort,
@@ -78,6 +82,7 @@ import {
   type ThumbnailImagePort,
 } from "./captureThumbnail";
 import { captureArtifactToPayload, createHerdrDeliveryAdapter } from "./deliver";
+import { createLastTargetMemory, withLastTargetRecording } from "./lastTarget";
 import { queryHerdr, queryWatchedSet } from "./herdr";
 import {
   capturePickerWindowHeight,
@@ -307,6 +312,7 @@ function applyCaptureWindowBounds(snapshot: OverlaySnapshot): void {
       grownHeight: heightFor(
         snapshot.captureTargets?.length ?? 0,
         Boolean(snapshot.capturePreview),
+        Boolean(snapshot.againRow),
       ),
       workArea: screen.getPrimaryDisplay().workArea,
     });
@@ -578,6 +584,17 @@ const CAPTURE_ACCELERATOR = "Control+Shift+`";
 
 function registerCaptureHotkey(): void {
   const registered = globalShortcut.register(CAPTURE_ACCELERATOR, () => {
+    // The verb's own hotkey again, while its own picker is open, is the
+    // Same-agent-again confirm (issue #58, ADR 0004) — routed into the
+    // picker's selection stream; the session resolves it against the live
+    // again-row or absorbs it as a truthful no-op. Any other mid-flight
+    // press (own grab still in progress, another verb active) still lands
+    // on the verb lock below and gets the mascot refusal.
+    if (verbLock.activeVerb() === "capture" && activeAgainEmit) {
+      activeAgainEmit();
+      return;
+    }
+
     if (!verbLock.tryStart("capture")) {
       refuseVerb();
       return;
@@ -603,6 +620,13 @@ const RELAY_ACCELERATOR = "Control+Alt+C";
 
 function registerRelayHotkey(): void {
   const registered = globalShortcut.register(RELAY_ACCELERATOR, () => {
+    // Ctrl+Alt+C → picker → Ctrl+Alt+C: the again-confirm while Relay's own
+    // picker is open (issue #58) — see registerCaptureHotkey.
+    if (verbLock.activeVerb() === "relay" && activeAgainEmit) {
+      activeAgainEmit();
+      return;
+    }
+
     if (!verbLock.tryStart("relay")) {
       refuseVerb();
       return;
@@ -629,11 +653,20 @@ const HERALD_ACCELERATOR = "Control+Alt+H";
 
 function registerHeraldHotkey(): void {
   const registered = globalShortcut.register(HERALD_ACCELERATOR, () => {
-    // Toggle-stop only Herald's OWN recording — mirroring Ctrl+Alt+D. Any
-    // other mid-flight verb (including active dictation, which is never
-    // interrupted) lands on the verb lock below and gets the mascot refusal.
+    // Toggle-stop only Herald's OWN recording — mirroring Ctrl+Alt+D. The
+    // toggle outranks the again-confirm: while recording there is no picker,
+    // and the second press already means "stop" (ADR 0004 rejected
+    // double-tap for exactly this collision).
     if (activeSession?.verb === "herald") {
       endSession("release");
+      return;
+    }
+
+    // Ctrl+Alt+H → picker → Ctrl+Alt+H: the again-confirm while Herald's own
+    // picker is open (issue #58) — see registerCaptureHotkey. Mid-polish
+    // (verb active, no picker yet) still falls through to the refusal.
+    if (verbLock.activeVerb() === "herald" && activeAgainEmit) {
+      activeAgainEmit();
       return;
     }
 
@@ -764,10 +797,39 @@ const captureCropSource: CropSource = (emit) => {
   };
 };
 
+// The verb-key again-confirm (issue #58, ADR 0004), mirroring the crop
+// source: non-null exactly while a picker is open (the handle unsubscribes on
+// close, on every exit path), so `verbLock.activeVerb() === <verb> &&
+// activeAgainEmit` in a hotkey handler reads precisely "that verb's own
+// picker is open right now" — the verb lock guarantees at most one picker.
+let activeAgainEmit: (() => void) | null = null;
+
+const pickerAgainSource: AgainSource = (emit) => {
+  activeAgainEmit = emit;
+  return () => {
+    if (activeAgainEmit === emit) activeAgainEmit = null;
+  };
+};
+
+/** The hotkey text the again-row shows — Electron's "Control" reads "Ctrl" on the row. */
+function hotkeyLabelFor(accelerator: string): string {
+  return accelerator.replace("Control", "Ctrl");
+}
+
+// Same agent again (issue #58, ADR 0004): ONE Last Target across all three
+// send verbs — in-process only, no expiry, dies with the app. Wrapping the
+// shared delivery adapter below is what keeps it verb-agnostic: every verb's
+// confirmed delivered ack records here, and slot-1 outcomes structurally
+// never reach it (they don't go through deliver at all).
+const lastTargetMemory = createLastTargetMemory();
+
 // One adapter instance for the app's lifetime: its delivery ledger must
 // persist across a session's unknown → retry digit presses (#32). Rebuilt
 // once at startup once config (focusOnDeliver) is known — see whenReady.
-let deliverCapture = createHerdrDeliveryAdapter();
+let deliverCapture = withLastTargetRecording(
+  createHerdrDeliveryAdapter(),
+  lastTargetMemory,
+);
 
 function openCapturePicker(): CapturePickerHandle {
   return createCapturePickerHandle({
@@ -776,6 +838,7 @@ function openCapturePicker(): CapturePickerHandle {
       unregister: (accelerator) => globalShortcut.unregister(accelerator),
     },
     cropSource: captureCropSource,
+    againSource: pickerAgainSource,
   });
 }
 
@@ -794,6 +857,12 @@ function startCapture(): void {
     copyToClipboard: (artifact) => copyCaptureToClipboard(artifact),
     deliver: (capture, target) =>
       deliverCapture(captureArtifactToPayload(capture), target),
+    // Same agent again (issue #58): the shared Last Target, keyed to this
+    // verb's own hotkey — pressed again while the picker is open, it confirms.
+    again: {
+      readLastTarget: () => lastTargetMemory.current(),
+      hotkeyLabel: hotkeyLabelFor(CAPTURE_ACCELERATOR),
+    },
   })
     .then((result) => console.log("[mistr-flow] capture session result:", result.kind))
     .catch((error) => console.error("[mistr-flow] capture session failed:", error))
@@ -858,6 +927,7 @@ function openRelayPicker(): CapturePickerHandle {
       unregister: (accelerator) => globalShortcut.unregister(accelerator),
     },
     cropSource: captureCropSource,
+    againSource: pickerAgainSource,
     // Slot 1 is skipped: the clipboard is Relay's source, not a destination.
     includeClipboardSlot: false,
   });
@@ -884,6 +954,11 @@ function startRelay(): void {
     // Same adapter, same ledger, same ack/unknown-retry semantics, same
     // focusOnDeliver as Capture — Relay's payload just isn't always a PNG.
     deliver: (payload, target) => deliverCapture(payload, target),
+    // The same ONE Last Target as Capture and Herald (issue #58, ADR 0004).
+    again: {
+      readLastTarget: () => lastTargetMemory.current(),
+      hotkeyLabel: hotkeyLabelFor(RELAY_ACCELERATOR),
+    },
   })
     .then((result) => console.log("[mistr-flow] relay session result:", result.kind))
     .catch((error) => console.error("[mistr-flow] relay session failed:", error))
@@ -935,6 +1010,11 @@ function startHerald(): void {
         simulatePaste: () => simulatePasteKeystroke(),
       }),
     mintId: () => randomUUID(),
+    // The same ONE Last Target as Capture and Relay (issue #58, ADR 0004).
+    again: {
+      readLastTarget: () => lastTargetMemory.current(),
+      hotkeyLabel: hotkeyLabelFor(HERALD_ACCELERATOR),
+    },
   })
     .then((result) => console.log("[mistr-flow] herald session result:", result.kind))
     .catch((error) => console.error("[mistr-flow] herald session failed:", error))
@@ -1068,7 +1148,10 @@ app.whenReady().then(async () => {
     muteSystemAudioWhileRecording = await readMuteSystemAudioWhileRecording();
     const focusOnDeliver = await readFocusOnDeliver();
     console.log("[mistr-flow] config: focusOnDeliver =", focusOnDeliver);
-    deliverCapture = createHerdrDeliveryAdapter({ focusOnDeliver });
+    deliverCapture = withLastTargetRecording(
+      createHerdrDeliveryAdapter({ focusOnDeliver }),
+      lastTargetMemory,
+    );
     copySelectionFirst = await readCopySelectionFirst();
     console.log("[mistr-flow] config: copySelectionFirst =", copySelectionFirst);
     persistentBlockDing = await readPersistentBlockDing();

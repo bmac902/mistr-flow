@@ -75,11 +75,27 @@ test("relayPickerWindowHeight accounts for the skipped slot 1 in the entry count
   );
 });
 
+test("the again-row adds one entry row to both pickers' heights (issue #58)", () => {
+  // The row is a real list entry from the picker's first frame, so the grown
+  // window must budget for it — otherwise a full picker clips its last row.
+  assert.equal(
+    capturePickerWindowHeight(2, false, true),
+    capturePickerWindowHeight(2) + CAPTURE_PICKER_ENTRY_HEIGHT,
+  );
+  assert.equal(
+    relayPickerWindowHeight(2, true, true),
+    relayPickerWindowHeight(2, true) + CAPTURE_PICKER_ENTRY_HEIGHT,
+  );
+  // Defaults to no row, so existing callers keep their height.
+  assert.equal(capturePickerWindowHeight(2, false, false), capturePickerWindowHeight(2));
+});
+
 test("capturePickerWindowHeight stays inside a realistic work area at full stretch", () => {
-  // Worst case: Clipboard + 8 targets + preview. The grow-bounds helper pins
-  // to the top of the work area rather than shrinking, so this must not
-  // exceed the shortest display anyone runs this on.
-  assert.ok(capturePickerWindowHeight(8, true) < 800);
+  // Worst case: Clipboard + 8 targets + preview + the again-row. The
+  // grow-bounds helper pins to the top of the work area rather than
+  // shrinking, so this must not exceed the shortest display anyone runs
+  // this on.
+  assert.ok(capturePickerWindowHeight(8, true, true) < 800);
 });
 
 test("resolveGrownWindowBounds grows upward with the resting bottom edge and center anchored", () => {

@@ -10,6 +10,7 @@ import {
   buildErrorOverlaySnapshot,
   buildOverlaySnapshot,
   type OverlaySnapshot,
+  type PickerAgainRow,
 } from "./overlay";
 
 // Capture core tracer (issue #30, PRD #24): `runCaptureSession` mirrors
@@ -61,7 +62,14 @@ export type CaptureSelectionEvent =
   | { readonly kind: "target"; readonly target: EligibleTarget }
   | { readonly kind: "escape" }
   /** A drag on the preview: trim the capture and keep the picker open. */
-  | { readonly kind: "crop"; readonly rect: CropRect };
+  | { readonly kind: "crop"; readonly rect: CropRect }
+  /**
+   * The verb's own hotkey pressed again while its picker is open (issue #58,
+   * ADR 0004): confirm to the Last Target. Carries no target — the session
+   * resolves it against its reconciled again-state, so a confirm can never
+   * ride a stale remembered snapshot past a reconcile that unmarked it.
+   */
+  | { readonly kind: "again" };
 
 /**
  * The injected picker handle (concrete implementation lands in the picker UI
@@ -84,6 +92,19 @@ export type CaptureDeliverOutcome =
 export interface CaptureSessionClock {
   setTimeout(callback: () => void, ms: number): unknown;
   clearTimeout(handle: unknown): void;
+}
+
+/**
+ * Same agent again (issue #58, ADR 0004): the session's window onto the
+ * shared Last Target — read once at picker-open so the again-row renders on
+ * the FIRST frame, straight from memory, while the pane entries wait out the
+ * query. `hotkeyLabel` is the verb's own hotkey, shown on the row: the
+ * confirm is keyed to it, never a digit. Absent → no row, and a
+ * `kind: "again"` selection is a truthful no-op.
+ */
+export interface SameAgentAgainDependency {
+  readLastTarget(): EligibleTarget | null;
+  readonly hotkeyLabel: string;
 }
 
 /**
@@ -148,6 +169,12 @@ export interface RunSessionDependencies<A> {
    * no new mascot art. Default: the generic capture-delivered beat.
    */
   clipboardDeliveredSnapshot?(artifact: A): OverlaySnapshot;
+  /**
+   * Same agent again (issue #58, ADR 0004): the shared Last Target memory
+   * plus the verb hotkey the again-row is keyed to. Optional — a verb
+   * without it simply has no fast path.
+   */
+  again?: SameAgentAgainDependency;
   clock?: CaptureSessionClock;
   paneQueryTimeoutMs?: number;
   deliveryAckTimeoutMs?: number;
@@ -234,6 +261,25 @@ export async function runSendSession<A>(
     picker.close();
   }
 
+  // Same agent again (issue #58, ADR 0004): the Last Target is read once at
+  // open, so the again-row rides the picker's FIRST frame straight from
+  // memory — pane entries wait out the up-to-2s query; the fast path must
+  // not. `againTarget` is what a verb-key confirm resolves to RIGHT NOW: the
+  // remembered pane until the query lands (validate-at-use — a confirm that
+  // races the reconcile onto a since-dead pane fails truthfully through the
+  // ordinary delivery failure), the fresh entry once confirmed present, and
+  // null once the reconcile unmarks the row.
+  const remembered = dependencies.again?.readLastTarget() ?? null;
+  let againTarget: EligibleTarget | null = remembered;
+  let againRow: PickerAgainRow | undefined =
+    remembered && dependencies.again
+      ? {
+          label: remembered.label,
+          hotkeyLabel: dependencies.again.hotkeyLabel,
+          state: "live",
+        }
+      : undefined;
+
   // The picker re-renders on every crop/reset, so its target list and any
   // local-only message have to outlive the async query that produced them.
   let currentTargets: readonly EligibleTarget[] = [];
@@ -246,6 +292,7 @@ export async function runSendSession<A>(
         preview,
         clipboardSlot,
         dependencies.slotOneLabel,
+        againRow,
       ),
     );
   }
@@ -267,6 +314,26 @@ export async function runSendSession<A>(
     } else {
       currentMessage = result.message;
     }
+
+    // Reconcile the again-row against the fresh query (ADR 0004): still
+    // present → the label/status refreshes and the confirm re-binds to the
+    // fresh entry; gone — or unconfirmable, a failed query returns no list —
+    // → the row visibly unmarks, never silently, and the fast path degrades
+    // to the normal picker.
+    if (remembered && againRow) {
+      const fresh =
+        result.kind === "targets"
+          ? result.targets.find((t) => t.target === remembered.target)
+          : undefined;
+      if (fresh) {
+        againTarget = fresh;
+        againRow = { ...againRow, label: fresh.label };
+      } else {
+        againTarget = null;
+        againRow = { ...againRow, state: "unmarked" };
+      }
+    }
+
     showPicker();
   });
 
@@ -310,7 +377,21 @@ export async function runSendSession<A>(
       return { kind: "clipboard-delivered" };
     }
 
-    const { target } = selection;
+    // The verb-key confirm (issue #58): with a live row it resolves to the
+    // reconciled Last Target and flows into the ordinary delivery path below
+    // — same ledger, same unknown → retry, same bracketing as a digit press.
+    // Without one (no memory, or the reconcile unmarked it) it is a truthful
+    // no-op: nothing was refused, there is nothing to repeat, and the row's
+    // absence/unmark on screen is the explanation (jump-hotkey precedent —
+    // a no-op whose reason is visible is not a silent no-op).
+    let target: EligibleTarget;
+    if (selection.kind === "again") {
+      if (againTarget === null) continue;
+      target = againTarget;
+    } else {
+      target = selection.target;
+    }
+
     void dependencies.showOverlay(
       dependencies.deliveringSnapshot?.(artifact) ??
         buildOverlaySnapshot("capture-delivering"),

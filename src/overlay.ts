@@ -42,6 +42,22 @@ export type OverlayPhase =
   | "fleet-2-3-blocked"
   | "fleet-4-plus-blocked";
 
+/**
+ * The picker's "⟲ again" row (issue #58, ADR 0004): the fast path to the
+ * shared Last Target, keyed to the verb's own hotkey — never a digit. It
+ * renders from the in-memory record on the picker's FIRST frame (pane entries
+ * wait out the query; this row must not), then reconciles when the query
+ * lands: still present → label refreshed, `state: "live"`; gone →
+ * `state: "unmarked"` — visibly, never silently removed.
+ */
+export interface PickerAgainRow {
+  /** The remembered pane's human label (refreshed once the query confirms it). */
+  readonly label: string;
+  /** The verb's own hotkey, as shown on the row (e.g. "Ctrl+Alt+C"). */
+  readonly hotkeyLabel: string;
+  readonly state: "live" | "unmarked";
+}
+
 export interface OverlaySnapshot {
   phase: OverlayPhase;
   barMode: "peek" | "expanded";
@@ -82,6 +98,12 @@ export interface OverlaySnapshot {
   ledgerSpill?: boolean;
   /** Which prop relay-delivering shows: a folded note, the ledger, or a framed portrait. */
   relayPayloadKind?: "note" | "ledger" | "portrait";
+  /**
+   * Same agent again (issue #58, ADR 0004): the "⟲ again" picker row for the
+   * shared Last Target. Absent when no Last Target exists (fresh launch) —
+   * then there is no row and the verb-key confirm is a truthful no-op.
+   */
+  againRow?: PickerAgainRow;
 }
 
 const STATUS_COPY: Record<OverlayPhase, string> = {
@@ -310,6 +332,7 @@ export function buildCapturePickerOverlaySnapshot(
   preview?: PickerPreview | null,
   clipboardSlot = true,
   slotOneLabel?: string,
+  againRow?: PickerAgainRow,
 ): OverlaySnapshot {
   const summoning = targets.length === 0 && message === undefined;
   return {
@@ -324,6 +347,7 @@ export function buildCapturePickerOverlaySnapshot(
     clipboardSlot,
     slotOneLabel,
     capturePreview: preview ?? undefined,
+    againRow,
   };
 }
 

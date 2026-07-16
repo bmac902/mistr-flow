@@ -271,10 +271,39 @@ function buildPickerEntryEl(digit, label) {
   return entry;
 }
 
+// The "⟲ again" row (issue #58, ADR 0004): the fast path to the Last Target,
+// keyed to the verb's own hotkey — the key cap shows the hotkey, never a
+// digit. It rides the list from the picker's FIRST frame (rendered from
+// memory while the pane query is still out), and when the query lands it
+// either refreshes or visibly unmarks — dimmed and struck through with its
+// reason on the row — never a silent disappearance. Same entry classes as
+// the digit slots, so it inherits the design language; the unmark styling is
+// inline because overlay.html is a Claude Design asset the renderer must
+// never require edits to.
+function buildAgainRowEl(againRow) {
+  const entry = buildPickerEntryEl(`⟲ ${againRow.hotkeyLabel}`, againRow.label);
+  const keyEl = entry.querySelector(".capture-picker-entry-digit");
+  // The hotkey cap is wider than a digit's fixed 16px square — let it size
+  // to its text while keeping the brass-cap look.
+  keyEl.style.width = "auto";
+  keyEl.style.padding = "0 6px";
+
+  if (againRow.state === "unmarked") {
+    entry.style.opacity = "0.45";
+    const labelEl = entry.querySelector(".capture-picker-entry-label");
+    labelEl.style.textDecoration = "line-through";
+    labelEl.textContent = `${againRow.label} — gone`;
+  }
+  return entry;
+}
+
 function renderCapturePickerEntries(snapshot) {
   pickerEntriesEl.textContent = "";
   if (snapshot.phase !== "capture-picker") return;
 
+  if (snapshot.againRow) {
+    pickerEntriesEl.appendChild(buildAgainRowEl(snapshot.againRow));
+  }
   // Slot 1 is the pinned Clipboard destination for Capture; for Relay
   // (clipboardSlot === false) it is skipped — the clipboard is the source —
   // but panes still occupy digits 2–9 either way. Herald keeps the slot and
