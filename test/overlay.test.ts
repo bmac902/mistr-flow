@@ -449,6 +449,48 @@ test("buildCapturePickerOverlaySnapshot carries a relayed text preview (issue #3
   );
 });
 
+test("buildCapturePickerOverlaySnapshot carries the again-row on every picker frame (issue #58, ADR 0004)", () => {
+  const againRow = {
+    label: "claude · idle — pane a",
+    hotkeyLabel: "Ctrl+Alt+C",
+    state: "live" as const,
+  };
+  const target: EligibleTarget = {
+    target: "herdr-session-a",
+    label: "claude · idle — pane a",
+    agentStatus: "idle",
+  };
+
+  // The FIRST frame: no targets resolved yet (summoning), the row is already
+  // there — rendered from the in-memory record, not the pane query.
+  const summoning = buildCapturePickerOverlaySnapshot(
+    [],
+    undefined,
+    undefined,
+    true,
+    undefined,
+    againRow,
+  );
+  assert.equal(summoning.pickerSummoning, true);
+  assert.deepEqual(summoning.againRow, againRow);
+
+  // Populated and local-only frames keep carrying it (refreshed or unmarked).
+  const unmarked = { ...againRow, state: "unmarked" as const };
+  assert.deepEqual(
+    buildCapturePickerOverlaySnapshot([target], undefined, undefined, true, undefined, againRow)
+      .againRow,
+    againRow,
+  );
+  assert.deepEqual(
+    buildCapturePickerOverlaySnapshot([], "Herdr isn't answering.", undefined, false, undefined, unmarked)
+      .againRow,
+    unmarked,
+  );
+
+  // No Last Target → no row at all (fresh launch), matching the truthful no-op.
+  assert.equal(buildCapturePickerOverlaySnapshot([]).againRow, undefined);
+});
+
 test("buildRelayNothingToSendOverlaySnapshot is a truthful, un-faded nothing-to-send beat (issue #39/#41)", () => {
   const snapshot = buildRelayNothingToSendOverlaySnapshot();
 

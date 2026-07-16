@@ -6,6 +6,7 @@ import {
   type CapturePickerHandle,
   type CaptureSessionClock,
   type RunCaptureSessionResult,
+  type SameAgentAgainDependency,
 } from "./captureSession";
 import type { CapturePreview, ClipboardTextPreview } from "./captureThumbnail";
 import type { ClipboardSource } from "./clipboardSource";
@@ -92,6 +93,8 @@ export interface RunRelaySessionDependencies {
   cropImage(artifact: CaptureArtifact, rect: CropRect): Promise<CaptureArtifact | null>;
   queryEligibleTargets(): Promise<HerdrQueryResult>;
   deliver(payload: SendPayload, target: EligibleTarget): Promise<CaptureDeliverOutcome>;
+  /** Same agent again (issue #58): the shared Last Target, passed straight through. */
+  again?: SameAgentAgainDependency;
   clock?: CaptureSessionClock;
   paneQueryTimeoutMs?: number;
   deliveryAckTimeoutMs?: number;
@@ -144,6 +147,7 @@ export async function runRelaySession(
     // Slot 1 is skipped for Relay: the clipboard is the source, not a
     // destination — but panes still occupy digits 2–9 (CONTEXT.md).
     clipboardSlot: false,
+    again: deps.again,
     clock: deps.clock,
     paneQueryTimeoutMs: deps.paneQueryTimeoutMs,
     deliveryAckTimeoutMs: deps.deliveryAckTimeoutMs,

@@ -23,9 +23,19 @@ export interface GlobalShortcutPort {
  */
 export type CropSource = (emit: (rect: CropRect) => void) => () => void;
 
+/**
+ * Subscribes the verb's own hotkey as the again-confirm (issue #58, ADR 0004),
+ * returning an unsubscribe. The verb hotkeys stay registered globally in
+ * main.ts — a picker never re-registers them — so, like crops, the press
+ * arrives from outside and resolves the same one-selection-at-a-time channel
+ * the digits use: one ordered event stream, whatever the input.
+ */
+export type AgainSource = (emit: () => void) => () => void;
+
 export interface CapturePickerHandleDeps {
   readonly shortcuts: GlobalShortcutPort;
   readonly cropSource?: CropSource;
+  readonly againSource?: AgainSource;
   /**
    * Whether digit `1` resolves to the pinned Clipboard destination. True for
    * Capture; false for Relay, whose slot 1 is deliberately skipped (the
@@ -44,12 +54,13 @@ export interface CapturePickerHandleDeps {
 export function createCapturePickerHandle(
   deps: CapturePickerHandleDeps,
 ): CapturePickerHandle {
-  const { shortcuts, cropSource } = deps;
+  const { shortcuts, cropSource, againSource } = deps;
   const includeClipboardSlot = deps.includeClipboardSlot ?? true;
   const registeredAccelerators = new Set<string>();
   let pendingResolve: ((event: CaptureSelectionEvent) => void) | null = null;
   let closed = false;
   let unsubscribeCrop: (() => void) | null = null;
+  let unsubscribeAgain: (() => void) | null = null;
 
   function resolveSelection(event: CaptureSelectionEvent): void {
     if (closed || !pendingResolve) return;
@@ -71,6 +82,10 @@ export function createCapturePickerHandle(
 
   if (cropSource) {
     unsubscribeCrop = cropSource((rect) => resolveSelection({ kind: "crop", rect }));
+  }
+
+  if (againSource) {
+    unsubscribeAgain = againSource(() => resolveSelection({ kind: "again" }));
   }
 
   return {
@@ -98,6 +113,9 @@ export function createCapturePickerHandle(
 
       unsubscribeCrop?.();
       unsubscribeCrop = null;
+
+      unsubscribeAgain?.();
+      unsubscribeAgain = null;
 
       for (const accelerator of registeredAccelerators) {
         shortcuts.unregister(accelerator);

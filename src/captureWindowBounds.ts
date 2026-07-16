@@ -36,11 +36,16 @@ export function capturePickerEntryCount(targetCount: number): number {
 export function capturePickerWindowHeight(
   targetCount: number,
   hasPreview = false,
+  hasAgainRow = false,
 ): number {
+  // The again-row (issue #58) is one more real list entry, present from the
+  // picker's first frame — budgeted exactly like a digit slot so a full
+  // picker never clips its last row.
   return (
     OVERLAY_WINDOW_HEIGHT +
     CAPTURE_PICKER_LIST_PADDING +
-    capturePickerEntryCount(targetCount) * CAPTURE_PICKER_ENTRY_HEIGHT +
+    (capturePickerEntryCount(targetCount) + (hasAgainRow ? 1 : 0)) *
+      CAPTURE_PICKER_ENTRY_HEIGHT +
     (hasPreview ? CAPTURE_PREVIEW_BLOCK_HEIGHT : 0)
   );
 }
@@ -58,8 +63,9 @@ export function capturePickerWindowHeight(
 export function relayPickerWindowHeight(
   targetCount: number,
   hasPreview = false,
+  hasAgainRow = false,
 ): number {
-  return capturePickerWindowHeight(targetCount, hasPreview);
+  return capturePickerWindowHeight(targetCount, hasPreview, hasAgainRow);
 }
 
 /**

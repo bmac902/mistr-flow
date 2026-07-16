@@ -3,6 +3,7 @@ import {
   type CaptureDeliverOutcome,
   type CapturePickerHandle,
   type CaptureSessionClock,
+  type SameAgentAgainDependency,
 } from "./captureSession";
 import type { ClipboardTextPreview } from "./captureThumbnail";
 import { buildTextSummary, CLIPBOARD_PREVIEW_LINES } from "./clipboardSource";
@@ -110,6 +111,8 @@ export interface RunHeraldSessionDependencies {
   pasteHere(text: string): Promise<void> | void;
   /** Mints the payload id — one per utterance, so the delivery ledger keys correctly. */
   mintId(): string;
+  /** Same agent again (issue #58): the shared Last Target, passed straight through. */
+  again?: SameAgentAgainDependency;
   clock?: CaptureSessionClock;
   paneQueryTimeoutMs?: number;
   deliveryAckTimeoutMs?: number;
@@ -174,6 +177,7 @@ export async function runHeraldSession(
       clipboardSlot: true,
       slotOneLabel: HERALD_SLOT_ONE_LABEL,
       deliver: (a, target) => deps.deliver(a.payload, target),
+      again: deps.again,
       clock: deps.clock,
       paneQueryTimeoutMs: deps.paneQueryTimeoutMs,
       deliveryAckTimeoutMs: deps.deliveryAckTimeoutMs,

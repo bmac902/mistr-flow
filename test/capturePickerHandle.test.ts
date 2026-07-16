@@ -196,6 +196,58 @@ test("a picker with no cropSource still works", () => {
   });
 });
 
+// --- Same agent again: the verb-key confirm (issue #58, ADR 0004) ----------
+
+test("an again press from the verb hotkey resolves the same selection channel as digits", async () => {
+  let emit: (() => void) | null = null;
+  let unsubscribed = false;
+  const handle = createCapturePickerHandle({
+    shortcuts: makeFakeShortcuts(),
+    againSource: (cb) => {
+      emit = cb;
+      return () => {
+        unsubscribed = true;
+      };
+    },
+  });
+
+  const selection = handle.awaitSelection();
+  emit!();
+
+  assert.deepEqual(await selection, { kind: "again" });
+
+  // Torn down with everything else on close — a stray verb-key press must
+  // never resolve a closed picker.
+  handle.close();
+  assert.equal(unsubscribed, true);
+});
+
+test("an again press with no pending awaitSelection is a harmless no-op (e.g. mid-delivery)", () => {
+  let emit: (() => void) | null = null;
+  const handle = createCapturePickerHandle({
+    shortcuts: makeFakeShortcuts(),
+    againSource: (cb) => {
+      emit = cb;
+      return () => {};
+    },
+  });
+
+  // No awaitSelection outstanding — exactly the delivering beat, where digit
+  // presses are already structural no-ops. The again press joins that rule.
+  assert.doesNotThrow(() => emit!());
+  handle.close();
+});
+
+test("a picker with no againSource still works", async () => {
+  const shortcuts = makeFakeShortcuts();
+  const handle = createCapturePickerHandle({ shortcuts });
+
+  const selection = handle.awaitSelection();
+  shortcuts.press("Escape");
+
+  assert.deepEqual(await selection, { kind: "escape" });
+});
+
 // --- Relay: slot 1 skipped (issue #39) -----------------------------------
 
 test("Relay picker (includeClipboardSlot: false) registers only Esc on open — no slot 1", () => {
