@@ -207,7 +207,7 @@ test("an empty clipboard renders the nothing-to-send state and never opens a pic
   assert.deepEqual(result, { kind: "nothing-to-send" });
   assert.equal(h.openPickerCalls(), 0, "no target picker for an empty clipboard");
   assert.equal(h.states.length, 1);
-  assert.equal(h.states[0].phase, "relay-empty");
+  assert.equal(h.states[0].phase, "relay-nothing-to-send");
   assert.equal(h.states[0].captureTargets, undefined);
 });
 
@@ -435,4 +435,96 @@ test("the delivered payload is exactly the clipboard source's payload (no re-min
   await session;
 
   assert.equal(h.delivered[0].payload.injectText, source.payload.injectText);
+});
+
+// ---------------------------------------------------------------------------
+// Payload-aware delivering beats (issue #41)
+// ---------------------------------------------------------------------------
+
+test("short text delivers with the NOTE prop; delivered tips the hat", async () => {
+  const h = makeHarness({ port: fakeClipboardPort({ text: "a short line" }) });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "target", target: TARGET_A });
+  await session;
+
+  const delivering = h.states.find((s) => s.phase === "relay-delivering");
+  assert.ok(delivering, "a relay-delivering beat was emitted");
+  assert.equal(delivering!.relayPayloadKind, "note");
+  assert.equal(delivering!.ledgerSpill, false);
+
+  assert.ok(h.states.some((s) => s.phase === "relay-delivered"));
+});
+
+test("spilled text delivers with the LEDGER prop (the spill modifier)", async () => {
+  const bigText = "y".repeat(CLIPBOARD_SPILL_THRESHOLD + 1);
+  const h = makeHarness({ port: fakeClipboardPort({ text: bigText }) });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "target", target: TARGET_A });
+  await session;
+
+  const delivering = h.states.find((s) => s.phase === "relay-delivering");
+  assert.equal(delivering!.relayPayloadKind, "ledger");
+  assert.equal(delivering!.ledgerSpill, true, "the ledger is the spill modifier");
+});
+
+test("an image delivers with the PORTRAIT prop", async () => {
+  const h = makeHarness({
+    port: fakeClipboardPort({ text: "", imagePng: Buffer.from([1, 2, 3, 4]) }),
+  });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "target", target: TARGET_A });
+  await session;
+
+  const delivering = h.states.find((s) => s.phase === "relay-delivering");
+  assert.equal(delivering!.relayPayloadKind, "portrait");
+});
+
+test("a copied file delivers with the LEDGER prop — it injects a path like a spill", async () => {
+  const h = makeHarness({
+    port: fakeClipboardPort({ filePath: "C:\dev\thing.py" }),
+  });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "target", target: TARGET_A });
+  await session;
+
+  const delivering = h.states.find((s) => s.phase === "relay-delivering");
+  assert.equal(delivering!.relayPayloadKind, "ledger");
+});
+
+test("an image to a WORKING pane earns the honest busy beat; to an idle pane it doesn't", async () => {
+  const png = Buffer.from([1, 2, 3, 4]);
+  const busy = makeHarness({ port: fakeClipboardPort({ text: "", imagePng: png }) });
+  const bs = runRelaySession(busy.deps);
+  await flush();
+  busy.picker.resolve({ kind: "target", target: { ...TARGET_A, agentStatus: "working" } });
+  await bs;
+  assert.ok(busy.states.some((s) => s.phase === "relay-delivered-busy"),
+    "image → working pane is delivered-busy");
+
+  const idle = makeHarness({ port: fakeClipboardPort({ text: "", imagePng: png }) });
+  const is = runRelaySession(idle.deps);
+  await flush();
+  idle.picker.resolve({ kind: "target", target: { ...TARGET_A, agentStatus: "idle" } });
+  await is;
+  assert.ok(idle.states.some((s) => s.phase === "relay-delivered"),
+    "image → idle pane is plain delivered");
+  assert.ok(!idle.states.some((s) => s.phase === "relay-delivered-busy"));
+});
+
+test("text to a working pane is plain delivered — the busy caveat is image-only", async () => {
+  const h = makeHarness({ port: fakeClipboardPort({ text: "just text" }) });
+  const s = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "target", target: { ...TARGET_A, agentStatus: "working" } });
+  await s;
+  assert.ok(h.states.some((x) => x.phase === "relay-delivered"));
+  assert.ok(!h.states.some((x) => x.phase === "relay-delivered-busy"));
 });

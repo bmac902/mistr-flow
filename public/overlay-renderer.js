@@ -151,6 +151,14 @@ function hideCropOverlay() {
   cropRectEl.style.display = "none";
 }
 
+// The framing beat (issue #41): while a crop is being dragged, the mascot
+// raises a monocle to appraise it — renderer-local, since the session phase is
+// still capture-picker underneath. Cleared on drag end; the next real snapshot
+// re-render is authoritative regardless.
+function setFraming(active) {
+  mascotEl.classList.toggle("mf-state-capture-framing", active);
+}
+
 function startCropDrag(event) {
   if (event.button !== 0 || !previewEl.classList.contains("has-preview")) return;
 
@@ -163,6 +171,7 @@ function startCropDrag(event) {
     clientY: event.clientY,
     norm: toNormalizedPoint(event, rect),
   };
+  setFraming(true);
   event.currentTarget.setPointerCapture?.(event.pointerId);
 }
 
@@ -182,6 +191,7 @@ function endCropDrag(event) {
   cropPointerId = null;
   cropStart = null;
   hideCropOverlay();
+  setFraming(false);
 
   // Main applies the same MIN_CROP_FRACTION guard; this is just to avoid
   // shipping an obvious stray click across IPC.
@@ -200,6 +210,7 @@ function cancelCropDrag(event) {
   cropPointerId = null;
   cropStart = null;
   hideCropOverlay();
+  setFraming(false);
 }
 
 function buildPickerEntryEl(digit, label) {
@@ -277,6 +288,12 @@ window.mistrFlow.onOverlayState((snapshot) => {
   mascotEl.classList.remove(`mf-state-${previousPhase}`);
   mascotEl.classList.add(`mf-state-${snapshot.phase}`);
   mascotEl.classList.toggle("mf-picker-summoning", Boolean(snapshot.pickerSummoning));
+  // Relay delivering shows a payload-specific prop (note/ledger/portrait); the
+  // ledger also rides the picker as a spill modifier (issue #41).
+  for (const kind of ["note", "ledger", "portrait"]) {
+    mascotEl.classList.toggle(`mf-payload-${kind}`, snapshot.relayPayloadKind === kind);
+  }
+  mascotEl.classList.toggle("mf-ledger-spill", Boolean(snapshot.ledgerSpill));
   statusCopyEl.textContent = snapshot.statusCopy;
   toastEl.textContent = snapshot.toastCopy || "";
   renderCapturePreview(snapshot);

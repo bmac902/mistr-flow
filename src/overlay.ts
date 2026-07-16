@@ -16,8 +16,17 @@ export type OverlayPhase =
   | "capture-delivered"
   | "capture-delivery-failed"
   | "capture-delivery-unknown"
-  /** Relay verb: the clipboard was empty — nothing to send, no target picker. */
-  | "relay-empty";
+  /** Capture: a crop drag is in progress on the preview — the mascot appraises it. */
+  | "capture-framing"
+  /** Relay: the clipboard was empty — nothing to send, no target picker. */
+  | "relay-nothing-to-send"
+  /** Relay: Herdr is unreachable — he's holding it, but there's nowhere to give it. */
+  | "relay-no-destination"
+  /** Relay: delivering, with a payload-specific prop (see relayPayloadKind). */
+  | "relay-delivering"
+  | "relay-delivered"
+  /** Relay: delivered, but the pane was mid-turn — landed as text, not an attachment. */
+  | "relay-delivered-busy";
 
 export interface OverlaySnapshot {
   phase: OverlayPhase;
@@ -44,6 +53,14 @@ export interface OverlaySnapshot {
    * Absent when rendering failed: the picker renders fine without it.
    */
   capturePreview?: PickerPreview;
+  /**
+   * Rides capture-picker / relay-delivering as a modifier: the clipboard text
+   * spilled to a file, so the mascot lugs the ledger rather than a note
+   * (CONTEXT.md — the ledger is a modifier, not a state of its own).
+   */
+  ledgerSpill?: boolean;
+  /** Which prop relay-delivering shows: a folded note, the ledger, or a framed portrait. */
+  relayPayloadKind?: "note" | "ledger" | "portrait";
 }
 
 const STATUS_COPY: Record<OverlayPhase, string> = {
@@ -61,7 +78,19 @@ const STATUS_COPY: Record<OverlayPhase, string> = {
   "capture-delivered": "Delivered, sir.",
   "capture-delivery-failed": "That pane didn't take it.",
   "capture-delivery-unknown": "Not sure that landed — try again?",
-  "relay-empty": "Your clipboard's empty, sir — nothing to relay.",
+  "capture-framing": "Say when, sir.",
+  "relay-nothing-to-send": "Your pockets are empty, sir.",
+  "relay-no-destination": "I have it, sir. There's no one to give it to.",
+  "relay-delivering": "Delivering to the pane…",
+  "relay-delivered": "Delivered, sir.",
+  "relay-delivered-busy": "Delivered, sir — though he's rather engrossed.",
+};
+
+/** relay-delivering's status line names what's being carried — see relayPayloadKind. */
+const RELAY_DELIVERING_PAYLOAD_COPY: Record<"note" | "ledger" | "portrait", string> = {
+  note: "Conveying your note, sir…",
+  ledger: "Still conveying that ledger, sir…",
+  portrait: "Conveying the portrait, sir…",
 };
 
 const SUMMONING_STATUS_COPY = "Summoning targets…";
@@ -81,7 +110,12 @@ const MASCOT_COPY: Record<OverlayPhase, string> = {
   "capture-delivered": "tips hat toward the pane",
   "capture-delivery-failed": "hat droops",
   "capture-delivery-unknown": "tilts head, puzzled",
-  "relay-empty": "turns out empty pockets",
+  "capture-framing": "raises a monocle to appraise the crop",
+  "relay-nothing-to-send": "pats his pockets, finds nothing",
+  "relay-no-destination": "taps the bell at an empty desk",
+  "relay-delivering": "leans toward the pane",
+  "relay-delivered": "tips hat toward the pane",
+  "relay-delivered-busy": "tips hat, glances sideways at a busy pane",
 };
 
 export interface HappyPathOverlayDependencies {
@@ -175,8 +209,20 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
       };
     case "capture-delivery-failed":
       return buildCaptureDeliveryFailedOverlaySnapshot();
-    case "relay-empty":
-      return buildRelayEmptyOverlaySnapshot();
+    case "capture-framing":
+    case "relay-nothing-to-send":
+    case "relay-no-destination":
+    case "relay-delivered":
+    case "relay-delivered-busy":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: false,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
+    case "relay-delivering":
+      return buildRelayDeliveringOverlaySnapshot("note");
   }
 }
 
@@ -210,16 +256,37 @@ export function buildCapturePickerOverlaySnapshot(
 /**
  * The Relay "nothing to send" beat: the clipboard was empty, so there is no
  * target picker at all — a truthful, un-faded state, not a misleading success
- * (CONTEXT.md — Relay never fakes a send). Distinct from the Herdr-down
- * "nowhere to send it" state, which IS a picker (message + no targets).
+ * (CONTEXT.md — Relay never fakes a send). He pats his pockets and finds
+ * nothing. Distinct from the Herdr-down "nowhere to send it" state
+ * (relay-no-destination): there he's holding something, here he has nothing.
  */
-export function buildRelayEmptyOverlaySnapshot(): OverlaySnapshot {
+export function buildRelayNothingToSendOverlaySnapshot(): OverlaySnapshot {
   return {
-    phase: "relay-empty",
+    phase: "relay-nothing-to-send",
     barMode: "expanded",
     waveformVisible: false,
-    mascotCopy: MASCOT_COPY["relay-empty"],
-    statusCopy: STATUS_COPY["relay-empty"],
+    mascotCopy: MASCOT_COPY["relay-nothing-to-send"],
+    statusCopy: STATUS_COPY["relay-nothing-to-send"],
+  };
+}
+
+/**
+ * Relay delivering, with the prop that matches what's being carried: a folded
+ * note for short inline text, the ledger for spilled text, a framed portrait
+ * for an image. The status line names it too, so the payload is legible whether
+ * you're watching the mascot or reading the copy.
+ */
+export function buildRelayDeliveringOverlaySnapshot(
+  payloadKind: "note" | "ledger" | "portrait",
+): OverlaySnapshot {
+  return {
+    phase: "relay-delivering",
+    barMode: "expanded",
+    waveformVisible: false,
+    mascotCopy: MASCOT_COPY["relay-delivering"],
+    statusCopy: RELAY_DELIVERING_PAYLOAD_COPY[payloadKind],
+    relayPayloadKind: payloadKind,
+    ledgerSpill: payloadKind === "ledger",
   };
 }
 

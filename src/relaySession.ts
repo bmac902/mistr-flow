@@ -11,7 +11,26 @@ import type { CapturePreview, ClipboardTextPreview } from "./captureThumbnail";
 import type { ClipboardSource } from "./clipboardSource";
 import { captureArtifactToPayload, type SendPayload } from "./deliver";
 import type { EligibleTarget, HerdrQueryResult } from "./herdr";
-import { buildRelayEmptyOverlaySnapshot, type OverlaySnapshot } from "./overlay";
+import {
+  buildOverlaySnapshot,
+  buildRelayDeliveringOverlaySnapshot,
+  buildRelayNothingToSendOverlaySnapshot,
+  type OverlaySnapshot,
+} from "./overlay";
+
+/**
+ * Which delivering prop the mascot carries for a given payload: a folded note
+ * for short inline text, the ledger for spilled text, a framed portrait for an
+ * image. Inline text has no `requiresFile`; a spill/file/image payload does —
+ * and only the image is the "image" artifact kind, so the three fall out
+ * cleanly from what's already on the artifact.
+ */
+function relayPayloadKind(
+  artifact: RelayArtifact,
+): "note" | "ledger" | "portrait" {
+  if (artifact.kind === "image") return "portrait";
+  return artifact.payload.requiresFile ? "ledger" : "note";
+}
 
 // Relay verb — the clipboard as a source, wired end to end (issue #39, PRD #24).
 // Copy something → hotkey → the picker previews what you're about to send →
@@ -86,7 +105,7 @@ export async function runRelaySession(
   // An empty clipboard renders a truthful "nothing to send" state and never
   // opens a target picker — not a faded flash, not a fake success (CONTEXT.md).
   if (source.kind === "empty") {
-    await deps.showOverlay(buildRelayEmptyOverlaySnapshot());
+    await deps.showOverlay(buildRelayNothingToSendOverlaySnapshot());
     return { kind: "nothing-to-send" };
   }
 
@@ -110,6 +129,18 @@ export async function runRelaySession(
     queryEligibleTargets: () =>
       deps.queryEligibleTargets().then(toRelayQueryResult),
     deliver: (artifact, target) => deps.deliver(artifact.payload, target),
+    // Relay's delivering/delivered beats carry the payload-specific prop
+    // (note/ledger/portrait) rather than Capture's generic ones (issue #41).
+    deliveringSnapshot: (artifact) =>
+      buildRelayDeliveringOverlaySnapshot(relayPayloadKind(artifact)),
+    // An image delivered into a *working* pane lands as inert text, not an
+    // attachment (CONTEXT.md — auto-attach needs an idle agent). Say so: the
+    // busy beat glances sideways. Text/paths don't have that caveat, so only
+    // an image (portrait) to a working pane earns it.
+    deliveredSnapshot: (artifact, target) =>
+      relayPayloadKind(artifact) === "portrait" && target.agentStatus === "working"
+        ? buildOverlaySnapshot("relay-delivered-busy")
+        : buildOverlaySnapshot("relay-delivered"),
     // Slot 1 is skipped for Relay: the clipboard is the source, not a
     // destination — but panes still occupy digits 2–9 (CONTEXT.md).
     clipboardSlot: false,

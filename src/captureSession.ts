@@ -120,6 +120,15 @@ export interface RunSessionDependencies<A> {
   copyToClipboard?(artifact: A): void | Promise<void>;
   deliver(artifact: A, target: EligibleTarget): Promise<CaptureDeliverOutcome>;
   /**
+   * Overrides the delivering/delivered beats so a verb can show a payload-aware
+   * mascot (Relay carries a note/ledger/portrait; issue #41). Defaults to the
+   * generic capture-delivering/capture-delivered snapshots — Capture passes
+   * neither, so its beats are unchanged. Receives the current (possibly
+   * cropped) artifact so the snapshot can reflect what's actually being sent.
+   */
+  deliveringSnapshot?(artifact: A): OverlaySnapshot;
+  deliveredSnapshot?(artifact: A, target: EligibleTarget): OverlaySnapshot;
+  /**
    * Whether digit slot 1 is the pinned Clipboard destination (Capture) or
    * skipped (Relay). Only affects the picker snapshot's `clipboardSlot` flag —
    * the actual `1` shortcut is owned by the injected picker handle. Default true.
@@ -284,7 +293,10 @@ export async function runSendSession<A>(
     }
 
     const { target } = selection;
-    void dependencies.showOverlay(buildOverlaySnapshot("capture-delivering"));
+    void dependencies.showOverlay(
+      dependencies.deliveringSnapshot?.(artifact) ??
+        buildOverlaySnapshot("capture-delivering"),
+    );
 
     const outcome = await deliverWithDeadline(
       () => dependencies.deliver(artifact, target),
@@ -294,7 +306,10 @@ export async function runSendSession<A>(
 
     if (outcome.kind === "delivered") {
       closePicker();
-      void dependencies.showOverlay(buildOverlaySnapshot("capture-delivered"));
+      void dependencies.showOverlay(
+        dependencies.deliveredSnapshot?.(artifact, target) ??
+          buildOverlaySnapshot("capture-delivered"),
+      );
       return { kind: "target-delivered", target };
     }
 

@@ -10,7 +10,8 @@ import {
   buildOverlaySnapshot,
   buildErrorOverlaySnapshot,
   buildRefusedOverlaySnapshot,
-  buildRelayEmptyOverlaySnapshot,
+  buildRelayDeliveringOverlaySnapshot,
+  buildRelayNothingToSendOverlaySnapshot,
   runHappyPathOverlaySession,
 } from "../src/overlay";
 import type { EligibleTarget } from "../src/herdr";
@@ -407,19 +408,39 @@ test("buildCapturePickerOverlaySnapshot carries a relayed text preview (issue #3
   );
 });
 
-test("buildRelayEmptyOverlaySnapshot is a truthful, un-faded nothing-to-send beat (issue #39)", () => {
-  const snapshot = buildRelayEmptyOverlaySnapshot();
+test("buildRelayNothingToSendOverlaySnapshot is a truthful, un-faded nothing-to-send beat (issue #39/#41)", () => {
+  const snapshot = buildRelayNothingToSendOverlaySnapshot();
 
-  assert.equal(snapshot.phase, "relay-empty");
+  assert.equal(snapshot.phase, "relay-nothing-to-send");
   assert.equal(snapshot.barMode, "expanded");
   // No target list at all — never a fake success, never a picker.
   assert.equal(snapshot.captureTargets, undefined);
-  assert.match(snapshot.statusCopy, /empty|nothing/i);
+  assert.match(snapshot.statusCopy, /empty|nothing|pockets/i);
   // Funny, never ambiguous about what happened (personality is a product property).
   assert.ok(snapshot.mascotCopy.length > 0);
 
   // buildOverlaySnapshot routes the phase to the same builder.
-  assert.deepEqual(buildOverlaySnapshot("relay-empty"), snapshot);
+  assert.deepEqual(buildOverlaySnapshot("relay-nothing-to-send"), snapshot);
+});
+
+test("buildRelayDeliveringOverlaySnapshot carries a payload-specific prop and copy (issue #41)", () => {
+  const note = buildRelayDeliveringOverlaySnapshot("note");
+  const ledger = buildRelayDeliveringOverlaySnapshot("ledger");
+  const portrait = buildRelayDeliveringOverlaySnapshot("portrait");
+
+  assert.equal(note.phase, "relay-delivering");
+  assert.equal(note.relayPayloadKind, "note");
+  assert.equal(note.ledgerSpill, false, "a note is not the ledger");
+
+  // The ledger prop is the spill modifier — spilled text lugs the ledger.
+  assert.equal(ledger.relayPayloadKind, "ledger");
+  assert.equal(ledger.ledgerSpill, true);
+
+  assert.equal(portrait.relayPayloadKind, "portrait");
+
+  // Each names what's being carried, so the payload is legible in copy too.
+  assert.notEqual(note.statusCopy, ledger.statusCopy);
+  assert.notEqual(ledger.statusCopy, portrait.statusCopy);
 });
 
 test("overlay html gates the capture preview on the picker state and contains it in its box", () => {
