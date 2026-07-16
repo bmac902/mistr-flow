@@ -1,0 +1,27 @@
+# Same agent again — the verb key confirms to the Last Target
+
+Status: accepted (2026-07-16)
+
+The overwhelming majority of sends go to the agent pane you're working with *right now* (75–90% — the same evidence that drove Capture, Relay, and Herald). Yet every send re-opens the picker and demands a digit, even when the destination is the pane you sent to ten seconds ago. For a 100–200×/day tool that's a recurring tax on the single most common action. **Same agent again** removes it: the fast path becomes `hotkey → hotkey`, with the truth on screen in between.
+
+## Decisions
+
+1. **One shared Last Target, not one per verb.** A successful pane delivery by *any* verb — Capture, Relay, or Herald — updates the same single memory (glossary: *Last Target*). "The agent I'm working with right now" is a property of the user's attention, not of the verb carrying the payload; per-verb memories would miss exactly in the compound flows this feature exists for (Relay a stack trace, then dictate the fix — "again" obviously means the same pane). Only a confirmed `delivered` ack updates it — never delivery-unknown or failed. Slot-1 outcomes (Clipboard, paste-here) never update it: they aren't panes.
+
+2. **The trigger is the verb's own hotkey, pressed again while its picker is open.** `Ctrl+Alt+C` → picker → `Ctrl+Alt+C` again → sent to the Last Target. That second press today earns only the verb-lock refusal, so this repurposes a press that currently does nothing useful — and the chord is one your fingers just made, so it cannot be fumbled into. Rejected: a dedicated "send to last agent" hotkey — a repeat needs a payload and each verb sources its own, so it's really three new chords plus three OS-collision verifications; double-tap — collides outright with Herald's toggle model, where the second press already means "stop recording," and adds a timing window; a modifier — already rejected as fumble-prone mid-thought in ADR 0003.
+
+3. **The flash survives the fast path.** ADR 0003's governing principle binds this feature by name: even repeat-last-target must flash the transcript before it lands. The picker render *is* the flash — the payload preview plus the marked destination are on screen between the two presses, and Esc still bails. This extends the no-blind-send defense to every verb: you never fire what you copied three hours ago at a pane you last used this morning without seeing both.
+
+4. **A dedicated "again" row, rendered from memory on the picker's first frame.** Pane entries only appear when the pane query resolves (two-phase render), so a mark riding a digit entry would wait out the up-to-2s query and kill the fast path's speed. The again-row renders instantly from the in-memory record — remembered label included — and *reconciles* when the query lands: still eligible → label refreshes; gone → the row visibly unmarks, never silently. The pane still occupies its normal digit slot; the row is an accelerator, not a replacement, so "digit 2 is always the same pane" is untouched. With no Last Target (fresh launch, or reconciled away) there is no row and the confirm press is a truthful no-op — the row's absence is the explanation, matching the jump-hotkey-with-nothing-blocked precedent (a no-op whose reason is visible is not a silent no-op).
+
+5. **Lifetime: no expiry, no persistence, validate at use.** A time-based expiry makes the same double-press do different things depending on how long you've been away — unpredictability in a muscle-memory path is worse than staleness, and the visible mark (label + agent state) is the staleness defense a clock could never be. The memory is in-process only and dies with the app (fire-and-forget; nothing persisted beyond config). A confirm that races the reconcile and hits a since-dead pane fails truthfully through the ordinary delivery machinery ("that pane has left the building") — the same outcome a digit press to a dying pane gets today, and preferable to taxing every fast-path send with pane-query latency.
+
+**Governing principle (inherited):** voice — and now every payload — never sends silently. The fast path skips the *choice*, never the *look*.
+
+## Consequences
+
+- **Mostly wiring, again.** The delivery path already returns the ack that updates the memory; the picker snapshot gains an again-row; the verb-key handlers route a press-while-own-picker-open to the picker's selection stream instead of the verb-lock refusal. Presses while the verb is active but the picker is *not* open (Herald mid-polish, Capture mid-grab) still get the refusal.
+- **No new hotkeys, no new OS-collision surface, no new mascot states.** The again-row is a picker list entry in the renderer's existing design language (like the slot labels), not a Claude Design round-trip.
+- **Accepted edge:** with more than 8 eligible panes, a Last Target that missed the digit slots is falsely unmarked by the reconcile — the fast path degrades to the normal picker. Harmless at real fleet sizes.
+- **Interaction with #47 (clickable entries):** if entries become clickable, the again-row clicks like any other — additive, decided there.
+- **v1 boundaries, revisitable:** no repeat-last *payload* (only the target is remembered), no per-verb memories, no trusted-pane blind send (the flash is non-negotiable).
