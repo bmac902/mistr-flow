@@ -23,6 +23,7 @@ import {
 } from "./barControls";
 import {
   getConfigPath,
+  readCopySelectionFirst,
   readFocusOnDeliver,
   readMuteSystemAudioWhileRecording,
   readOverlayPosition,
@@ -79,6 +80,7 @@ import { nativeWindowHandleToHwnd } from "./nativeWindowHandle";
 let overlayWindow: BrowserWindow | null = null;
 let aiProvider: AiProvider | null = null;
 let muteSystemAudioWhileRecording = true;
+let copySelectionFirst = false;
 let whisperVocabularyPrompt: string | null = null;
 let polishVocabularyInstruction: string | null = null;
 
@@ -110,10 +112,55 @@ const CAPTURE_WINDOW_RESTORE_PHASES: ReadonlySet<OverlaySnapshot["phase"]> = new
   "capture-delivery-failed",
 ]);
 
+// The last overlay state that wasn't the refusal — so when refused self-clears
+// we can restore whatever the active verb was actually showing, rather than
+// blanking to idle over a live session.
+let lastNonRefusedOverlay: OverlaySnapshot | null = null;
+
 function sendToRenderer(channel: string, payload?: unknown): void {
+  if (
+    channel === "overlay-state" &&
+    payload &&
+    typeof payload === "object" &&
+    (payload as OverlaySnapshot).phase !== "refused"
+  ) {
+    lastNonRefusedOverlay = payload as OverlaySnapshot;
+  }
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.webContents.send(channel, payload);
   }
+}
+
+/** How long the "One thing at a time, sir." refusal holds before self-clearing. */
+const REFUSED_HOLD_MS = 3500;
+let refusedReturnTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelRefusedReturn(): void {
+  if (refusedReturnTimer) {
+    clearTimeout(refusedReturnTimer);
+    refusedReturnTimer = null;
+  }
+}
+
+/**
+ * Shows the mutual-exclusion refusal, then clears it on its own after a few
+ * seconds so it never sits there until Esc. On clear it RESTORES whatever the
+ * active verb was showing (e.g. the Relay picker you refused capture over is
+ * still open underneath), or idle if nothing is active — so a refusal is a
+ * transient notice, never a trap.
+ */
+function refuseVerb(): void {
+  const restore = lastNonRefusedOverlay;
+  sendToRenderer("overlay-state", buildRefusedOverlaySnapshot());
+  cancelRefusedReturn();
+  refusedReturnTimer = setTimeout(() => {
+    refusedReturnTimer = null;
+    if (verbLock.activeVerb() !== null && restore) {
+      sendToRenderer("overlay-state", restore);
+    } else {
+      sendToRenderer("overlay-state", buildOverlaySnapshot("idle"));
+    }
+  }, REFUSED_HOLD_MS);
 }
 
 function applyCaptureWindowBounds(snapshot: OverlaySnapshot): void {
@@ -183,6 +230,58 @@ function simulatePasteKeystroke(): Promise<void> {
       (error) => (error ? reject(error) : resolve()),
     );
   });
+}
+
+/**
+ * Sends Ctrl+C to the foreground app so a *selection* lands on the clipboard
+ * before Relay reads it (config `copySelectionFirst`). Best-effort: a failure
+ * just means the existing clipboard is relayed, which the preview surfaces.
+ * The overlay is non-focusable, so focus stays on the app being copied from.
+ */
+function simulateCopyKeystroke(): Promise<void> {
+  return new Promise((resolve) => {
+    execFile(
+      "powershell",
+      [
+        "-NoProfile",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^c')",
+      ],
+      () => resolve(),
+    );
+  });
+}
+
+/** A cheap clipboard fingerprint, to detect when a simulated copy has landed. */
+function clipboardSignature(): string {
+  const text = clipboard.readText();
+  if (text) return `t:${text.length}:${text.slice(0, 64)}`;
+  const image = clipboard.readImage();
+  if (!image.isEmpty()) {
+    const size = image.getSize();
+    return `i:${size.width}x${size.height}`;
+  }
+  return `f:${readClipboardFilePath() ?? ""}`;
+}
+
+/**
+ * Simulates a copy, then waits (briefly) for the clipboard to actually change,
+ * so Relay reads the freshly-copied selection rather than the pre-copy content.
+ * If it never changes within the window — nothing was selected, or the
+ * selection already equalled the clipboard — we proceed with what's there; the
+ * preview shows the truth either way.
+ */
+async function copySelectionIntoClipboard(): Promise<void> {
+  const before = clipboardSignature();
+  await simulateCopyKeystroke();
+
+  const deadline = Date.now() + 400;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 30));
+    if (clipboardSignature() !== before) return;
+  }
 }
 
 function requestStopRecording(): Promise<Buffer> {
@@ -311,10 +410,11 @@ function registerHotkey(): void {
     }
 
     if (!verbLock.tryStart("dictation")) {
-      sendToRenderer("overlay-state", buildRefusedOverlaySnapshot());
+      refuseVerb();
       return;
     }
 
+    cancelRefusedReturn();
     startSession();
   });
 
@@ -330,10 +430,11 @@ const CAPTURE_ACCELERATOR = "Control+Shift+`";
 function registerCaptureHotkey(): void {
   const registered = globalShortcut.register(CAPTURE_ACCELERATOR, () => {
     if (!verbLock.tryStart("capture")) {
-      sendToRenderer("overlay-state", buildRefusedOverlaySnapshot());
+      refuseVerb();
       return;
     }
 
+    cancelRefusedReturn();
     startCapture();
   });
 
@@ -354,10 +455,11 @@ const RELAY_ACCELERATOR = "Control+Alt+C";
 function registerRelayHotkey(): void {
   const registered = globalShortcut.register(RELAY_ACCELERATOR, () => {
     if (!verbLock.tryStart("relay")) {
-      sendToRenderer("overlay-state", buildRefusedOverlaySnapshot());
+      refuseVerb();
       return;
     }
 
+    cancelRefusedReturn();
     startRelay();
   });
 
@@ -563,7 +665,13 @@ function startRelay(): void {
     : null;
 
   void runRelaySession({
-    readClipboardSource: () => readClipboardSource(relayClipboardPort()),
+    readClipboardSource: async () => {
+      // Opt-in: grab the current selection first (Ctrl+C), so select → hotkey →
+      // digit skips an explicit copy. No selection → the copy no-ops and the
+      // existing clipboard is read; the preview shows whichever it is.
+      if (copySelectionFirst) await copySelectionIntoClipboard();
+      return readClipboardSource(relayClipboardPort());
+    },
     showOverlay: (snapshot) => showCaptureOverlay(snapshot),
     openPicker: () => openRelayPicker(),
     renderImageThumbnail: (artifact) => renderCaptureThumbnail(artifact),
@@ -706,6 +814,8 @@ app.whenReady().then(async () => {
     const focusOnDeliver = await readFocusOnDeliver();
     console.log("[mistr-flow] config: focusOnDeliver =", focusOnDeliver);
     deliverCapture = createHerdrDeliveryAdapter({ focusOnDeliver });
+    copySelectionFirst = await readCopySelectionFirst();
+    console.log("[mistr-flow] config: copySelectionFirst =", copySelectionFirst);
   } catch (error) {
     dialog.showErrorBox("Mistr Flow config error", String(error));
     app.quit();

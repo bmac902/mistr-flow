@@ -11,6 +11,7 @@ export interface AppConfig {
   muteSystemAudioWhileRecording?: unknown;
   vocabulary?: unknown;
   focusOnDeliver?: unknown;
+  copySelectionFirst?: unknown;
   provider?: unknown;
 }
 
@@ -132,6 +133,25 @@ export async function readFocusOnDeliver(
   const rawConfig = await fileSystem.readFile(configPath, "utf8");
   const parsed = JSON.parse(rawConfig) as AppConfig;
   return parsed.focusOnDeliver === true;
+}
+
+/**
+ * Opt-in only — defaults to false. When true, the Relay hotkey simulates
+ * Ctrl+C first, so a *selection* is grabbed without an explicit copy: select →
+ * hotkey → digit, one keystroke saved. Footgun (mitigated by the picker
+ * preview, which shows exactly what will be sent): if nothing is selected the
+ * simulated copy no-ops and the existing clipboard is relayed instead — visible
+ * and Esc-able rather than silent. Off by default so the safe read-existing-
+ * clipboard behaviour is the baseline.
+ */
+export async function readCopySelectionFirst(
+  env: NodeJS.ProcessEnv = process.env,
+  fileSystem = fs,
+): Promise<boolean> {
+  const configPath = getConfigPath(env);
+  const rawConfig = await fileSystem.readFile(configPath, "utf8");
+  const parsed = JSON.parse(rawConfig) as AppConfig;
+  return parsed.copySelectionFirst === true;
 }
 
 /**

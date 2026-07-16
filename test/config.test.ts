@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   getConfigPath,
   readFocusOnDeliver,
+  readCopySelectionFirst,
   readMuteSystemAudioWhileRecording,
   readOpenAiApiKey,
   readOverlayPosition,
@@ -97,6 +98,32 @@ test("readFocusOnDeliver allows explicit opt-in", async () => {
   const shouldFocus = await readFocusOnDeliver({ APPDATA: tempRoot }, fs);
 
   assert.equal(shouldFocus, true);
+});
+
+test("readCopySelectionFirst defaults to disabled — read the existing clipboard", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key" }),
+    "utf8",
+  );
+
+  assert.equal(await readCopySelectionFirst({ APPDATA: tempRoot }, fs), false);
+});
+
+test("readCopySelectionFirst allows explicit opt-in", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key", copySelectionFirst: true }),
+    "utf8",
+  );
+
+  assert.equal(await readCopySelectionFirst({ APPDATA: tempRoot }, fs), true);
 });
 
 test("readProvider defaults to openai when the field is absent", async () => {
