@@ -61,6 +61,7 @@ function flush(): Promise<void> {
 function fakeClipboardPort(options: {
   text?: string;
   imagePng?: Buffer | null;
+  filePath?: string | null;
 }): ClipboardSourcePort {
   const imagePng = options.imagePng;
   const image: ClipboardImagePort = {
@@ -71,6 +72,7 @@ function fakeClipboardPort(options: {
   return {
     readText: () => options.text ?? "",
     readImage: () => image,
+    readFilePath: () => options.filePath ?? null,
     writeFile: async () => {},
     mintId: () => `relay-id-${++minted}`,
     timestampIso: () => "2026-07-16T09:00:00.000Z",

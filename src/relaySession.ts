@@ -120,9 +120,12 @@ export async function runRelaySession(
 }
 
 function toRelayArtifact(
-  source: Extract<ClipboardSource, { kind: "text" | "image" }>,
+  source: Extract<ClipboardSource, { kind: "text" | "image" | "file" }>,
 ): RelayArtifact {
-  if (source.kind === "text") {
+  // A copied file rides the text branch: like text it is preview + payload with
+  // nothing to crop — its payload just happens to inject a path rather than a
+  // body, which delivery already handles (spill files do exactly this).
+  if (source.kind === "text" || source.kind === "file") {
     return { kind: "text", payload: source.payload, preview: source.preview };
   }
   return { kind: "image", payload: source.payload, artifact: source.artifact };

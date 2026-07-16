@@ -22,6 +22,7 @@ const CAPTURE_DIR = path.join(path.sep, "tmp", "MistrFlowCaptures");
 interface FakeClipboardOptions {
   text?: string;
   imagePng?: Buffer | null;
+  filePath?: string | null;
 }
 
 interface FakeClipboard {
@@ -43,6 +44,7 @@ function fakeClipboard(options: FakeClipboardOptions = {}): FakeClipboard {
   const port: ClipboardSourcePort = {
     readText: () => options.text ?? "",
     readImage: () => image,
+    readFilePath: () => options.filePath ?? null,
     writeFile: async (filePath, data) => {
       writes.set(filePath, data);
     },
@@ -273,4 +275,80 @@ test("relay spill and image files follow the capture TTL sweep", async () => {
 
   assert.deepEqual(new Set(unlinked), new Set(["relay-id-1.txt", "relay-id-2.png"]));
   assert.equal(deleted.length, 2, "the fresh spill is not swept");
+});
+
+// ---------------------------------------------------------------------------
+// File (copied in Explorer) — found live 2026-07-15
+// ---------------------------------------------------------------------------
+
+// String.raw: a Windows path is all backslashes, and in a normal string
+// literal "\U"/"\O"/"\D" silently drop their slash while "\b" becomes a
+// backspace character — a corrupted path that still compiles.
+const COPIED_FILE = String.raw`C:\Users\blair\OneDrive\Documents\generate_finops_json.py`;
+
+test("a copied file becomes a path payload — the shape delivery already handles", async () => {
+  // Verified live: a file copy sets NEITHER text nor a bitmap (readText() is
+  // "" and readImage() is empty); the path arrives via readBuffer("FileNameW").
+  const { port } = fakeClipboard({ text: "", imagePng: null, filePath: COPIED_FILE });
+
+  const source = await readClipboardSource(port);
+
+  assert.equal(source.kind, "file");
+  if (source.kind !== "file") return;
+  assert.equal(source.filePath, COPIED_FILE);
+  // Identical shape to a PNG/spill payload: deliver verifies the file exists,
+  // then injects the path plain so the agent's own path-detection fires.
+  assert.equal(source.payload.injectText, COPIED_FILE);
+  assert.equal(source.payload.requiresFile, COPIED_FILE);
+});
+
+test("a copied file writes nothing — it already exists on disk", async () => {
+  const { port, writes } = fakeClipboard({ filePath: COPIED_FILE });
+
+  await readClipboardSource(port);
+
+  assert.equal(writes.size, 0, "no spill: the file is its own payload");
+});
+
+test("the file preview names the file rather than dumping its path blind", async () => {
+  const { port } = fakeClipboard({ filePath: COPIED_FILE });
+
+  const source = await readClipboardSource(port);
+  assert.equal(source.kind, "file");
+  if (source.kind !== "file") return;
+
+  assert.match(source.preview.summary, /^file · generate_finops_json\.py$/);
+  assert.equal(source.preview.firstLines, COPIED_FILE);
+  assert.equal(source.preview.spilled, false, "a file is not a spill");
+});
+
+test("text still wins over a file when the clipboard carries both", async () => {
+  const { port } = fakeClipboard({ text: "actual copied text", filePath: COPIED_FILE });
+
+  const source = await readClipboardSource(port);
+
+  assert.equal(source.kind, "text");
+});
+
+test("an image still wins over a file when the clipboard carries both", async () => {
+  const { port } = fakeClipboard({
+    imagePng: Buffer.from([137, 80, 78, 71]),
+    filePath: COPIED_FILE,
+  });
+
+  const source = await readClipboardSource(port);
+
+  assert.equal(source.kind, "image");
+});
+
+test("no text, no image and no file is still an empty clipboard", async () => {
+  const { port } = fakeClipboard({ text: "", imagePng: null, filePath: null });
+
+  assert.equal((await readClipboardSource(port)).kind, "empty");
+});
+
+test("a blank file path is treated as no file, never as a payload", async () => {
+  const { port } = fakeClipboard({ filePath: "   " });
+
+  assert.equal((await readClipboardSource(port)).kind, "empty");
 });

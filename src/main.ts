@@ -500,6 +500,31 @@ function startCapture(): void {
 const relayCaptureDir = defaultCaptureDir();
 
 /** Adapts Electron's clipboard + fs to the pure Relay source port (issue #38). */
+/**
+ * The absolute path of a file copied in Explorer, or null.
+ *
+ * Verified live (2026-07-15) against a copied `.py`: `availableFormats()` is
+ * `["text/uri-list"]`, `readText()` is empty and `readImage()` is empty — a
+ * file copy sets neither — while `readBuffer("FileNameW")` carries the full
+ * path as UTF-16LE with a trailing NUL. Without this, a copied file reads as
+ * an empty clipboard and Relay truthfully says it has nothing to send.
+ *
+ * `FileName` (the ANSI 8.3 sibling) is deliberately ignored: it's lossy, and
+ * `FileNameW` is present alongside it.
+ */
+function readClipboardFilePath(): string | null {
+  try {
+    const buffer = clipboard.readBuffer("FileNameW");
+    if (!buffer || buffer.length === 0) return null;
+
+    const decoded = buffer.toString("utf16le").replace(/\0+$/g, "").trim();
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    // Format absent on this clipboard — not an error, just no file.
+    return null;
+  }
+}
+
 function relayClipboardPort(): ClipboardSourcePort {
   return {
     readText: () => clipboard.readText(),
@@ -507,6 +532,7 @@ function relayClipboardPort(): ClipboardSourcePort {
       const image = clipboard.readImage();
       return { isEmpty: () => image.isEmpty(), toPNG: () => image.toPNG() };
     },
+    readFilePath: () => readClipboardFilePath(),
     writeFile: async (filePath, data) => {
       await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
       await fs.promises.writeFile(filePath, data);

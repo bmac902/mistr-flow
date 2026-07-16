@@ -62,6 +62,17 @@ export interface ClipboardSourcePort {
   readText(): string;
   /** `clipboard.readImage()` — returns an empty image when there's none. */
   readImage(): ClipboardImagePort;
+  /**
+   * The absolute path of a file copied in Explorer, or null when the clipboard
+   * holds no file. Copying a file sets NEITHER text nor a bitmap — Windows puts
+   * a file-drop list on the clipboard instead, so `readText()` is `""` and
+   * `readImage()` is empty, and without this a copied file reads as "nothing to
+   * relay" (confirmed live 2026-07-15). Electron surfaces the path via
+   * `clipboard.readBuffer("FileNameW")` as UTF-16LE.
+   *
+   * Single file only: `FileNameW` carries just the first of a multi-select.
+   */
+  readFilePath(): string | null;
   writeFile(filePath: string, data: Buffer | string): Promise<void>;
   /** Mints the payload/artifact id. `randomUUID` in production. */
   mintId(): string;
@@ -98,6 +109,20 @@ export type ClipboardSource =
        */
       readonly artifact: CaptureArtifact;
     }
+  | {
+      /**
+       * A file copied in Explorer. Its absolute path is the injected string —
+       * the same shape a spilled body or a PNG already uses, so the whole
+       * delivery path applies unchanged: `deliver` verifies the file exists,
+       * and leaves the single-line body unbracketed so the receiving agent's
+       * own path-detection still fires. A copied `.py` gets `Read`; a copied
+       * `.png` gets seen.
+       */
+      readonly kind: "file";
+      readonly payload: SendPayload;
+      readonly preview: ClipboardTextPreview;
+      readonly filePath: string;
+    }
   | { readonly kind: "empty" };
 
 /**
@@ -121,7 +146,36 @@ export async function readClipboardSource(
     return classifyImage(port, image);
   }
 
+  // Last, because a file copy is the only case that sets neither text nor a
+  // bitmap — so it can't collide with the branches above.
+  const filePath = port.readFilePath();
+  if (filePath && filePath.trim().length > 0) {
+    return classifyFile(port, filePath.trim());
+  }
+
   return { kind: "empty" };
+}
+
+function classifyFile(port: ClipboardSourcePort, filePath: string): ClipboardSource {
+  // No spill, no write: the file already exists on disk, so its own path is the
+  // payload. `deliver`'s requiresFile precondition covers the case where it's
+  // moved or deleted between copy and relay.
+  const preview: ClipboardTextPreview = {
+    kind: "text",
+    firstLines: filePath,
+    truncated: false,
+    lineCount: 1,
+    byteSize: Buffer.byteLength(filePath, "utf8"),
+    spilled: false,
+    summary: `file · ${path.basename(filePath)}`,
+  };
+
+  return {
+    kind: "file",
+    payload: { id: port.mintId(), injectText: filePath, requiresFile: filePath },
+    preview,
+    filePath,
+  };
 }
 
 async function classifyText(
