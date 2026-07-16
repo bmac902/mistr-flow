@@ -76,13 +76,17 @@ export interface ClipboardSourcePort {
    */
   readFilePath(): string | null;
   /**
-   * The clipboard's raw `CF_HDROP` buffer — the Windows DROPFILES struct that
-   * carries EVERY file of an Explorer multi-select — or null when the
-   * clipboard holds no file drop. `clipboard.readBuffer("CF_HDROP")` in
-   * production; {@link parseFileDropList} does the pure parse here, so main.ts
-   * supplies only the raw read (issue #67).
+   * Every absolute path of an Explorer file copy — multi-select aware — or
+   * null when the clipboard holds no file drop (issue #67). Production shells
+   * out to `powershell Get-Clipboard -Format FileDropList` (the house pattern
+   * for OS integration): Electron's clipboard API **cannot** read the standard
+   * `CF_HDROP` format — `readBuffer("CF_HDROP")` registers a custom format of
+   * that *name* (always empty), and `read`/`readBuffer("text/uri-list")`
+   * return `""` even while `availableFormats()` advertises it (verified live
+   * 2026-07-16, Electron 42). {@link readFilePath} stays as the
+   * no-subprocess fallback when this returns null.
    */
-  readFileDropBuffer(): Buffer | null;
+  readFileDropList(): Promise<string[] | null>;
   writeFile(filePath: string, data: Buffer | string): Promise<void>;
   /** Mints the payload/artifact id. `randomUUID` in production. */
   mintId(): string;
@@ -95,41 +99,6 @@ export interface ClipboardSourcePort {
 /** Preview data for a relayed image — the label the existing thumbnail treatment renders. */
 export const CLIPBOARD_IMAGE_LABEL = "Clipboard image";
 
-/**
- * Byte size of the DROPFILES header (shlobj_core.h): `pFiles` (DWORD, offset
- * 0 — where the path list starts), `pt` (POINT, 8 bytes), `fNC` (BOOL), and
- * `fWide` (BOOL, offset 16 — 1 means the list is UTF-16LE).
- */
-const DROPFILES_HEADER_BYTES = 20;
-const DROPFILES_FWIDE_OFFSET = 16;
-
-/**
- * Parses the clipboard's raw `CF_HDROP` buffer — a Windows DROPFILES struct —
- * into the full path list of an Explorer multi-select (issue #67). `FileNameW`
- * carries only the FIRST file of a multi-select by design; this is the format
- * that carries them all.
- *
- * The list is NUL-terminated paths starting at the header's `pFiles` offset,
- * ending in a double NUL. Returns null for anything unparseable — a short or
- * malformed buffer, an out-of-range offset, an empty list, or an ANSI list
- * (`fWide` = 0, vanishingly rare from Explorer) — so the caller falls back to
- * the proven single-file `FileNameW` read rather than guessing.
- */
-export function parseFileDropList(buffer: Buffer): string[] | null {
-  if (buffer.length < DROPFILES_HEADER_BYTES) return null;
-
-  const pFiles = buffer.readUInt32LE(0);
-  if (pFiles < DROPFILES_HEADER_BYTES || pFiles >= buffer.length) return null;
-
-  if (buffer.readUInt32LE(DROPFILES_FWIDE_OFFSET) === 0) return null;
-
-  const paths: string[] = [];
-  for (const entry of buffer.toString("utf16le", pFiles).split("\0")) {
-    if (entry.length === 0) break; // the double-NUL terminator
-    paths.push(entry);
-  }
-  return paths.length > 0 ? paths : null;
-}
 
 /**
  * The typed outcome of reading the clipboard. Distinct cases so the caller (the
@@ -214,12 +183,12 @@ export async function readClipboardSource(
   }
 
   // Last, because a file copy is the only case that sets neither text nor a
-  // bitmap — so it can't collide with the branches above. CF_HDROP first: it
-  // carries EVERY file of a multi-select, where FileNameW carries only the
-  // first (issue #67). FileNameW stays as the fallback for an absent or
-  // unparseable drop list, so a plain single-file copy can never regress.
-  const dropBuffer = port.readFileDropBuffer();
-  const dropPaths = dropBuffer ? parseFileDropList(dropBuffer) : null;
+  // bitmap — so it can't collide with the branches above (which also means
+  // the drop-list subprocess only ever runs for a file copy). The drop list
+  // first: it carries EVERY file of a multi-select, where FileNameW carries
+  // only the first (issue #67). FileNameW stays as the fallback for a null
+  // list, so a plain single-file copy can never regress.
+  const dropPaths = await port.readFileDropList();
   const filePaths = (dropPaths ?? [])
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
