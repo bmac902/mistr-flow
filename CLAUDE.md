@@ -1,6 +1,6 @@
 ## Latest session handoff
 
-**`docs/handoff/2026-07-15-focus-on-deliver-fixed-next-33-work-machine.md`** — read this first. It states what to pick up next (issue #33), what shipped, and the debugging table for `focusOnDeliver`.
+**`docs/handoff/2026-07-16-work-laptop-port-azure-into-provider-seam.md`** — read this first. It states what to pick up next on the **work laptop** (port the Azure adapter into the new AI-provider seam, #43), what shipped today (Relay, file relay, copy-first, mascot states, provider seam), and the next feature arc (#44 fleet-awareness PRD, already grilled + spiked).
 
 Most handoffs in `docs/handoff/` are machine-local (excluded via `.git/info/exclude`, which does not travel), so on a fresh clone that folder looks empty. The one named above is **force-added and tracked** on purpose, so it survives a `git pull` on another machine. If you write a handoff that a *different machine* needs, `git add -f` it — otherwise it silently never leaves the machine that wrote it.
 
