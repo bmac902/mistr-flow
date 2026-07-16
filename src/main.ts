@@ -42,6 +42,8 @@ import {
   type OverlaySnapshot,
 } from "./overlay";
 import { createFleetState, type FleetPosture } from "./fleetState";
+import { createBlockedJumpCursor } from "./blockedJumpCursor";
+import { focusHerdrPane } from "./focusPane";
 import { createActiveVerbLock } from "./activeVerbLock";
 import {
   clampOverlayPosition,
@@ -214,6 +216,46 @@ function startFleetPolling(): void {
       console.error("[mistr-flow] fleet poll failed:", error);
     });
   }, FLEET_POLL_INTERVAL_MS);
+}
+
+// Jump-to-blocked (issue #50, PRD #44): one keypress takes you to the agent
+// that most needs you. The cursor holds where the last press landed so repeat
+// presses cycle oldest-first through the blocked set; fleetState.posture()
+// supplies the live oldest-first list at the moment of each press.
+const jumpCursor = createBlockedJumpCursor();
+
+/**
+ * Focus the next longest-blocked agent's pane and raise Herdr's host window,
+ * reusing the proven focus/raise machinery (ADR 0002, focusHerdrPane). Repeat
+ * presses cycle oldest-first; with nothing blocked this is a truthful no-op.
+ * Focus-steal here is intentional and user-initiated — you pressed the key to
+ * go there — the same explicit exception to "never steal focus" as focusOnDeliver.
+ */
+function jumpToLongestBlocked(): void {
+  const target = jumpCursor.next(fleetState.posture().blockedTargets);
+  if (target === null) return; // Nothing blocked — nowhere to jump, so no-op.
+
+  void focusHerdrPane(target)
+    .then((outcome) => {
+      if (outcome.kind === "focus-failed") {
+        // The remembered target likely closed since the poll. The cursor
+        // re-anchors to the oldest on the next press, so a follow-up press
+        // skips the dead pane rather than stranding the user.
+        console.warn("[mistr-flow] jump-to-blocked: could not focus", target);
+        return;
+      }
+      if (outcome.raise.kind === "raised") {
+        console.log("[mistr-flow] jump-to-blocked: raised herdr window", outcome.raise.hwnd);
+      } else {
+        console.warn(
+          "[mistr-flow] jump-to-blocked: pane focused but window not raised:",
+          outcome.raise.code,
+        );
+      }
+    })
+    .catch((error) => {
+      console.error("[mistr-flow] jump-to-blocked failed:", error);
+    });
 }
 
 function applyCaptureWindowBounds(snapshot: OverlaySnapshot): void {
@@ -519,6 +561,27 @@ function registerRelayHotkey(): void {
   if (!registered) {
     throw new Error(
       `Failed to register global hotkey "${RELAY_ACCELERATOR}". It may already be in use by another app.`,
+    );
+  }
+}
+
+// Ctrl+Alt+J ("jump"), matching the Ctrl+Alt+ family (D dictate, C clipboard).
+// Chosen to avoid the three existing hotkeys (Ctrl+Alt+D, Ctrl+Shift+`,
+// Ctrl+Alt+C) and, unlike the Shift+capital-letter lesson, uses no shifted
+// letter so it can't fire on an ordinary keypress. globalShortcut.register
+// returns false on a live OS-wide collision — reported (dialog.showErrorBox in
+// whenReady), never silently swapped, so the collision surfaces for the human
+// verification slice rather than hiding.
+const JUMP_ACCELERATOR = "Control+Alt+J";
+
+function registerJumpHotkey(): void {
+  const registered = globalShortcut.register(JUMP_ACCELERATOR, () => {
+    jumpToLongestBlocked();
+  });
+
+  if (!registered) {
+    throw new Error(
+      `Failed to register global hotkey "${JUMP_ACCELERATOR}". It may already be in use by another app.`,
     );
   }
 }
@@ -903,6 +966,7 @@ app.whenReady().then(async () => {
     registerHotkey();
     registerCaptureHotkey();
     registerRelayHotkey();
+    registerJumpHotkey();
   } catch (error) {
     dialog.showErrorBox("Mistr Flow hotkey error", String(error));
   }

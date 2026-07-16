@@ -122,6 +122,43 @@ test("longest-blocked selection returns the oldest continuously-blocked agent", 
   assert.equal(posture.longestBlockedTarget, "older");
 });
 
+test("blockedTargets lists every dwelling-blocked agent oldest-first, and leads with longestBlockedTarget", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  fleet.observe(panes(agent("older", "blocked")), 0);
+  fleet.observe(
+    panes(agent("older", "blocked"), agent("newer", "blocked")),
+    2000,
+  );
+  const posture = fleet.observe(
+    panes(agent("older", "blocked"), agent("newer", "blocked")),
+    8000,
+  );
+
+  assert.deepEqual(posture.blockedTargets, ["older", "newer"]);
+  assert.equal(posture.blockedTargets[0], posture.longestBlockedTarget);
+});
+
+test("blockedTargets excludes agents still under the dwell threshold", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  fleet.observe(panes(agent("early", "blocked")), 0);
+  // 'late' only just blocked at 8000 — not yet dwelt when we read at 8000.
+  const posture = fleet.observe(
+    panes(agent("early", "blocked"), agent("late", "blocked")),
+    8000,
+  );
+
+  assert.deepEqual(posture.blockedTargets, ["early"]);
+});
+
+test("blockedTargets is empty when nothing is blocked past the threshold", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  const posture = fleet.observe(panes(agent("a", "idle")), 10000);
+  assert.deepEqual(posture.blockedTargets, []);
+});
+
 test("a block that clears re-arms the dwell timer on the next block", () => {
   const fleet = createFleetState({ dwellMs: 5000 });
 

@@ -22,9 +22,17 @@ export interface FleetPosture {
    * The durable target of the oldest continuously-blocked agent — the "most
    * needs you" jump target for the later slices (#50/#52). Null when nothing
    * has dwelt past the threshold. Best-effort even during `unknown` so a
-   * transient poll failure doesn't strand the jump action.
+   * transient poll failure doesn't strand the jump action. Always equal to
+   * `blockedTargets[0] ?? null`.
    */
   readonly longestBlockedTarget: string | null;
+  /**
+   * Every agent blocked past the dwell threshold, oldest continuously-blocked
+   * first (ties broken by target id for determinism). This is the jump-cycle
+   * order the hotkey (#50) walks — repeat presses step through it oldest-first.
+   * Empty when nothing has dwelt past the threshold.
+   */
+  readonly blockedTargets: readonly string[];
 }
 
 /** One poll's outcome: a watched-set snapshot, or an unreachable Herdr. */
@@ -62,24 +70,24 @@ export function createFleetState(options: FleetStateOptions = {}): FleetState {
   let lastNowMs = 0;
 
   function computePosture(): FleetPosture {
-    let count = 0;
-    let longestTarget: string | null = null;
-    let longestSince = Number.POSITIVE_INFINITY;
-
+    // Collect every agent past the dwell threshold, then order it oldest-first
+    // (ties broken by target id) so both the count and the jump-cycle list fall
+    // out of one deterministic sort.
+    const dwelt: Array<{ readonly target: string; readonly since: number }> = [];
     for (const [target, since] of blockedSince) {
       if (lastNowMs - since < dwellMs) continue;
-      count++;
-      // Oldest wins; ties break on the target id for deterministic selection.
-      if (since < longestSince || (since === longestSince && target < longestTarget!)) {
-        longestSince = since;
-        longestTarget = target;
-      }
+      dwelt.push({ target, since });
     }
+    dwelt.sort((a, b) =>
+      a.since !== b.since ? a.since - b.since : a.target < b.target ? -1 : 1,
+    );
+    const blockedTargets = dwelt.map((entry) => entry.target);
 
     return {
-      tier: reachable ? tierForCount(count) : "unknown",
-      blockedCount: count,
-      longestBlockedTarget: longestTarget,
+      tier: reachable ? tierForCount(blockedTargets.length) : "unknown",
+      blockedCount: blockedTargets.length,
+      longestBlockedTarget: blockedTargets[0] ?? null,
+      blockedTargets,
     };
   }
 
