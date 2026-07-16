@@ -974,6 +974,11 @@ app.whenReady().then(async () => {
 
   overlayWindow = createOverlayWindow(savedOverlayPosition);
   ipcMain.on("show-context-menu", () => showContextMenu());
+  // A plain click on the bar (issue #52) jumps to the longest-blocked agent —
+  // the mouse-hand path to the same action as the Ctrl+Alt+J hotkey. The
+  // renderer only fires this when the press stayed under the drag threshold; a
+  // click with nothing blocked no-ops inside jumpToLongestBlocked.
+  ipcMain.on("bar-clicked", () => jumpToLongestBlocked());
   ipcMain.on("set-overlay-mouse-events", (_event, { ignore }: { ignore: boolean }) => {
     setOverlayMouseEvents(ignore);
   });

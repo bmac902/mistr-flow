@@ -15,7 +15,42 @@ let chunks = [];
 let micStream = null;
 let overlayIgnoringMouse = true;
 let dragPointerId = null;
-let lastDragPoint = null;
+let dragGesture = null;
+
+// The click-vs-drag threshold (issue #52). A press that travels more than this
+// many pixels repositions the overlay; a press that stays under it is a plain
+// click that jumps to the longest-blocked agent. Mirrors DRAG_THRESHOLD_PX in
+// src/clickDragGesture.ts, whose pure logic is unit-tested there.
+const DRAG_THRESHOLD_PX = 4;
+
+// A standalone port of createClickDragGesture (src/clickDragGesture.ts) — the
+// renderer runs as a plain script with no module loader, so the tested logic is
+// mirrored here. Keep the two in step.
+function createClickDragGesture(originX, originY, threshold = DRAG_THRESHOLD_PX) {
+  let isDrag = false;
+  let trackedX = originX;
+  let trackedY = originY;
+  return {
+    move(x, y) {
+      if (!isDrag) {
+        if (Math.hypot(x - originX, y - originY) <= threshold) {
+          return { deltaX: 0, deltaY: 0 };
+        }
+        isDrag = true;
+        trackedX = x;
+        trackedY = y;
+        return { deltaX: x - originX, deltaY: y - originY };
+      }
+      const delta = { deltaX: x - trackedX, deltaY: y - trackedY };
+      trackedX = x;
+      trackedY = y;
+      return delta;
+    },
+    end() {
+      return isDrag ? "drag" : "click";
+    },
+  };
+}
 
 function setOverlayMouseEvents(ignore) {
   if (overlayIgnoringMouse === ignore) return;
@@ -40,19 +75,17 @@ function startOverlayDrag(event) {
 
   event.preventDefault();
   dragPointerId = event.pointerId;
-  lastDragPoint = { x: event.screenX, y: event.screenY };
+  dragGesture = createClickDragGesture(event.screenX, event.screenY);
   setOverlayMouseEvents(false);
   event.currentTarget.setPointerCapture?.(event.pointerId);
 }
 
 function moveOverlayDrag(event) {
-  if (dragPointerId !== event.pointerId || !lastDragPoint) return;
+  if (dragPointerId !== event.pointerId || !dragGesture) return;
 
-  const deltaX = event.screenX - lastDragPoint.x;
-  const deltaY = event.screenY - lastDragPoint.y;
+  const { deltaX, deltaY } = dragGesture.move(event.screenX, event.screenY);
   if (deltaX !== 0 || deltaY !== 0) {
     window.mistrFlow.moveOverlayBy({ deltaX, deltaY });
-    lastDragPoint = { x: event.screenX, y: event.screenY };
   }
 }
 
@@ -60,8 +93,15 @@ function endOverlayDrag(event) {
   if (dragPointerId !== event.pointerId) return;
 
   event.currentTarget.releasePointerCapture?.(event.pointerId);
+  // A press that never crossed the threshold is a plain click, not a
+  // reposition: jump to the longest-blocked agent (a truthful no-op in main if
+  // nothing is blocked). pointercancel resolves to a drag, so it never jumps.
+  const gesture = dragGesture;
   dragPointerId = null;
-  lastDragPoint = null;
+  dragGesture = null;
+  if (event.type === "pointerup" && gesture && gesture.end() === "click") {
+    window.mistrFlow.requestJumpToBlocked();
+  }
   updateMousePassThrough(event);
 }
 
