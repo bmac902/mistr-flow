@@ -23,15 +23,20 @@ import {
 /**
  * Which delivering prop the mascot carries for a given payload: a folded note
  * for short inline text, the ledger for spilled text, a framed portrait for an
- * image. Inline text has no `requiresFile`; a spill/file/image payload does —
- * and only the image is the "image" artifact kind, so the three fall out
- * cleanly from what's already on the artifact.
+ * image. Inline text has no `requiresFile`/`requiresFiles`; a spill/file(s)/
+ * image payload declares one or the other — and only the image is the "image"
+ * artifact kind, so the three fall out cleanly from what's already on the
+ * artifact. A multi-select (#67) is `requiresFiles`, so it's the ledger: a
+ * path-injecting payload, per #41's mapping.
  */
 function relayPayloadKind(
   artifact: RelayArtifact,
 ): "note" | "ledger" | "portrait" {
   if (artifact.kind === "image") return "portrait";
-  return artifact.payload.requiresFile ? "ledger" : "note";
+  const { requiresFile, requiresFiles } = artifact.payload;
+  return requiresFile !== undefined || requiresFiles !== undefined
+    ? "ledger"
+    : "note";
 }
 
 // Relay verb — the clipboard as a source, wired end to end (issue #39, PRD #24).
@@ -181,12 +186,15 @@ export async function runRelaySession(
 }
 
 function toRelayArtifact(
-  source: Extract<ClipboardSource, { kind: "text" | "image" | "file" }>,
+  source: Extract<ClipboardSource, { kind: "text" | "image" | "file" | "files" }>,
 ): RelayArtifact {
   // A copied file rides the text branch: like text it is preview + payload with
   // nothing to crop — its payload just happens to inject a path rather than a
-  // body, which delivery already handles (spill files do exactly this).
-  if (source.kind === "text" || source.kind === "file") {
+  // body, which delivery already handles (spill files do exactly this). A
+  // multi-select (#67) rides it identically: its preview is the same text
+  // shape (full paths, one per line) and its payload injects the newline-
+  // joined block, which bracketed-paste already delivers atomically.
+  if (source.kind === "text" || source.kind === "file" || source.kind === "files") {
     return { kind: "text", payload: source.payload, preview: source.preview };
   }
   return { kind: "image", payload: source.payload, artifact: source.artifact };
