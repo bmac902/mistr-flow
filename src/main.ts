@@ -25,6 +25,7 @@ import {
   getConfigPath,
   readCopySelectionFirst,
   readFocusOnDeliver,
+  readPersistentBlockDing,
   readMuteSystemAudioWhileRecording,
   readOverlayPosition,
   readProvider,
@@ -89,6 +90,9 @@ let overlayWindow: BrowserWindow | null = null;
 let aiProvider: AiProvider | null = null;
 let muteSystemAudioWhileRecording = true;
 let copySelectionFirst = false;
+// PRD #44 / #51: the persistent-block ding is on by default; config can silence
+// the sound while keeping the visual fleet awareness. Read once at startup.
+let persistentBlockDing = true;
 let whisperVocabularyPrompt: string | null = null;
 let polishVocabularyInstruction: string | null = null;
 
@@ -203,6 +207,22 @@ async function pollFleetOnce(): Promise<void> {
       ? fleetState.observe({ kind: "panes", agents: result.agents }, Date.now())
       : fleetState.observe({ kind: "unavailable" }, Date.now());
   renderFleetPosture(posture);
+  maybeDingPersistentBlock(posture);
+}
+
+/**
+ * The single active cue of the whole feature (#51): one quiet ding when an agent
+ * has been continuously blocked past the persistent-block duration. fleetState
+ * fires the one-shot signal; here we decide whether to actually sound it —
+ * silenced by config, and suppressed while a verb is active (the ding only
+ * matters when you're away from the work, never mid-dictation). One ding per
+ * poll regardless of how many crossed, since it's a nudge, not a count.
+ */
+function maybeDingPersistentBlock(posture: FleetPosture): void {
+  if (posture.newlyPersistentBlockedTargets.length === 0) return;
+  if (!persistentBlockDing) return;
+  if (verbLock.activeVerb() !== null) return;
+  beep();
 }
 
 function startFleetPolling(): void {
@@ -932,6 +952,8 @@ app.whenReady().then(async () => {
     deliverCapture = createHerdrDeliveryAdapter({ focusOnDeliver });
     copySelectionFirst = await readCopySelectionFirst();
     console.log("[mistr-flow] config: copySelectionFirst =", copySelectionFirst);
+    persistentBlockDing = await readPersistentBlockDing();
+    console.log("[mistr-flow] config: persistentBlockDing =", persistentBlockDing);
   } catch (error) {
     dialog.showErrorBox("Mistr Flow config error", String(error));
     app.quit();

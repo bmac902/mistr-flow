@@ -12,6 +12,7 @@ export interface AppConfig {
   vocabulary?: unknown;
   focusOnDeliver?: unknown;
   copySelectionFirst?: unknown;
+  persistentBlockDing?: unknown;
   provider?: unknown;
 }
 
@@ -152,6 +153,23 @@ export async function readCopySelectionFirst(
   const rawConfig = await fileSystem.readFile(configPath, "utf8");
   const parsed = JSON.parse(rawConfig) as AppConfig;
   return parsed.copySelectionFirst === true;
+}
+
+/**
+ * Default ON, silenceable — mirrors readMuteSystemAudioWhileRecording's
+ * `!== false` shape. The persistent-block ding (PRD #44, #51) is the feature's
+ * one active cue; a user can kill the sound while keeping the visual fleet
+ * awareness by setting `persistentBlockDing: false`. On by default so the value
+ * isn't hidden behind a flag nobody discovers.
+ */
+export async function readPersistentBlockDing(
+  env: NodeJS.ProcessEnv = process.env,
+  fileSystem = fs,
+): Promise<boolean> {
+  const configPath = getConfigPath(env);
+  const rawConfig = await fileSystem.readFile(configPath, "utf8");
+  const parsed = JSON.parse(rawConfig) as AppConfig;
+  return parsed.persistentBlockDing !== false;
 }
 
 /**

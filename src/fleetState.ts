@@ -33,6 +33,16 @@ export interface FleetPosture {
    * Empty when nothing has dwelt past the threshold.
    */
   readonly blockedTargets: readonly string[];
+  /**
+   * The one-shot "persistent block" signal (#51): agents that crossed the
+   * persistent-block duration on *this* observe — a genuinely-missed bottleneck
+   * earning a single audio nudge. Fires exactly once per continuous-block
+   * episode (re-armed only after the block clears) and only from `observe`;
+   * `posture()` always reports it empty so a passive read never re-triggers the
+   * ding. The effectful layer decides whether to actually sound it (config +
+   * verb suppression) — this module stays pure.
+   */
+  readonly newlyPersistentBlockedTargets: readonly string[];
 }
 
 /** One poll's outcome: a watched-set snapshot, or an unreachable Herdr. */
@@ -48,6 +58,13 @@ export interface FleetStateOptions {
    * filtering any hypothetical blip.
    */
   readonly dwellMs?: number;
+  /**
+   * How long an agent must be *continuously* blocked before it earns the single
+   * persistent-block ding (#51). Spike calibration: normal blocks resolve well
+   * under a minute when watched, so this ~3–5 min mark fires only on a genuinely
+   * missed bottleneck — the feature's one and only active cue.
+   */
+  readonly persistentBlockMs?: number;
 }
 
 export interface FleetState {
@@ -59,17 +76,29 @@ export interface FleetState {
 
 export const DEFAULT_DWELL_MS = 5000;
 
+// ~4 minutes: the middle of the PRD's 3–5 min persistent-block window. Long
+// enough that only a genuinely-missed bottleneck reaches it (normal blocks
+// resolve well under a minute when watched), short enough to still catch a miss.
+export const DEFAULT_PERSISTENT_BLOCK_MS = 240000;
+
 export function createFleetState(options: FleetStateOptions = {}): FleetState {
   const dwellMs = options.dwellMs ?? DEFAULT_DWELL_MS;
+  const persistentBlockMs = options.persistentBlockMs ?? DEFAULT_PERSISTENT_BLOCK_MS;
 
   // target → the timestamp the agent first became continuously blocked. An
   // agent leaves this map the moment it's no longer blocked (status changed or
   // pane vanished), which re-arms the dwell timer for any future block.
   const blockedSince = new Map<string, number>();
+  // Targets whose persistent-block ding has already fired for their *current*
+  // block episode. Kept in lockstep with blockedSince (an entry is dropped the
+  // moment its block clears), so a fresh block re-arms the one-shot ding.
+  const dinged = new Set<string>();
   let reachable = false;
   let lastNowMs = 0;
 
-  function computePosture(): FleetPosture {
+  function computePosture(
+    newlyPersistentBlockedTargets: readonly string[] = [],
+  ): FleetPosture {
     // Collect every agent past the dwell threshold, then order it oldest-first
     // (ties broken by target id) so both the count and the jump-cycle list fall
     // out of one deterministic sort.
@@ -88,6 +117,7 @@ export function createFleetState(options: FleetStateOptions = {}): FleetState {
       blockedCount: blockedTargets.length,
       longestBlockedTarget: blockedTargets[0] ?? null,
       blockedTargets,
+      newlyPersistentBlockedTargets,
     };
   }
 
@@ -112,10 +142,28 @@ export function createFleetState(options: FleetStateOptions = {}): FleetState {
       }
 
       for (const target of [...blockedSince.keys()]) {
-        if (!stillBlocked.has(target)) blockedSince.delete(target);
+        if (!stillBlocked.has(target)) {
+          blockedSince.delete(target);
+          // Block cleared → re-arm the ding for this target's next episode.
+          dinged.delete(target);
+        }
       }
 
-      return computePosture();
+      // The persistent-block ding is evaluated only on a confirmed snapshot: an
+      // agent we can't currently see blocked never earns a nudge. Any target
+      // past the duration that hasn't yet dinged this episode fires exactly now.
+      const newlyPersistent: Array<{ readonly target: string; readonly since: number }> = [];
+      for (const [target, since] of blockedSince) {
+        if (nowMs - since < persistentBlockMs) continue;
+        if (dinged.has(target)) continue;
+        dinged.add(target);
+        newlyPersistent.push({ target, since });
+      }
+      newlyPersistent.sort((a, b) =>
+        a.since !== b.since ? a.since - b.since : a.target < b.target ? -1 : 1,
+      );
+
+      return computePosture(newlyPersistent.map((entry) => entry.target));
     },
 
     posture() {

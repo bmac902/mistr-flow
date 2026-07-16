@@ -9,6 +9,7 @@ import {
   readFocusOnDeliver,
   readCopySelectionFirst,
   readMuteSystemAudioWhileRecording,
+  readPersistentBlockDing,
   readOpenAiApiKey,
   readOverlayPosition,
   readProvider,
@@ -68,6 +69,36 @@ test("readMuteSystemAudioWhileRecording allows config opt-out", async () => {
   const shouldMute = await readMuteSystemAudioWhileRecording({ APPDATA: tempRoot }, fs);
 
   assert.equal(shouldMute, false);
+});
+
+test("readPersistentBlockDing defaults to enabled — the one nudge is on unless silenced", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key" }),
+    "utf8",
+  );
+
+  const shouldDing = await readPersistentBlockDing({ APPDATA: tempRoot }, fs);
+
+  assert.equal(shouldDing, true);
+});
+
+test("readPersistentBlockDing allows config opt-out — keep the visual, kill the sound", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key", persistentBlockDing: false }),
+    "utf8",
+  );
+
+  const shouldDing = await readPersistentBlockDing({ APPDATA: tempRoot }, fs);
+
+  assert.equal(shouldDing, false);
 });
 
 test("readFocusOnDeliver defaults to disabled — never steal focus unless opted in", async () => {
