@@ -60,6 +60,7 @@ import {
 } from "./capture";
 import { readClipboardSource, type ClipboardSourcePort } from "./clipboardSource";
 import { runRelaySession } from "./relaySession";
+import { runHeraldSession } from "./heraldSession";
 import {
   createCaptureGrabFailedError,
   runCaptureSession,
@@ -97,6 +98,14 @@ let whisperVocabularyPrompt: string | null = null;
 let polishVocabularyInstruction: string | null = null;
 
 interface ActiveSession {
+  /**
+   * Which verb owns the microphone: plain Dictation, or Herald (issue #55),
+   * whose recording is the front half of a routed send. Each hotkey
+   * toggle-stops only its OWN recording — any other press lands on the verb
+   * lock and refuses, so active dictation is never interrupted by Herald or
+   * vice versa.
+   */
+  verb: "dictation" | "herald";
   resolveAudio(buffer: Buffer): void;
   rejectAudio(error: Error): void;
   systemAudioMutePromise: Promise<SystemAudioMuteHandle | null>;
@@ -122,6 +131,10 @@ const CAPTURE_WINDOW_RESTORE_PHASES: ReadonlySet<OverlaySnapshot["phase"]> = new
   "cancelled",
   "capture-delivered",
   "capture-delivery-failed",
+  // Herald's slot-1 salvage ends on dictation's done beat ("Pasted, sir."),
+  // so the picker-grown window must shrink back on it too. Plain dictation
+  // never routes through showCaptureOverlay, so this entry can't affect it.
+  "done",
 ]);
 
 // The last overlay state that wasn't the refusal — so when refused self-clears
@@ -413,10 +426,15 @@ function requestStopRecording(): Promise<Buffer> {
   });
 }
 
-function startSession(): void {
-  if (activeSession) return;
-  if (!aiProvider) return;
-  const provider = aiProvider;
+/**
+ * Opens one recording session — the modal microphone half shared by Dictation
+ * and Herald (issue #55): the audio promise the toggle/Esc handlers settle,
+ * system-audio muting, the session Escape shortcut, and the renderer's
+ * start-recording cue. Returns the audio promise, or null when a recording
+ * session is already active.
+ */
+function startRecordingSession(verb: "dictation" | "herald"): Promise<Buffer> | null {
+  if (activeSession) return null;
 
   let resolveAudio!: (buffer: Buffer) => void;
   let rejectAudio!: (error: Error) => void;
@@ -433,12 +451,22 @@ function startSession(): void {
     sendIdle: () => sendToRenderer("overlay-state", buildOverlaySnapshot("idle")),
     setTimeout,
   });
-  session = { resolveAudio, rejectAudio, systemAudioMutePromise, cleanupPromise: null, idleReturn };
+  session = { verb, resolveAudio, rejectAudio, systemAudioMutePromise, cleanupPromise: null, idleReturn };
   activeSession = session;
   globalShortcut.register("Escape", () => {
     if (activeSession) endSession("escape");
   });
   sendToRenderer("start-recording");
+  return audioPromise;
+}
+
+function startSession(): void {
+  if (!aiProvider) return;
+  const provider = aiProvider;
+
+  const audioPromise = startRecordingSession("dictation");
+  if (!audioPromise) return;
+  const session = activeSession!;
 
   void runDictationSession({
     showOverlay: (snapshot) => sendToRenderer("overlay-state", snapshot),
@@ -485,7 +513,10 @@ function beginSessionCleanup(session: ActiveSession, cleanup: Promise<void>): vo
   globalShortcut.unregister("Escape");
   session.cleanupPromise = cleanup.finally(() => {
     if (activeSession === session) activeSession = null;
-    verbLock.release("dictation");
+    // Dictation's lock guards only the recording (processing/paste are
+    // non-modal). Herald's lock guards the WHOLE routed session — the picker
+    // is modal — so it is released by startHerald's finally, never here.
+    if (session.verb === "dictation") verbLock.release("dictation");
     session.idleReturn.afterCleanup();
 
     if (quitAfterSessionCleanup) {
@@ -519,7 +550,10 @@ const TOGGLE_ACCELERATOR = "Control+Alt+D";
 
 function registerHotkey(): void {
   const registered = globalShortcut.register(TOGGLE_ACCELERATOR, () => {
-    if (activeSession) {
+    // Toggle-stop only dictation's OWN recording. A Herald recording is not
+    // this verb's to stop — that press falls through to the verb lock and
+    // refuses, so active dictation (either verb's) is never interrupted.
+    if (activeSession?.verb === "dictation") {
       endSession("release");
       return;
     }
@@ -581,6 +615,40 @@ function registerRelayHotkey(): void {
   if (!registered) {
     throw new Error(
       `Failed to register global hotkey "${RELAY_ACCELERATOR}". It may already be in use by another app.`,
+    );
+  }
+}
+
+// Ctrl+Alt+H ("H for Herdr"), beside D (dictate) and C (clipboard) in the
+// Ctrl+Alt+ family (issue #55, ADR 0003): dictation's front half routed to an
+// agent pane through the send session, instead of pasted locally. Like every
+// other hotkey it fails loudly on a live OS-wide collision (dialog in
+// whenReady), never silently swapped; live-desktop behavior is the human
+// sibling issue (#56).
+const HERALD_ACCELERATOR = "Control+Alt+H";
+
+function registerHeraldHotkey(): void {
+  const registered = globalShortcut.register(HERALD_ACCELERATOR, () => {
+    // Toggle-stop only Herald's OWN recording — mirroring Ctrl+Alt+D. Any
+    // other mid-flight verb (including active dictation, which is never
+    // interrupted) lands on the verb lock below and gets the mascot refusal.
+    if (activeSession?.verb === "herald") {
+      endSession("release");
+      return;
+    }
+
+    if (!verbLock.tryStart("herald")) {
+      refuseVerb();
+      return;
+    }
+
+    cancelRefusedReturn();
+    startHerald();
+  });
+
+  if (!registered) {
+    throw new Error(
+      `Failed to register global hotkey "${HERALD_ACCELERATOR}". It may already be in use by another app.`,
     );
   }
 }
@@ -825,6 +893,57 @@ function startRelay(): void {
     });
 }
 
+function startHerald(): void {
+  if (!aiProvider) {
+    verbLock.release("herald");
+    return;
+  }
+  const provider = aiProvider;
+
+  captureRestingBounds = overlayWindow && !overlayWindow.isDestroyed()
+    ? overlayWindow.getBounds()
+    : null;
+
+  void runHeraldSession({
+    showOverlay: (snapshot) => showCaptureOverlay(snapshot),
+    playBeep: () => beep(),
+    recordAudio: async () => {
+      // Esc in the picker re-dictates (ADR 0003), and the previous take's
+      // recording session tears down asynchronously — wait it out so a
+      // retake can never race the cleanup.
+      await activeSession?.cleanupPromise;
+      const audioPromise = startRecordingSession("herald");
+      if (!audioPromise) {
+        throw new Error("A recording session is already active.");
+      }
+      return audioPromise;
+    },
+    transcribe: (buffer) => provider.transcribe(buffer, { vocabularyPrompt: whisperVocabularyPrompt }),
+    polish: (rawTranscript) => provider.polish(rawTranscript, { vocabularyInstruction: polishVocabularyInstruction }),
+    // Capture's picker exactly: slot 1 registered (Herald relabels it "Paste
+    // here" via the snapshot), panes on 2–9 — same digits, same panes.
+    openPicker: () => openCapturePicker(),
+    queryEligibleTargets: () => queryHerdr({}),
+    // Same adapter, same ledger, same ack/unknown-retry semantics, same
+    // focusOnDeliver as Capture and Relay — Herald's payload is inline text.
+    deliver: (payload, target) => deliverCapture(payload, target),
+    // Slot 1's salvage: exactly the Ctrl+Alt+D outcome — clipboard write plus
+    // the simulated Ctrl+V into whatever window is focused.
+    pasteHere: (text) =>
+      pasteTextImpl(text, {
+        writeClipboard: (t) => clipboard.writeText(t),
+        simulatePaste: () => simulatePasteKeystroke(),
+      }),
+    mintId: () => randomUUID(),
+  })
+    .then((result) => console.log("[mistr-flow] herald session result:", result.kind))
+    .catch((error) => console.error("[mistr-flow] herald session failed:", error))
+    .finally(() => {
+      verbLock.release("herald");
+      captureRestingBounds = null;
+    });
+}
+
 function createOverlayWindow(savedPosition: OverlayPosition | null = null): BrowserWindow {
   const display = screen.getPrimaryDisplay();
   const winWidth = 292;
@@ -993,6 +1112,7 @@ app.whenReady().then(async () => {
     registerHotkey();
     registerCaptureHotkey();
     registerRelayHotkey();
+    registerHeraldHotkey();
     registerJumpHotkey();
   } catch (error) {
     dialog.showErrorBox("Mistr Flow hotkey error", String(error));

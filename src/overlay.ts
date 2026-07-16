@@ -61,6 +61,13 @@ export interface OverlaySnapshot {
    */
   clipboardSlot?: boolean;
   /**
+   * What slot 1's entry reads when it isn't Capture's "Clipboard": Herald's
+   * slot 1 is "Paste here" — the polished transcript into the focused window,
+   * the Ctrl+Alt+D outcome, kept as a salvage (ADR 0003). Only meaningful when
+   * `clipboardSlot` is true; absent means the renderer's "Clipboard" default.
+   */
+  slotOneLabel?: string;
+  /**
    * Preview of what the picker is about to send (issue #35/#39) — picker phase
    * only, so it never leaks into the delivering/delivered/failed beats. An
    * image thumbnail for a capture/relayed image, a text head for relayed text.
@@ -302,6 +309,7 @@ export function buildCapturePickerOverlaySnapshot(
   message?: string,
   preview?: PickerPreview | null,
   clipboardSlot = true,
+  slotOneLabel?: string,
 ): OverlaySnapshot {
   const summoning = targets.length === 0 && message === undefined;
   return {
@@ -314,6 +322,7 @@ export function buildCapturePickerOverlaySnapshot(
     captureTargets: targets,
     pickerSummoning: summoning,
     clipboardSlot,
+    slotOneLabel,
     capturePreview: preview ?? undefined,
   };
 }
