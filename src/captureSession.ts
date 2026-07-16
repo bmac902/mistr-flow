@@ -134,6 +134,20 @@ export interface RunSessionDependencies<A> {
    * the actual `1` shortcut is owned by the injected picker handle. Default true.
    */
   clipboardSlot?: boolean;
+  /**
+   * What slot 1's picker entry reads. Herald relabels it "Paste here" — its
+   * slot 1 rides the same digit-1/`clipboard` machinery but pastes the polished
+   * transcript into the focused window rather than copying anything (ADR 0003).
+   * Absent (Capture) the renderer shows its "Clipboard" default.
+   */
+  slotOneLabel?: string;
+  /**
+   * Overrides the beat shown after slot 1's local action, mirroring
+   * deliveringSnapshot/deliveredSnapshot. Herald shows dictation's existing
+   * `done` ("Pasted, sir.") because its slot 1 IS the Ctrl+Alt+D outcome —
+   * no new mascot art. Default: the generic capture-delivered beat.
+   */
+  clipboardDeliveredSnapshot?(artifact: A): OverlaySnapshot;
   clock?: CaptureSessionClock;
   paneQueryTimeoutMs?: number;
   deliveryAckTimeoutMs?: number;
@@ -231,6 +245,7 @@ export async function runSendSession<A>(
         currentMessage,
         preview,
         clipboardSlot,
+        dependencies.slotOneLabel,
       ),
     );
   }
@@ -288,7 +303,10 @@ export async function runSendSession<A>(
     if (selection.kind === "clipboard") {
       closePicker();
       await dependencies.copyToClipboard?.(artifact);
-      void dependencies.showOverlay(buildOverlaySnapshot("capture-delivered"));
+      void dependencies.showOverlay(
+        dependencies.clipboardDeliveredSnapshot?.(artifact) ??
+          buildOverlaySnapshot("capture-delivered"),
+      );
       return { kind: "clipboard-delivered" };
     }
 

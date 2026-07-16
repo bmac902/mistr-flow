@@ -24,12 +24,23 @@ export function createDictationCancelledError(
   return new DictationCancelledError(reason);
 }
 
-export interface RunDictationSessionDependencies {
+/**
+ * Voice's front half — the beats and calls shared by plain Dictation and
+ * Herald (issue #55, ADR 0003): listening/recording/cancel handling, the
+ * dead-zone debounce, then transcribe → Polish with their beats. What happens
+ * to the resulting text is the verb's back half: Dictation pastes it locally;
+ * Herald routes it through the send session to a pane.
+ */
+export interface RunDictationFrontHalfDependencies {
   showOverlay(snapshot: OverlaySnapshot): void | Promise<void>;
   playBeep(): void | Promise<void>;
   recordAudio(): Promise<Buffer>;
   transcribe(audioBuffer: Buffer): Promise<string>;
   polish(rawTranscript: string): Promise<string>;
+}
+
+export interface RunDictationSessionDependencies
+  extends RunDictationFrontHalfDependencies {
   pasteText(text: string): Promise<void> | void;
 }
 
@@ -40,8 +51,8 @@ export type RunDictationSessionResult =
       reason: DictationCancelReason;
     };
 
-export async function runDictationSession(
-  dependencies: RunDictationSessionDependencies,
+export async function runDictationFrontHalf(
+  dependencies: RunDictationFrontHalfDependencies,
 ): Promise<RunDictationSessionResult> {
   void dependencies.showOverlay(buildOverlaySnapshot("listening"));
   void dependencies.playBeep();
@@ -69,13 +80,19 @@ export async function runDictationSession(
 
   void dependencies.showOverlay(buildOverlaySnapshot("processing"));
 
-  const result = await runSession(audioBuffer, {
+  return runSession(audioBuffer, {
     transcribe: dependencies.transcribe,
     polish: dependencies.polish,
     onPolishStart() {
       void dependencies.showOverlay(buildOverlaySnapshot("polishing"));
     },
   });
+}
+
+export async function runDictationSession(
+  dependencies: RunDictationSessionDependencies,
+): Promise<RunDictationSessionResult> {
+  const result = await runDictationFrontHalf(dependencies);
 
   if (result.kind === "polished") {
     await dependencies.pasteText(result.polishedText);

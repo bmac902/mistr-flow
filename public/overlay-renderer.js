@@ -277,9 +277,12 @@ function renderCapturePickerEntries(snapshot) {
 
   // Slot 1 is the pinned Clipboard destination for Capture; for Relay
   // (clipboardSlot === false) it is skipped — the clipboard is the source —
-  // but panes still occupy digits 2–9 either way.
+  // but panes still occupy digits 2–9 either way. Herald keeps the slot and
+  // relabels it "Paste here" via slotOneLabel (issue #55).
   if (snapshot.clipboardSlot !== false) {
-    pickerEntriesEl.appendChild(buildPickerEntryEl(1, "Clipboard"));
+    pickerEntriesEl.appendChild(
+      buildPickerEntryEl(1, snapshot.slotOneLabel || "Clipboard"),
+    );
   }
   for (const [index, target] of (snapshot.captureTargets || []).entries()) {
     pickerEntriesEl.appendChild(buildPickerEntryEl(index + 2, target.label));

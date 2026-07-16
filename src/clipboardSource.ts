@@ -196,7 +196,7 @@ async function classifyText(
 
   const spilled = text.length > CLIPBOARD_SPILL_THRESHOLD;
 
-  const summary = buildTextSummary(lineCount, byteSize, spilled);
+  const summary = buildTextSummary("Text", lineCount, byteSize, spilled);
   const preview: ClipboardTextPreview = {
     kind: "text",
     firstLines,
@@ -256,13 +256,20 @@ async function classifyImage(
   };
 }
 
-function buildTextSummary(
+/**
+ * The one-line `kind · lines · size` summary the picker's text preview shows.
+ * Exported for Herald (issue #55), whose preview is the same panel with a
+ * different kind label ("Polished" / a raw-fallback marker) — one formatter,
+ * so every text preview reads the same.
+ */
+export function buildTextSummary(
+  kindLabel: string,
   lineCount: number,
   byteSize: number,
   spilled: boolean,
 ): string {
   const lineLabel = lineCount === 1 ? "1 line" : `${lineCount} lines`;
-  const base = `Text · ${lineLabel} · ${humanBytes(byteSize)}`;
+  const base = `${kindLabel} · ${lineLabel} · ${humanBytes(byteSize)}`;
   return spilled ? `${base} · spilled to file` : base;
 }
 

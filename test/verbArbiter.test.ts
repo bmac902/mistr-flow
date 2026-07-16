@@ -32,3 +32,19 @@ test("refuses relay while dictation or capture is active, and vice versa", () =>
   assert.equal(decideVerbStart({ activeVerb: "relay" }, "dictation"), "refuse");
   assert.equal(decideVerbStart({ activeVerb: "relay" }, "capture"), "refuse");
 });
+
+test("starts herald from idle", () => {
+  assert.equal(decideVerbStart({ activeVerb: null }, "herald"), "start");
+});
+
+test("refuses herald while any verb is mid-flight, and vice versa (issue #55)", () => {
+  // Active dictation is never interrupted by a Herald press…
+  assert.equal(decideVerbStart({ activeVerb: "dictation" }, "herald"), "refuse");
+  assert.equal(decideVerbStart({ activeVerb: "capture" }, "herald"), "refuse");
+  assert.equal(decideVerbStart({ activeVerb: "relay" }, "herald"), "refuse");
+  // …and a mid-flight Herald refuses every other verb.
+  assert.equal(decideVerbStart({ activeVerb: "herald" }, "dictation"), "refuse");
+  assert.equal(decideVerbStart({ activeVerb: "herald" }, "capture"), "refuse");
+  assert.equal(decideVerbStart({ activeVerb: "herald" }, "relay"), "refuse");
+  assert.equal(decideVerbStart({ activeVerb: "herald" }, "herald"), "refuse");
+});
