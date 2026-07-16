@@ -17,6 +17,29 @@ let overlayIgnoringMouse = true;
 let dragPointerId = null;
 let dragGesture = null;
 
+// Button affordances for the picker rows (issue #61, ADR 0005): while a
+// picker is open the rows ARE buttons — pointer cursor, hover, pressed — and
+// the entries column becomes pointer-interactive (the design asset ships it
+// pointer-events: none). Renderer-owned <style>, same discipline as the
+// again-row's unmark styling: overlay.html is a Claude Design asset and
+// carries no knowledge of clickability. Everything is scoped to
+// .mf-state-capture-picker, so the affordances vanish with the picker and
+// pointer behavior returns to the resting bar's on close. The pressed state
+// avoids transform — the entry-in animation's fill would override it.
+const pickerRowStyle = document.createElement("style");
+pickerRowStyle.textContent = `
+  .mf-state-capture-picker #capture-picker-entries { pointer-events: auto; }
+  .mf-state-capture-picker .capture-picker-entry { cursor: pointer; }
+  .mf-state-capture-picker .capture-picker-entry:hover {
+    border-color: var(--brass);
+    filter: brightness(1.04);
+  }
+  .mf-state-capture-picker .capture-picker-entry:active {
+    filter: brightness(0.93);
+  }
+`;
+document.head.appendChild(pickerRowStyle);
+
 // The click-vs-drag threshold (issue #52). A press that travels more than this
 // many pixels repositions the overlay; a press that stays under it is a plain
 // click that jumps to the longest-blocked agent. Mirrors DRAG_THRESHOLD_PX in
@@ -60,14 +83,19 @@ function setOverlayMouseEvents(ignore) {
 
 function updateMousePassThrough(event) {
   const target = document.elementFromPoint(event.clientX, event.clientY);
-  const overDragTarget = Boolean(
+  const overInteractive = Boolean(
     target &&
       (cardEl.contains(target) ||
         mascotEl.contains(target) ||
+        // Picker rows are buttons while a picker is open (issue #61, ADR
+        // 0005). The container is display:none outside the picker phase, so
+        // elementFromPoint can never land here at rest — mouse passthrough
+        // returns to today's behavior the moment the picker closes.
+        pickerEntriesEl.contains(target) ||
         // The preview is only interactive while it's showing something to crop.
         (previewEl.classList.contains("has-preview") && previewEl.contains(target))),
   );
-  setOverlayMouseEvents(!overDragTarget);
+  setOverlayMouseEvents(!overInteractive);
 }
 
 function startOverlayDrag(event) {
@@ -297,24 +325,42 @@ function buildAgainRowEl(againRow) {
   return entry;
 }
 
+// A row click IS a press of the row's key (issue #61, ADR 0005): it ships the
+// row's identity — bound to the render that built it, so a click can never
+// act on a stale or reordered target list — over IPC to main, where the
+// picker handle dispatches the exact selection event the key would produce.
+// Rows are pure buttons: their column lives outside the card, so a press here
+// never begins the window-drag gesture (the butler/header keeps that role),
+// and an unmarked again-row still clicks — the same truthful no-op its key is.
+function makeRowClickable(entry, identity) {
+  entry.addEventListener("click", (event) => {
+    if (event.button !== 0) return;
+    window.mistrFlow.sendPickerRowClick(identity);
+  });
+}
+
 function renderCapturePickerEntries(snapshot) {
   pickerEntriesEl.textContent = "";
   if (snapshot.phase !== "capture-picker") return;
 
   if (snapshot.againRow) {
-    pickerEntriesEl.appendChild(buildAgainRowEl(snapshot.againRow));
+    const againEl = buildAgainRowEl(snapshot.againRow);
+    makeRowClickable(againEl, { kind: "again" });
+    pickerEntriesEl.appendChild(againEl);
   }
   // Slot 1 is the pinned Clipboard destination for Capture; for Relay
   // (clipboardSlot === false) it is skipped — the clipboard is the source —
   // but panes still occupy digits 2–9 either way. Herald keeps the slot and
   // relabels it "Paste here" via slotOneLabel (issue #55).
   if (snapshot.clipboardSlot !== false) {
-    pickerEntriesEl.appendChild(
-      buildPickerEntryEl(1, snapshot.slotOneLabel || "Clipboard"),
-    );
+    const slotOneEl = buildPickerEntryEl(1, snapshot.slotOneLabel || "Clipboard");
+    makeRowClickable(slotOneEl, { kind: "clipboard" });
+    pickerEntriesEl.appendChild(slotOneEl);
   }
   for (const [index, target] of (snapshot.captureTargets || []).entries()) {
-    pickerEntriesEl.appendChild(buildPickerEntryEl(index + 2, target.label));
+    const entryEl = buildPickerEntryEl(index + 2, target.label);
+    makeRowClickable(entryEl, { kind: "target", slotIndex: index });
+    pickerEntriesEl.appendChild(entryEl);
   }
 }
 

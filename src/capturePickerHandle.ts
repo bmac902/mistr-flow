@@ -32,10 +32,34 @@ export type CropSource = (emit: (rect: CropRect) => void) => () => void;
  */
 export type AgainSource = (emit: () => void) => () => void;
 
+/**
+ * A row click's identity as the renderer reported it (issue #61, ADR 0005) —
+ * the slot kind, plus the 0-based position in the appended target list for
+ * pane rows (digit = slotIndex + 2). Identity, never payload: the handle
+ * resolves it against the rows THIS instance registered, so a click can never
+ * act on a stale or reordered target list.
+ */
+export type PickerRowClick =
+  | { readonly kind: "clipboard" }
+  | { readonly kind: "target"; readonly slotIndex: number }
+  | { readonly kind: "again" };
+
+/**
+ * Subscribes to picker-row clicks from the renderer (issue #61, ADR 0005),
+ * returning an unsubscribe. A mouse click is another way to press the row's
+ * key, never a second implementation: like crops and again-confirms it
+ * arrives from outside as an injected source and resolves the EXACT selection
+ * event the row's key produces, through the same one-selection-at-a-time
+ * channel — ledger, unknown → retry, slot-1 semantics and again-resolution
+ * all inherited, not re-implemented.
+ */
+export type RowClickSource = (emit: (click: PickerRowClick) => void) => () => void;
+
 export interface CapturePickerHandleDeps {
   readonly shortcuts: GlobalShortcutPort;
   readonly cropSource?: CropSource;
   readonly againSource?: AgainSource;
+  readonly clickSource?: RowClickSource;
   /**
    * Whether digit `1` resolves to the pinned Clipboard destination. True for
    * Capture; false for Relay, whose slot 1 is deliberately skipped (the
@@ -54,19 +78,45 @@ export interface CapturePickerHandleDeps {
 export function createCapturePickerHandle(
   deps: CapturePickerHandleDeps,
 ): CapturePickerHandle {
-  const { shortcuts, cropSource, againSource } = deps;
+  const { shortcuts, cropSource, againSource, clickSource } = deps;
   const includeClipboardSlot = deps.includeClipboardSlot ?? true;
   const registeredAccelerators = new Set<string>();
+  // The targets THIS instance put on digit slots, in append order — the sole
+  // thing a row click's slotIndex is resolved against, so a click bound to a
+  // stale render can never select in a list it wasn't born from.
+  const slotTargets: EligibleTarget[] = [];
   let pendingResolve: ((event: CaptureSelectionEvent) => void) | null = null;
   let closed = false;
   let unsubscribeCrop: (() => void) | null = null;
   let unsubscribeAgain: (() => void) | null = null;
+  let unsubscribeClick: (() => void) | null = null;
 
   function resolveSelection(event: CaptureSelectionEvent): void {
     if (closed || !pendingResolve) return;
     const resolve = pendingResolve;
     pendingResolve = null;
     resolve(event);
+  }
+
+  /**
+   * A row click is a press of the row's key (issue #61, ADR 0005): it maps to
+   * the identical selection event, or is dropped when no such row exists in
+   * this instance — a clipboard click into a Relay picker (which renders no
+   * slot 1), or a slot index the current render never populated.
+   */
+  function resolveRowClick(click: PickerRowClick): void {
+    if (click.kind === "clipboard") {
+      if (!includeClipboardSlot) return;
+      resolveSelection({ kind: "clipboard" });
+      return;
+    }
+    if (click.kind === "again") {
+      resolveSelection({ kind: "again" });
+      return;
+    }
+    const target = slotTargets[click.slotIndex];
+    if (!target) return;
+    resolveSelection({ kind: "target", target });
   }
 
   function registerAccelerator(accelerator: string, onPress: () => void): void {
@@ -88,12 +138,17 @@ export function createCapturePickerHandle(
     unsubscribeAgain = againSource(() => resolveSelection({ kind: "again" }));
   }
 
+  if (clickSource) {
+    unsubscribeClick = clickSource((click) => resolveRowClick(click));
+  }
+
   return {
     appendTargets(targets: readonly EligibleTarget[]): void {
       if (closed) return;
 
       for (const [index, target] of targets.slice(0, MAX_TARGET_SLOTS).entries()) {
         const digit = index + 2;
+        slotTargets[index] = target;
         registerAccelerator(String(digit), () =>
           resolveSelection({ kind: "target", target }),
         );
@@ -116,6 +171,9 @@ export function createCapturePickerHandle(
 
       unsubscribeAgain?.();
       unsubscribeAgain = null;
+
+      unsubscribeClick?.();
+      unsubscribeClick = null;
 
       for (const accelerator of registeredAccelerators) {
         shortcuts.unregister(accelerator);
