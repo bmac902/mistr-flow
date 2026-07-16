@@ -6,6 +6,40 @@ Mistr Flow's butler (the mascot) is designed in **Claude Design** and lives in
 one file, exports drift from the code and every integration turns into a manual
 reconciliation. This is the process that stops that.
 
+## Quick start (the round-trip)
+
+The two `npm` commands **never touch Claude Design** — no login, no API. They just
+move and inspect files on this machine. Claude Design is a separate tool in the
+browser; *you* are the courier between them. The commands bookend your hand-off:
+
+```
+  THIS LAPTOP                              BROWSER
+  ───────────                              ───────
+1 npm run design:canvas  ──►  copies the CURRENT overlay into design-canvas/
+                                              │
+2 (you) load that copy   ───────────────────►  into Claude Design
+                                              │
+3            ...decorate the butler in Claude Design...
+                                              │
+4 (you) export the result ◄──────────────────  out of Claude Design
+                                              │
+5 (you) drop it onto public/overlay.html
+                                              │
+6 npm run design:check   ──►  confirms the export didn't drop any code hooks
+```
+
+- **`npm run design:canvas`** — makes a clean copy of *today's* `public/overlay.html`
+  into `design-canvas/overlay.html`. That's all it does. Load **that** file into
+  Claude Design so it decorates the current page, not an old one. (The old-copy
+  problem is the whole reason exports used to come back broken.)
+- **`npm run design:check`** — opens `overlay-renderer.js`, lists every page slot
+  the code reaches for (`#capture-preview`, `#mascot`, …), and confirms the
+  exported `overlay.html` still has all of them. Green ✓ = safe to trust. Red ✗ =
+  it names the exact missing slot, so a silent break becomes a two-second error.
+
+Run them in a terminal in `C:\dev\mistr-flow`, or prefix with `!` in a Claude Code
+session (`!npm run design:canvas`) to run them inline.
+
 ## Who owns what
 
 `public/overlay.html` is **co-owned**:
