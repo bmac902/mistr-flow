@@ -28,6 +28,29 @@ const ACTIONABLE_STATUSES: ReadonlySet<string> = new Set(["idle", "working"]);
 export type AgentStatus = "idle" | "working";
 
 /**
+ * The full set of agent statuses Herdr reports — verified live against the
+ * real CLI schema, which enumerates exactly these five. The picker only acts
+ * on the actionable subset (idle/working); fleet awareness watches the whole
+ * fleet, including the blocked/done/unknown end. Any status outside this set
+ * (or an absent status) normalises to `unknown` — never a calm posture,
+ * consistent with the app's "absence of signal is not all-clear" epistemics.
+ */
+export type WatchedAgentStatus =
+  | "idle"
+  | "working"
+  | "blocked"
+  | "done"
+  | "unknown";
+
+const WATCHED_STATUSES: ReadonlySet<WatchedAgentStatus> = new Set([
+  "idle",
+  "working",
+  "blocked",
+  "done",
+  "unknown",
+]);
+
+/**
  * A structured code for every adapter failure. Consumers switch on the code
  * for behaviour and render {@link safeMessageFor} as text — the code never
  * carries a raw socket path, command line, or exception string.
@@ -68,6 +91,20 @@ export interface EligibleTarget {
   readonly target: string;
   readonly label: string;
   readonly agentStatus: AgentStatus;
+}
+
+/**
+ * A pane the fleet-awareness layer watches (glossary *Watched Set*): any pane
+ * carrying an `agent` label, with its status preserved across the whole
+ * spectrum (idle → working → blocked → done → unknown) and bound to the same
+ * durable `terminal_id` identity the picker uses. Unlike {@link EligibleTarget}
+ * this is not filtered to actionable statuses and not capped — the whole fleet
+ * is in view, not just the panes you can send to.
+ */
+export interface WatchedAgent {
+  readonly target: string;
+  readonly agent: string;
+  readonly status: WatchedAgentStatus;
 }
 
 /** The result of asking Herdr for eligible targets. */
@@ -298,6 +335,46 @@ function mapPane(pane: RawPane): EligibleTarget | null {
     label: buildTargetLabel(pane, agentStatus),
     agentStatus,
   };
+}
+
+/**
+ * Watched-set mapping (glossary *Watched Set*): every pane carrying an `agent`
+ * label and a durable {@link durableTargetId}, with its status preserved across
+ * the full spectrum — the seam the rest of fleet awareness reads from. This is
+ * deliberately *not* the picker's eligibility rule: no actionable-status filter
+ * (blocked/done/unknown panes are kept) and no {@link MAX_ELIGIBLE_TARGETS}
+ * cap. Bare shells (no `agent` field) and panes with no durable identity are
+ * still excluded — the same two exclusions the picker makes. A status outside
+ * Herdr's known set normalises to `unknown`.
+ */
+export function mapPanesToWatchedSet(
+  panes: ReadonlyArray<RawPane>,
+): WatchedAgent[] {
+  const watched: WatchedAgent[] = [];
+
+  for (const pane of panes) {
+    if (typeof pane.agent !== "string" || pane.agent.length === 0) {
+      continue;
+    }
+    const target = durableTargetId(pane);
+    if (!target) {
+      continue;
+    }
+    watched.push({
+      target,
+      agent: pane.agent,
+      status: normalizeWatchedStatus(pane.agent_status),
+    });
+  }
+
+  return watched;
+}
+
+function normalizeWatchedStatus(raw: unknown): WatchedAgentStatus {
+  if (typeof raw === "string" && WATCHED_STATUSES.has(raw as WatchedAgentStatus)) {
+    return raw as WatchedAgentStatus;
+  }
+  return "unknown";
 }
 
 /**

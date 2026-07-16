@@ -10,6 +10,7 @@ import {
   MAX_ELIGIBLE_TARGETS,
   checkHerdrAvailability,
   mapPanesToTargets,
+  mapPanesToWatchedSet,
   parseHerdrStatus,
   parsePaneList,
   queryEligibleTargets,
@@ -209,6 +210,77 @@ test("an agent pane with a non-actionable status is excluded", () => {
     },
   ]);
   assert.deepEqual(targets, []);
+});
+
+// ---------------------------------------------------------------------------
+// Watched-set mapping (fleet awareness seam — the opposite end of the picker)
+// ---------------------------------------------------------------------------
+
+test("watched set keeps every agent-labelled pane across the full status spectrum", () => {
+  const panes = parsePaneList(fixture("pane-list-mixed.json"));
+  const watched = mapPanesToWatchedSet(panes);
+
+  assert.deepEqual(watched, [
+    { target: "term_A1", agent: "claude", status: "idle" },
+    { target: "term_B1", agent: "codex", status: "working" },
+    // "dead" is not a Herdr status — it normalises to unknown, never a calm state.
+    { target: "term_C1", agent: "claude", status: "unknown" },
+    { target: "term_D1", agent: "codex", status: "done" },
+    { target: "term_F1", agent: "claude", status: "idle" },
+    { target: "term_H1", agent: "claude", status: "blocked" },
+  ]);
+});
+
+test("watched set preserves blocked and done statuses the picker would drop", () => {
+  const panes = parsePaneList(fixture("pane-list-mixed.json"));
+  const watched = mapPanesToWatchedSet(panes);
+  const byTarget = new Map(watched.map((w) => [w.target, w.status]));
+
+  assert.equal(byTarget.get("term_H1"), "blocked");
+  assert.equal(byTarget.get("term_D1"), "done");
+  // ...and the picker still drops both — proving the two mappers diverge.
+  const pickerIds = mapPanesToTargets(panes).map((t) => t.target);
+  assert.ok(!pickerIds.includes("term_H1"), "blocked not eligible");
+  assert.ok(!pickerIds.includes("term_D1"), "done not eligible");
+});
+
+test("watched set excludes bare shells and unlabelled panes", () => {
+  const panes = parsePaneList(fixture("pane-list-mixed.json"));
+  const ids = mapPanesToWatchedSet(panes).map((w) => w.target);
+
+  assert.ok(!ids.includes("term_E1"), "bare shell with no agent excluded");
+  assert.ok(!ids.includes("term_G1"), "unlabelled pane excluded");
+});
+
+test("watched set requires a durable terminal_id, never a positional id", () => {
+  const watched = mapPanesToWatchedSet([
+    { agent: "claude", agent_status: "blocked", cwd: "no durable id" },
+  ]);
+  assert.deepEqual(watched, []);
+});
+
+test("watched set normalises an absent or unrecognised status to unknown", () => {
+  const watched = mapPanesToWatchedSet([
+    { agent: "claude", terminal_id: "term_no_status" },
+    { agent: "codex", agent_status: "starting", terminal_id: "term_starting" },
+  ]);
+  assert.deepEqual(watched, [
+    { target: "term_no_status", agent: "claude", status: "unknown" },
+    { target: "term_starting", agent: "codex", status: "unknown" },
+  ]);
+});
+
+test("watched set is uncapped — the whole fleet is in view, unlike the 8-slot picker", () => {
+  const panes = parsePaneList(fixture("pane-list-overflow.json"));
+  const watched = mapPanesToWatchedSet(panes);
+
+  assert.equal(watched.length, 10, "no MAX_ELIGIBLE_TARGETS cap on the watched set");
+  assert.ok(watched.length > MAX_ELIGIBLE_TARGETS);
+});
+
+test("empty pane list yields an empty watched set", () => {
+  const panes = parsePaneList(fixture("pane-list-empty.json"));
+  assert.deepEqual(mapPanesToWatchedSet(panes), []);
 });
 
 // ---------------------------------------------------------------------------

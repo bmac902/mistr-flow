@@ -61,6 +61,18 @@
         "cwd": "docs — no session metadata yet"
       },
       {
+        "terminal_id": "term_H1",
+        "agent": "claude",
+        "agent_status": "blocked",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "ses_H1"
+        },
+        "cwd": "feature — awaiting approval"
+      },
+      {
         "terminal_id": "term_G1",
         "cwd": "nvim — notes.md"
       }

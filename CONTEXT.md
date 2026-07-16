@@ -12,6 +12,8 @@
 
 **Eligible Target** — a Herdr pane that may appear in the Capture picker: Herdr identifies it with an `agent` label AND an actionable agent status (idle or working). Presence of optional `agent_session` metadata is NOT the test — recognized agent panes can lack it. Bare/unknown shells and completed/dead panes are never Eligible Targets. Menu labels carry the agent state so a working agent can be knowingly left alone.
 
+**Watched Set** — the opposite end of the same `pane list`: every pane carrying an `agent` label, with its status preserved across the *whole* spectrum (idle / working / blocked / done / unknown) rather than filtered to the actionable subset, and uncapped (the whole fleet is in view, not just the 8 picker slots). It shares the picker's two exclusions — bare shells and panes with no durable `terminal_id` are out — but nothing else. This is the seam fleet awareness (#44) reads from; the picker's *Eligible Target* rule is untouched by it.
+
 **Polish** — the cleanup step that turns a Raw Transcript into the text that gets pasted. Scope is deliberately narrow:
 - DOES: fix punctuation and grammar, format spoken lists into actual list structure.
 - DOES NOT: remove, reorder, or merge content based on inferred self-correction ("scratch that," restating a thought, etc.) — every word the speaker said survives into the pasted text, even if they misspoke. No semantic judgment calls, no inferred intent beyond punctuation/grammar/lists.
