@@ -11,6 +11,7 @@ export interface AppConfig {
   muteSystemAudioWhileRecording?: unknown;
   vocabulary?: unknown;
   focusOnDeliver?: unknown;
+  provider?: unknown;
 }
 
 export interface VocabularyReplacement {
@@ -131,6 +132,25 @@ export async function readFocusOnDeliver(
   const rawConfig = await fileSystem.readFile(configPath, "utf8");
   const parsed = JSON.parse(rawConfig) as AppConfig;
   return parsed.focusOnDeliver === true;
+}
+
+/**
+ * Which AI provider to resolve at startup, defaulting to "openai" when absent
+ * so every config already in the wild keeps working untouched. This reads only
+ * the provider *name* — provider-specific fields (openaiApiKey, and a future
+ * Azure adapter's own fields) are read by each adapter's factory, never here.
+ * That's the seam that keeps config.ts out of the fork's conflict zone (#43).
+ */
+export async function readProvider(
+  env: NodeJS.ProcessEnv = process.env,
+  fileSystem = fs,
+): Promise<string> {
+  const configPath = getConfigPath(env);
+  const rawConfig = await fileSystem.readFile(configPath, "utf8");
+  const parsed = JSON.parse(rawConfig) as AppConfig;
+  return typeof parsed.provider === "string" && parsed.provider.trim()
+    ? parsed.provider.trim()
+    : "openai";
 }
 
 export async function writeOverlayPosition(

@@ -10,6 +10,7 @@ import {
   readMuteSystemAudioWhileRecording,
   readOpenAiApiKey,
   readOverlayPosition,
+  readProvider,
   readVocabularyConfig,
   writeOverlayPosition,
 } from "../src/config";
@@ -96,6 +97,36 @@ test("readFocusOnDeliver allows explicit opt-in", async () => {
   const shouldFocus = await readFocusOnDeliver({ APPDATA: tempRoot }, fs);
 
   assert.equal(shouldFocus, true);
+});
+
+test("readProvider defaults to openai when the field is absent", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key" }),
+    "utf8",
+  );
+
+  const provider = await readProvider({ APPDATA: tempRoot }, fs);
+
+  assert.equal(provider, "openai");
+});
+
+test("readProvider returns the configured provider", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key", provider: "azure" }),
+    "utf8",
+  );
+
+  const provider = await readProvider({ APPDATA: tempRoot }, fs);
+
+  assert.equal(provider, "azure");
 });
 
 test("writeOverlayPosition persists the overlay position without dropping existing config", async () => {

@@ -25,13 +25,13 @@ import {
   getConfigPath,
   readFocusOnDeliver,
   readMuteSystemAudioWhileRecording,
-  readOpenAiApiKey,
   readOverlayPosition,
+  readProvider,
   readVocabularyConfig,
   writeOverlayPosition,
 } from "./config";
+import { resolveAiProvider, type AiProvider } from "./aiProvider";
 import { createDictationCancelledError, runDictationSession } from "./dictation";
-import { polishTranscript, transcribeAudio } from "./openai";
 import { buildPolishVocabularyInstruction, buildWhisperVocabularyPrompt } from "./vocabulary";
 import { pasteText as pasteTextImpl } from "./paste";
 import { buildOverlaySnapshot, buildRefusedOverlaySnapshot, type OverlaySnapshot } from "./overlay";
@@ -77,7 +77,7 @@ import {
 import { nativeWindowHandleToHwnd } from "./nativeWindowHandle";
 
 let overlayWindow: BrowserWindow | null = null;
-let apiKey = "";
+let aiProvider: AiProvider | null = null;
 let muteSystemAudioWhileRecording = true;
 let whisperVocabularyPrompt: string | null = null;
 let polishVocabularyInstruction: string | null = null;
@@ -201,6 +201,8 @@ function requestStopRecording(): Promise<Buffer> {
 
 function startSession(): void {
   if (activeSession) return;
+  if (!aiProvider) return;
+  const provider = aiProvider;
 
   let resolveAudio!: (buffer: Buffer) => void;
   let rejectAudio!: (error: Error) => void;
@@ -228,8 +230,8 @@ function startSession(): void {
     showOverlay: (snapshot) => sendToRenderer("overlay-state", snapshot),
     playBeep: () => beep(),
     recordAudio: () => audioPromise,
-    transcribe: (buffer) => transcribeAudio(buffer, { apiKey, vocabularyPrompt: whisperVocabularyPrompt }),
-    polish: (rawTranscript) => polishTranscript(rawTranscript, { apiKey, vocabularyInstruction: polishVocabularyInstruction }),
+    transcribe: (buffer) => provider.transcribe(buffer, { vocabularyPrompt: whisperVocabularyPrompt }),
+    polish: (rawTranscript) => provider.polish(rawTranscript, { vocabularyInstruction: polishVocabularyInstruction }),
     pasteText: (text) =>
       pasteTextImpl(text, {
         writeClipboard: (t) => clipboard.writeText(t),
@@ -697,7 +699,9 @@ app.whenReady().then(async () => {
   }
 
   try {
-    apiKey = await readOpenAiApiKey();
+    const providerName = await readProvider();
+    console.log("[mistr-flow] config: provider =", providerName);
+    aiProvider = await resolveAiProvider(providerName);
     muteSystemAudioWhileRecording = await readMuteSystemAudioWhileRecording();
     const focusOnDeliver = await readFocusOnDeliver();
     console.log("[mistr-flow] config: focusOnDeliver =", focusOnDeliver);
