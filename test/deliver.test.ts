@@ -4,6 +4,7 @@ import test from "node:test";
 import { CAPTURE_TTL_MS, type CaptureArtifact } from "../src/capture";
 import { DELIVERY_ACK_TIMEOUT_MS } from "../src/captureSession";
 import {
+  captureArtifactToPayload,
   createHerdrDeliveryAdapter,
   safeMessageFor,
   type DeliverExecFile,
@@ -28,6 +29,11 @@ const OTHER_ARTIFACT: CaptureArtifact = {
   ...ARTIFACT,
   pngPath: "/tmp/MistrFlowCaptures/some-other-file.png",
 };
+
+// Delivery is payload-driven (#37): a CaptureArtifact is just one producer of
+// a SendPayload. The tests exercise the adapter through that seam.
+const PAYLOAD = captureArtifactToPayload(ARTIFACT);
+const OTHER_PAYLOAD = captureArtifactToPayload(OTHER_ARTIFACT);
 
 const TARGET_A: EligibleTarget = {
   target: "trm_01HZY8AK4M0000000000000001",
@@ -75,7 +81,7 @@ test("deliver: happy path injects the exact absolute PNG path via herdr agent se
     pathExists: async () => true,
   });
 
-  const outcomePromise = deliver(ARTIFACT, TARGET_A);
+  const outcomePromise = deliver(PAYLOAD, TARGET_A);
   await flush();
   recorder.respond(null);
   const outcome = await outcomePromise;
@@ -93,7 +99,7 @@ test("deliver: missing PNG is rejected as a precondition — never injected into
     pathExists: async () => false,
   });
 
-  const outcome = await deliver(ARTIFACT, TARGET_A);
+  const outcome = await deliver(PAYLOAD, TARGET_A);
 
   assert.deepEqual(outcome, {
     kind: "failed",
@@ -110,7 +116,7 @@ test("deliver: spawn failure (herdr missing) maps to herdr-not-found", async () 
     pathExists: async () => true,
   });
 
-  const outcomePromise = deliver(ARTIFACT, TARGET_A);
+  const outcomePromise = deliver(PAYLOAD, TARGET_A);
   await flush();
   const spawnError = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
   recorder.respond(spawnError);
@@ -130,7 +136,7 @@ test("deliver: non-zero exit (pane rejected the run) maps to delivery-pane-run-f
     pathExists: async () => true,
   });
 
-  const outcomePromise = deliver(ARTIFACT, TARGET_A);
+  const outcomePromise = deliver(PAYLOAD, TARGET_A);
   await flush();
   recorder.respond(new Error("exit 1"));
   const outcome = await outcomePromise;
@@ -149,12 +155,12 @@ test("deliver: retrying the same capture + target after settling is idempotent �
     pathExists: async () => true,
   });
 
-  const first = deliver(ARTIFACT, TARGET_A);
+  const first = deliver(PAYLOAD, TARGET_A);
   await flush();
   recorder.respond(null);
   assert.deepEqual(await first, { kind: "delivered" });
 
-  const second = await deliver(ARTIFACT, TARGET_A);
+  const second = await deliver(PAYLOAD, TARGET_A);
 
   assert.deepEqual(second, { kind: "delivered" });
   assert.equal(recorder.calls.length, 1);
@@ -167,8 +173,8 @@ test("deliver: retrying while the first attempt is still in flight attaches to i
     pathExists: async () => true,
   });
 
-  const first = deliver(ARTIFACT, TARGET_A);
-  const second = deliver(ARTIFACT, TARGET_A);
+  const first = deliver(PAYLOAD, TARGET_A);
+  const second = deliver(PAYLOAD, TARGET_A);
   await flush();
 
   assert.equal(recorder.calls.length, 1);
@@ -186,12 +192,12 @@ test("deliver: reused capture id against a different target is rejected, never d
     pathExists: async () => true,
   });
 
-  const first = deliver(ARTIFACT, TARGET_A);
+  const first = deliver(PAYLOAD, TARGET_A);
   await flush();
   recorder.respond(null);
   await first;
 
-  const outcome = await deliver(ARTIFACT, TARGET_B);
+  const outcome = await deliver(PAYLOAD, TARGET_B);
 
   assert.deepEqual(outcome, {
     kind: "failed",
@@ -208,12 +214,12 @@ test("deliver: reused capture id with a mismatched payload (pngPath) is rejected
     pathExists: async () => true,
   });
 
-  const first = deliver(ARTIFACT, TARGET_A);
+  const first = deliver(PAYLOAD, TARGET_A);
   await flush();
   recorder.respond(null);
   await first;
 
-  const outcome = await deliver(OTHER_ARTIFACT, TARGET_A);
+  const outcome = await deliver(OTHER_PAYLOAD, TARGET_A);
 
   assert.deepEqual(outcome, {
     kind: "failed",
@@ -230,7 +236,7 @@ test("deliver: focusOnDeliver disabled (default) never calls herdr agent focus",
     pathExists: async () => true,
   });
 
-  const outcomePromise = deliver(ARTIFACT, TARGET_A);
+  const outcomePromise = deliver(PAYLOAD, TARGET_A);
   await flush();
   recorder.respond(null);
   await outcomePromise;
@@ -248,7 +254,7 @@ test("deliver: focusOnDeliver enabled focuses the target after a successful deli
     focusOnDeliver: true,
   });
 
-  const outcomePromise = deliver(ARTIFACT, TARGET_A);
+  const outcomePromise = deliver(PAYLOAD, TARGET_A);
   await flush();
   recorder.respond(null);
   await flush();
@@ -270,7 +276,7 @@ test("deliver: focusOnDeliver enabled does not focus after a failed delivery", a
     focusOnDeliver: true,
   });
 
-  const outcomePromise = deliver(ARTIFACT, TARGET_A);
+  const outcomePromise = deliver(PAYLOAD, TARGET_A);
   await flush();
   recorder.respond(new Error("exit 1"));
   const outcome = await outcomePromise;
@@ -289,7 +295,7 @@ test("deliver: a focus failure is swallowed — delivery still reports delivered
     focusOnDeliver: true,
   });
 
-  const outcomePromise = deliver(ARTIFACT, TARGET_A);
+  const outcomePromise = deliver(PAYLOAD, TARGET_A);
   await flush();
   recorder.respond(null);
   await flush();

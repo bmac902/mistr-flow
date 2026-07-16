@@ -3,7 +3,11 @@ import test from "node:test";
 
 import { runCaptureSession, type CaptureSessionClock, type CapturePickerHandle, type CaptureSelectionEvent } from "../src/captureSession";
 import type { CaptureArtifact } from "../src/capture";
-import { createHerdrDeliveryAdapter, type DeliverExecFile } from "../src/deliver";
+import {
+  captureArtifactToPayload,
+  createHerdrDeliveryAdapter,
+  type DeliverExecFile,
+} from "../src/deliver";
 import type { EligibleTarget } from "../src/herdr";
 import type { OverlaySnapshot } from "../src/overlay";
 
@@ -119,7 +123,7 @@ test("integration: unknown (ack timeout) then retry with the same capture id del
     openPicker: () => picker.handle,
     queryEligibleTargets: async () => ({ kind: "targets", targets: [TARGET] }),
     copyToClipboard: async () => {},
-    deliver,
+    deliver: (capture, target) => deliver(captureArtifactToPayload(capture), target),
     clock: fakeClock.clock,
     deliveryAckTimeoutMs: 3000,
   });

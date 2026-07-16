@@ -86,36 +86,41 @@ export interface CaptureSessionClock {
   clearTimeout(handle: unknown): void;
 }
 
-export interface RunCaptureSessionDependencies {
+/**
+ * The dependency bag for the shared send session, generic in the artifact type
+ * `A` the verb flows through the loop (issue #37). Capture supplies a
+ * {@link CaptureArtifact}; a second verb can supply a different payload type
+ * with its own grab, preview, crop, clipboard, and delivery — the loop itself
+ * is agnostic to what `A` is.
+ */
+export interface RunSessionDependencies<A> {
   showOverlay(snapshot: OverlaySnapshot): void | Promise<void>;
   /** Rejects with a {@link CaptureGrabFailedError} on a bad grab — never a fake artifact. */
-  captureActiveWindow(): Promise<CaptureArtifact>;
+  captureActiveWindow(): Promise<A>;
   openPicker(): CapturePickerHandle;
   /**
    * Best-effort preview of the grab for the picker (#35). Returning null — or
    * rejecting — renders the picker without a preview; it never fails the
    * capture or changes a delivery outcome.
    */
-  renderThumbnail?(artifact: CaptureArtifact): Promise<CapturePreview | null>;
+  renderThumbnail?(artifact: A): Promise<CapturePreview | null>;
   /**
-   * Trims a capture to `rect`, returning a fresh artifact (new id, new file)
-   * for the cropped pixels. Best-effort: null keeps the uncropped capture, so
+   * Trims an artifact to `rect`, returning a fresh artifact (new id, new file)
+   * for the cropped pixels. Best-effort: null keeps the uncropped artifact, so
    * a failed crop costs the user nothing but the drag.
    */
-  cropCapture?(
-    artifact: CaptureArtifact,
-    rect: CropRect,
-  ): Promise<CaptureArtifact | null>;
+  cropCapture?(artifact: A, rect: CropRect): Promise<A | null>;
   queryEligibleTargets(): Promise<HerdrQueryResult>;
-  copyToClipboard(artifact: CaptureArtifact): void | Promise<void>;
-  deliver(
-    capture: CaptureArtifact,
-    target: EligibleTarget,
-  ): Promise<CaptureDeliverOutcome>;
+  copyToClipboard(artifact: A): void | Promise<void>;
+  deliver(artifact: A, target: EligibleTarget): Promise<CaptureDeliverOutcome>;
   clock?: CaptureSessionClock;
   paneQueryTimeoutMs?: number;
   deliveryAckTimeoutMs?: number;
 }
+
+/** The Capture verb's concrete instantiation of the shared session deps. */
+export type RunCaptureSessionDependencies =
+  RunSessionDependencies<CaptureArtifact>;
 
 export type RunCaptureSessionResult =
   | {
@@ -138,8 +143,8 @@ const defaultClock: CaptureSessionClock = {
   clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
 };
 
-export async function runCaptureSession(
-  dependencies: RunCaptureSessionDependencies,
+export async function runSendSession<A>(
+  dependencies: RunSessionDependencies<A>,
 ): Promise<RunCaptureSessionResult> {
   const clock = dependencies.clock ?? defaultClock;
   const paneQueryTimeoutMs =
@@ -147,7 +152,7 @@ export async function runCaptureSession(
   const deliveryAckTimeoutMs =
     dependencies.deliveryAckTimeoutMs ?? DELIVERY_ACK_TIMEOUT_MS;
 
-  let artifact: CaptureArtifact;
+  let artifact: A;
   try {
     artifact = await dependencies.captureActiveWindow();
   } catch (error) {
@@ -162,7 +167,7 @@ export async function runCaptureSession(
   // their capture, so this swallows everything and falls back to a
   // preview-less picker.
   async function renderPreviewFor(
-    forArtifact: CaptureArtifact,
+    forArtifact: A,
   ): Promise<CapturePreview | null> {
     if (!dependencies.renderThumbnail) return null;
     try {
@@ -172,7 +177,7 @@ export async function runCaptureSession(
     }
   }
 
-  async function cropCurrent(rect: CropRect): Promise<CaptureArtifact | null> {
+  async function cropCurrent(rect: CropRect): Promise<A | null> {
     if (!dependencies.cropCapture) return null;
     try {
       return await dependencies.cropCapture(artifact, rect);
@@ -294,6 +299,17 @@ export async function runCaptureSession(
     // CaptureArtifact id, keeping the retry idempotent.
     void dependencies.showOverlay(buildOverlaySnapshot("capture-delivery-unknown"));
   }
+}
+
+/**
+ * The Capture verb's entry into the shared session. A thin concrete alias over
+ * {@link runSendSession} so existing callers and tests keep their signature;
+ * the loop itself is generic in the payload type (issue #37).
+ */
+export function runCaptureSession(
+  dependencies: RunCaptureSessionDependencies,
+): Promise<RunCaptureSessionResult> {
+  return runSendSession(dependencies);
 }
 
 function queryTargetsWithDeadline(

@@ -60,7 +60,7 @@ import {
   type CapturePreview,
   type ThumbnailImagePort,
 } from "./captureThumbnail";
-import { createHerdrDeliveryAdapter } from "./deliver";
+import { captureArtifactToPayload, createHerdrDeliveryAdapter } from "./deliver";
 import { queryHerdr } from "./herdr";
 import {
   capturePickerWindowHeight,
@@ -446,7 +446,8 @@ function startCapture(): void {
     cropCapture: (artifact, rect) => cropCaptureArtifact(artifact, rect),
     queryEligibleTargets: () => queryHerdr({}),
     copyToClipboard: (artifact) => copyCaptureToClipboard(artifact),
-    deliver: (capture, target) => deliverCapture(capture, target),
+    deliver: (capture, target) =>
+      deliverCapture(captureArtifactToPayload(capture), target),
   })
     .then((result) => console.log("[mistr-flow] capture session result:", result.kind))
     .catch((error) => console.error("[mistr-flow] capture session failed:", error))
