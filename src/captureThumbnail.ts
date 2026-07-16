@@ -28,6 +28,34 @@ export interface CapturePreview {
 }
 
 /**
+ * The Relay text preview (issue #38/#39): the picker's preview panel shows the
+ * first few copied lines plus a one-line summary, exactly as the image preview
+ * shows the thumbnail — so you never fire off whatever you copied three hours
+ * ago, blind. Lives here beside {@link CapturePreview} because both are the
+ * "what the picker previews" contract; {@link readClipboardSource} produces it.
+ */
+export interface ClipboardTextPreview {
+  readonly kind: "text";
+  /** The first {@link CLIPBOARD_PREVIEW_LINES} lines, verbatim. */
+  readonly firstLines: string;
+  /** Whether {@link firstLines} is only the head of a longer body. */
+  readonly truncated: boolean;
+  readonly lineCount: number;
+  readonly byteSize: number;
+  /** Whether the body spilled to a file rather than injecting inline. */
+  readonly spilled: boolean;
+  /** One line: kind · lines · size (· spilled). */
+  readonly summary: string;
+}
+
+/**
+ * Everything the picker's preview panel can render: an image thumbnail (Capture
+ * or a relayed clipboard image) or a relayed text head. Discriminated by the
+ * text variant's `kind: "text"` — the image variant carries no `kind`.
+ */
+export type PickerPreview = CapturePreview | ClipboardTextPreview;
+
+/**
  * The image operations a thumbnail needs, mirroring Electron's `nativeImage`
  * so main.ts can pass the real thing and tests can pass a fake. Every method
  * here is one nativeImage already implements.

@@ -1,7 +1,10 @@
 import path from "node:path";
 
 import type { CaptureArtifact } from "./capture";
+import type { ClipboardTextPreview } from "./captureThumbnail";
 import { captureArtifactToPayload, type SendPayload } from "./deliver";
+
+export type { ClipboardTextPreview } from "./captureThumbnail";
 
 // Relay verb — the clipboard as a source (issue #38, PRD #24). MF's third sense
 // organ, after voice (dictate) and screen (capture): read whatever is on the
@@ -70,21 +73,6 @@ export interface ClipboardSourcePort {
 
 /** Preview data for a relayed image — the label the existing thumbnail treatment renders. */
 export const CLIPBOARD_IMAGE_LABEL = "Clipboard image";
-
-/** What the picker needs to preview relayed text: the head plus a one-line summary. */
-export interface ClipboardTextPreview {
-  readonly kind: "text";
-  /** The first {@link CLIPBOARD_PREVIEW_LINES} lines, verbatim. */
-  readonly firstLines: string;
-  /** Whether {@link firstLines} is only the head of a longer body. */
-  readonly truncated: boolean;
-  readonly lineCount: number;
-  readonly byteSize: number;
-  /** Whether the body spilled to a file rather than injecting inline. */
-  readonly spilled: boolean;
-  /** One line: kind · lines · size (· spilled). */
-  readonly summary: string;
-}
 
 /**
  * The typed outcome of reading the clipboard. Distinct cases so the caller (the

@@ -43,7 +43,13 @@ import {
 } from "./overlayPosition";
 import { createSessionIdleReturn, type SessionIdleReturn } from "./sessionIdleReturn";
 import { muteSystemAudio, type SystemAudioMuteHandle } from "./systemAudio";
-import { captureActiveWindow as captureActiveWindowImpl, type CaptureArtifact } from "./capture";
+import {
+  captureActiveWindow as captureActiveWindowImpl,
+  defaultCaptureDir,
+  type CaptureArtifact,
+} from "./capture";
+import { readClipboardSource, type ClipboardSourcePort } from "./clipboardSource";
+import { runRelaySession } from "./relaySession";
 import {
   createCaptureGrabFailedError,
   runCaptureSession,
@@ -64,6 +70,7 @@ import { captureArtifactToPayload, createHerdrDeliveryAdapter } from "./deliver"
 import { queryHerdr } from "./herdr";
 import {
   capturePickerWindowHeight,
+  relayPickerWindowHeight,
   resolveGrownWindowBounds,
   type WindowBounds,
 } from "./captureWindowBounds";
@@ -113,9 +120,16 @@ function applyCaptureWindowBounds(snapshot: OverlaySnapshot): void {
   if (!overlayWindow || overlayWindow.isDestroyed() || !captureRestingBounds) return;
 
   if (snapshot.phase === "capture-picker") {
+    // Relay's picker skips slot 1 but still reserves its row (panes stay on
+    // 2–9), so relayPickerWindowHeight matches capturePickerWindowHeight by
+    // construction — the branch keeps the intent legible.
+    const heightFor =
+      snapshot.clipboardSlot === false
+        ? relayPickerWindowHeight
+        : capturePickerWindowHeight;
     const bounds = resolveGrownWindowBounds({
       restingBounds: captureRestingBounds,
-      grownHeight: capturePickerWindowHeight(
+      grownHeight: heightFor(
         snapshot.captureTargets?.length ?? 0,
         Boolean(snapshot.capturePreview),
       ),
@@ -328,6 +342,30 @@ function registerCaptureHotkey(): void {
   }
 }
 
+// Ctrl+Alt+C ("clipboard"), matching Ctrl+Alt+D ("dictate"). Pre-verified live
+// on the home machine (2026-07-15, issue #39): registers cleanly via
+// globalShortcut with no hard conflict. Do not swap it out speculatively — the
+// residual risk (globalShortcut intercepts system-wide) is covered by the human
+// verification issue (#40).
+const RELAY_ACCELERATOR = "Control+Alt+C";
+
+function registerRelayHotkey(): void {
+  const registered = globalShortcut.register(RELAY_ACCELERATOR, () => {
+    if (!verbLock.tryStart("relay")) {
+      sendToRenderer("overlay-state", buildRefusedOverlaySnapshot());
+      return;
+    }
+
+    startRelay();
+  });
+
+  if (!registered) {
+    throw new Error(
+      `Failed to register global hotkey "${RELAY_ACCELERATOR}". It may already be in use by another app.`,
+    );
+  }
+}
+
 function grabActiveWindow(): Promise<CaptureArtifact> {
   const excludeHwnd = overlayWindow
     ? nativeWindowHandleToHwnd(overlayWindow.getNativeWindowHandle())
@@ -453,6 +491,64 @@ function startCapture(): void {
     .catch((error) => console.error("[mistr-flow] capture session failed:", error))
     .finally(() => {
       verbLock.release("capture");
+      captureRestingBounds = null;
+    });
+}
+
+// Relay reads/PNG-spills into the same temp dir captures use, so the existing
+// TTL sweep reclaims relay spill/image files too (CONTEXT.md).
+const relayCaptureDir = defaultCaptureDir();
+
+/** Adapts Electron's clipboard + fs to the pure Relay source port (issue #38). */
+function relayClipboardPort(): ClipboardSourcePort {
+  return {
+    readText: () => clipboard.readText(),
+    readImage: () => {
+      const image = clipboard.readImage();
+      return { isEmpty: () => image.isEmpty(), toPNG: () => image.toPNG() };
+    },
+    writeFile: async (filePath, data) => {
+      await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.promises.writeFile(filePath, data);
+    },
+    mintId: () => randomUUID(),
+    timestampIso: () => new Date().toISOString(),
+    captureDir: relayCaptureDir,
+  };
+}
+
+function openRelayPicker(): CapturePickerHandle {
+  return createCapturePickerHandle({
+    shortcuts: {
+      register: (accelerator, callback) => globalShortcut.register(accelerator, callback),
+      unregister: (accelerator) => globalShortcut.unregister(accelerator),
+    },
+    cropSource: captureCropSource,
+    // Slot 1 is skipped: the clipboard is Relay's source, not a destination.
+    includeClipboardSlot: false,
+  });
+}
+
+function startRelay(): void {
+  captureRestingBounds = overlayWindow && !overlayWindow.isDestroyed()
+    ? overlayWindow.getBounds()
+    : null;
+
+  void runRelaySession({
+    readClipboardSource: () => readClipboardSource(relayClipboardPort()),
+    showOverlay: (snapshot) => showCaptureOverlay(snapshot),
+    openPicker: () => openRelayPicker(),
+    renderImageThumbnail: (artifact) => renderCaptureThumbnail(artifact),
+    cropImage: (artifact, rect) => cropCaptureArtifact(artifact, rect),
+    queryEligibleTargets: () => queryHerdr({}),
+    // Same adapter, same ledger, same ack/unknown-retry semantics, same
+    // focusOnDeliver as Capture — Relay's payload just isn't always a PNG.
+    deliver: (payload, target) => deliverCapture(payload, target),
+  })
+    .then((result) => console.log("[mistr-flow] relay session result:", result.kind))
+    .catch((error) => console.error("[mistr-flow] relay session failed:", error))
+    .finally(() => {
+      verbLock.release("relay");
       captureRestingBounds = null;
     });
 }
@@ -613,6 +709,7 @@ app.whenReady().then(async () => {
   try {
     registerHotkey();
     registerCaptureHotkey();
+    registerRelayHotkey();
   } catch (error) {
     dialog.showErrorBox("Mistr Flow hotkey error", String(error));
   }

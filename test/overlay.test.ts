@@ -10,6 +10,7 @@ import {
   buildOverlaySnapshot,
   buildErrorOverlaySnapshot,
   buildRefusedOverlaySnapshot,
+  buildRelayEmptyOverlaySnapshot,
   runHappyPathOverlaySession,
 } from "../src/overlay";
 import type { EligibleTarget } from "../src/herdr";
@@ -377,6 +378,48 @@ test("buildCapturePickerOverlaySnapshot carries the capture preview when one exi
   // A failed thumbnail is absent, not null — the picker just renders without it.
   assert.equal(buildCapturePickerOverlaySnapshot([], undefined, null).capturePreview, undefined);
   assert.equal(buildCapturePickerOverlaySnapshot([]).capturePreview, undefined);
+});
+
+test("buildCapturePickerOverlaySnapshot defaults clipboardSlot true; Relay passes false", () => {
+  // Capture: slot 1 is the pinned Clipboard destination.
+  assert.equal(buildCapturePickerOverlaySnapshot([]).clipboardSlot, true);
+  // Relay: slot 1 is skipped — the clipboard is the source.
+  assert.equal(
+    buildCapturePickerOverlaySnapshot([], undefined, undefined, false).clipboardSlot,
+    false,
+  );
+});
+
+test("buildCapturePickerOverlaySnapshot carries a relayed text preview (issue #39)", () => {
+  const textPreview = {
+    kind: "text" as const,
+    firstLines: "Traceback (most recent call last):",
+    truncated: true,
+    lineCount: 42,
+    byteSize: 1200,
+    spilled: false,
+    summary: "Text · 42 lines · 1.2 KB",
+  };
+
+  assert.deepEqual(
+    buildCapturePickerOverlaySnapshot([], undefined, textPreview, false).capturePreview,
+    textPreview,
+  );
+});
+
+test("buildRelayEmptyOverlaySnapshot is a truthful, un-faded nothing-to-send beat (issue #39)", () => {
+  const snapshot = buildRelayEmptyOverlaySnapshot();
+
+  assert.equal(snapshot.phase, "relay-empty");
+  assert.equal(snapshot.barMode, "expanded");
+  // No target list at all — never a fake success, never a picker.
+  assert.equal(snapshot.captureTargets, undefined);
+  assert.match(snapshot.statusCopy, /empty|nothing/i);
+  // Funny, never ambiguous about what happened (personality is a product property).
+  assert.ok(snapshot.mascotCopy.length > 0);
+
+  // buildOverlaySnapshot routes the phase to the same builder.
+  assert.deepEqual(buildOverlaySnapshot("relay-empty"), snapshot);
 });
 
 test("overlay html gates the capture preview on the picker state and contains it in its box", () => {

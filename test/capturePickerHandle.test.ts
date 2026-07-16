@@ -195,3 +195,57 @@ test("a picker with no cropSource still works", () => {
     handle.close();
   });
 });
+
+// --- Relay: slot 1 skipped (issue #39) -----------------------------------
+
+test("Relay picker (includeClipboardSlot: false) registers only Esc on open — no slot 1", () => {
+  const shortcuts = makeFakeShortcuts();
+  createCapturePickerHandle({ shortcuts, includeClipboardSlot: false });
+
+  assert.deepEqual(shortcuts.registeredAccelerators(), ["Escape"]);
+});
+
+test("Relay picker still puts panes on digits 2-9 — slot 1 is skipped, not compacted", () => {
+  const shortcuts = makeFakeShortcuts();
+  const handle = createCapturePickerHandle({ shortcuts, includeClipboardSlot: false });
+
+  handle.appendTargets([TARGET_A, TARGET_B]);
+
+  // No "1": pane A on digit 2, pane B on digit 3 — panes are NOT pulled down
+  // to slot 1 (CONTEXT.md: the digit is deliberately wasted).
+  assert.deepEqual(shortcuts.registeredAccelerators().sort(), ["2", "3", "Escape"]);
+});
+
+test("the same pane sits on the same digit in the Capture and Relay pickers", () => {
+  const captureShortcuts = makeFakeShortcuts();
+  const relayShortcuts = makeFakeShortcuts();
+
+  const captureHandle = createCapturePickerHandle({ shortcuts: captureShortcuts });
+  const relayHandle = createCapturePickerHandle({
+    shortcuts: relayShortcuts,
+    includeClipboardSlot: false,
+  });
+
+  captureHandle.appendTargets([TARGET_A, TARGET_B]);
+  relayHandle.appendTargets([TARGET_A, TARGET_B]);
+
+  // Digit 2 resolves to TARGET_A in BOTH verbs — the muscle-memory guarantee
+  // ("2 is always the same pane") holds because Relay wastes slot 1 rather
+  // than compacting panes down to it.
+  const capturePick = captureHandle.awaitSelection();
+  captureShortcuts.press("2");
+  const relayPick = relayHandle.awaitSelection();
+  relayShortcuts.press("2");
+
+  return Promise.all([capturePick, relayPick]).then(([capture, relay]) => {
+    assert.deepEqual(capture, { kind: "target", target: TARGET_A });
+    assert.deepEqual(relay, { kind: "target", target: TARGET_A });
+  });
+});
+
+test("Relay picker: pressing 1 is a harmless no-op (never registered)", () => {
+  const shortcuts = makeFakeShortcuts();
+  createCapturePickerHandle({ shortcuts, includeClipboardSlot: false });
+
+  assert.throws(() => shortcuts.press("1"), /no shortcut registered/);
+});

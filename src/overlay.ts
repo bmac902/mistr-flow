@@ -1,4 +1,4 @@
-import type { CapturePreview } from "./captureThumbnail";
+import type { PickerPreview } from "./captureThumbnail";
 import type { EligibleTarget } from "./herdr";
 
 export type OverlayPhase =
@@ -15,7 +15,9 @@ export type OverlayPhase =
   | "capture-delivering"
   | "capture-delivered"
   | "capture-delivery-failed"
-  | "capture-delivery-unknown";
+  | "capture-delivery-unknown"
+  /** Relay verb: the clipboard was empty — nothing to send, no target picker. */
+  | "relay-empty";
 
 export interface OverlaySnapshot {
   phase: OverlayPhase;
@@ -24,16 +26,24 @@ export interface OverlaySnapshot {
   mascotCopy: string;
   statusCopy: string;
   toastCopy?: string;
-  /** Eligible-target entries for the capture picker (slot 1 Clipboard is implicit/pinned). */
+  /** Eligible-target entries for the picker; panes always sit on digits 2–9. */
   captureTargets?: readonly EligibleTarget[];
-  /** True only during the brief pre-target "summoning" sub-beat of capture-picker. */
+  /** True only during the brief pre-target "summoning" sub-beat of the picker. */
   pickerSummoning?: boolean;
   /**
-   * Preview of what was actually captured (issue #35) — picker phase only, so
-   * it never leaks into the delivering/delivered/failed beats. Absent when
-   * thumbnail rendering failed: the picker renders fine without it.
+   * Whether digit slot 1 renders the pinned Clipboard destination. True for
+   * Capture; false for Relay, where the clipboard is the *source* so slot 1 is
+   * deliberately skipped — panes still occupy 2–9 to keep the muscle-memory
+   * alignment ("2 is always the same pane" in both verbs; CONTEXT.md).
    */
-  capturePreview?: CapturePreview;
+  clipboardSlot?: boolean;
+  /**
+   * Preview of what the picker is about to send (issue #35/#39) — picker phase
+   * only, so it never leaks into the delivering/delivered/failed beats. An
+   * image thumbnail for a capture/relayed image, a text head for relayed text.
+   * Absent when rendering failed: the picker renders fine without it.
+   */
+  capturePreview?: PickerPreview;
 }
 
 const STATUS_COPY: Record<OverlayPhase, string> = {
@@ -51,6 +61,7 @@ const STATUS_COPY: Record<OverlayPhase, string> = {
   "capture-delivered": "Delivered, sir.",
   "capture-delivery-failed": "That pane didn't take it.",
   "capture-delivery-unknown": "Not sure that landed — try again?",
+  "relay-empty": "Your clipboard's empty, sir — nothing to relay.",
 };
 
 const SUMMONING_STATUS_COPY = "Summoning targets…";
@@ -70,6 +81,7 @@ const MASCOT_COPY: Record<OverlayPhase, string> = {
   "capture-delivered": "tips hat toward the pane",
   "capture-delivery-failed": "hat droops",
   "capture-delivery-unknown": "tilts head, puzzled",
+  "relay-empty": "turns out empty pockets",
 };
 
 export interface HappyPathOverlayDependencies {
@@ -163,6 +175,8 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
       };
     case "capture-delivery-failed":
       return buildCaptureDeliveryFailedOverlaySnapshot();
+    case "relay-empty":
+      return buildRelayEmptyOverlaySnapshot();
   }
 }
 
@@ -175,7 +189,8 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
 export function buildCapturePickerOverlaySnapshot(
   targets: readonly EligibleTarget[],
   message?: string,
-  preview?: CapturePreview | null,
+  preview?: PickerPreview | null,
+  clipboardSlot = true,
 ): OverlaySnapshot {
   const summoning = targets.length === 0 && message === undefined;
   return {
@@ -187,7 +202,24 @@ export function buildCapturePickerOverlaySnapshot(
     toastCopy: message,
     captureTargets: targets,
     pickerSummoning: summoning,
+    clipboardSlot,
     capturePreview: preview ?? undefined,
+  };
+}
+
+/**
+ * The Relay "nothing to send" beat: the clipboard was empty, so there is no
+ * target picker at all — a truthful, un-faded state, not a misleading success
+ * (CONTEXT.md — Relay never fakes a send). Distinct from the Herdr-down
+ * "nowhere to send it" state, which IS a picker (message + no targets).
+ */
+export function buildRelayEmptyOverlaySnapshot(): OverlaySnapshot {
+  return {
+    phase: "relay-empty",
+    barMode: "expanded",
+    waveformVisible: false,
+    mascotCopy: MASCOT_COPY["relay-empty"],
+    statusCopy: STATUS_COPY["relay-empty"],
   };
 }
 

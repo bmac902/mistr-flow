@@ -7,6 +7,7 @@ const pickerEntriesEl = document.getElementById("capture-picker-entries");
 const previewEl = document.getElementById("capture-preview");
 const previewImageEl = document.getElementById("capture-preview-image");
 const previewTitleEl = document.getElementById("capture-preview-title");
+const previewTextEl = document.getElementById("capture-preview-text");
 const cropRectEl = document.getElementById("capture-crop-rect");
 
 let mediaRecorder = null;
@@ -223,7 +224,12 @@ function renderCapturePickerEntries(snapshot) {
   pickerEntriesEl.textContent = "";
   if (snapshot.phase !== "capture-picker") return;
 
-  pickerEntriesEl.appendChild(buildPickerEntryEl(1, "Clipboard"));
+  // Slot 1 is the pinned Clipboard destination for Capture; for Relay
+  // (clipboardSlot === false) it is skipped — the clipboard is the source —
+  // but panes still occupy digits 2–9 either way.
+  if (snapshot.clipboardSlot !== false) {
+    pickerEntriesEl.appendChild(buildPickerEntryEl(1, "Clipboard"));
+  }
   for (const [index, target] of (snapshot.captureTargets || []).entries()) {
     pickerEntriesEl.appendChild(buildPickerEntryEl(index + 2, target.label));
   }
@@ -242,9 +248,22 @@ function renderCapturePreview(snapshot) {
     previewEl.classList.remove("has-preview");
     previewImageEl.removeAttribute("src");
     previewTitleEl.textContent = "";
+    previewEl.classList.remove("is-text");
     return;
   }
 
+  if (preview.kind === "text") {
+    // Relayed text: show the first copied lines plus the one-line summary,
+    // rather than a thumbnail. Same panel, different payload (issue #39).
+    previewImageEl.removeAttribute("src");
+    previewTitleEl.textContent = preview.summary;
+    previewEl.classList.add("has-preview", "is-text");
+    previewTextEl.textContent = preview.firstLines;
+    return;
+  }
+
+  previewEl.classList.remove("is-text");
+  previewTextEl.textContent = "";
   previewImageEl.src = preview.dataUrl;
   previewTitleEl.textContent = preview.windowTitle;
   previewEl.classList.add("has-preview");

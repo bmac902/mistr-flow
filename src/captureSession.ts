@@ -1,6 +1,6 @@
 import type { CaptureArtifact, CaptureFailureCode } from "./capture";
 import type { CropRect } from "./captureCrop";
-import type { CapturePreview } from "./captureThumbnail";
+import type { PickerPreview } from "./captureThumbnail";
 import type { EligibleTarget, HerdrQueryResult } from "./herdr";
 import { PANE_QUERY_TIMEOUT_MS, safeMessageFor as herdrSafeMessageFor } from "./herdr";
 import {
@@ -99,11 +99,12 @@ export interface RunSessionDependencies<A> {
   captureActiveWindow(): Promise<A>;
   openPicker(): CapturePickerHandle;
   /**
-   * Best-effort preview of the grab for the picker (#35). Returning null — or
-   * rejecting — renders the picker without a preview; it never fails the
-   * capture or changes a delivery outcome.
+   * Best-effort preview of the grab for the picker (#35). An image thumbnail or
+   * a relayed-text head — {@link PickerPreview}. Returning null — or rejecting —
+   * renders the picker without a preview; it never fails the operation or
+   * changes a delivery outcome.
    */
-  renderThumbnail?(artifact: A): Promise<CapturePreview | null>;
+  renderThumbnail?(artifact: A): Promise<PickerPreview | null>;
   /**
    * Trims an artifact to `rect`, returning a fresh artifact (new id, new file)
    * for the cropped pixels. Best-effort: null keeps the uncropped artifact, so
@@ -111,8 +112,19 @@ export interface RunSessionDependencies<A> {
    */
   cropCapture?(artifact: A, rect: CropRect): Promise<A | null>;
   queryEligibleTargets(): Promise<HerdrQueryResult>;
-  copyToClipboard(artifact: A): void | Promise<void>;
+  /**
+   * Copies the artifact to the local clipboard for digit slot 1 (Capture's
+   * pinned Clipboard destination). Optional: Relay skips slot 1 — the clipboard
+   * is its *source* — so it registers no `1` and never triggers this.
+   */
+  copyToClipboard?(artifact: A): void | Promise<void>;
   deliver(artifact: A, target: EligibleTarget): Promise<CaptureDeliverOutcome>;
+  /**
+   * Whether digit slot 1 is the pinned Clipboard destination (Capture) or
+   * skipped (Relay). Only affects the picker snapshot's `clipboardSlot` flag —
+   * the actual `1` shortcut is owned by the injected picker handle. Default true.
+   */
+  clipboardSlot?: boolean;
   clock?: CaptureSessionClock;
   paneQueryTimeoutMs?: number;
   deliveryAckTimeoutMs?: number;
@@ -151,6 +163,7 @@ export async function runSendSession<A>(
     dependencies.paneQueryTimeoutMs ?? PANE_QUERY_TIMEOUT_MS;
   const deliveryAckTimeoutMs =
     dependencies.deliveryAckTimeoutMs ?? DELIVERY_ACK_TIMEOUT_MS;
+  const clipboardSlot = dependencies.clipboardSlot ?? true;
 
   let artifact: A;
   try {
@@ -168,7 +181,7 @@ export async function runSendSession<A>(
   // preview-less picker.
   async function renderPreviewFor(
     forArtifact: A,
-  ): Promise<CapturePreview | null> {
+  ): Promise<PickerPreview | null> {
     if (!dependencies.renderThumbnail) return null;
     try {
       return await dependencies.renderThumbnail(forArtifact);
@@ -204,7 +217,12 @@ export async function runSendSession<A>(
   let currentMessage: string | undefined;
   function showPicker(): void {
     void dependencies.showOverlay(
-      buildCapturePickerOverlaySnapshot(currentTargets, currentMessage, preview),
+      buildCapturePickerOverlaySnapshot(
+        currentTargets,
+        currentMessage,
+        preview,
+        clipboardSlot,
+      ),
     );
   }
 
@@ -260,7 +278,7 @@ export async function runSendSession<A>(
 
     if (selection.kind === "clipboard") {
       closePicker();
-      await dependencies.copyToClipboard(artifact);
+      await dependencies.copyToClipboard?.(artifact);
       void dependencies.showOverlay(buildOverlaySnapshot("capture-delivered"));
       return { kind: "clipboard-delivered" };
     }

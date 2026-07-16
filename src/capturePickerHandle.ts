@@ -26,18 +26,26 @@ export type CropSource = (emit: (rect: CropRect) => void) => () => void;
 export interface CapturePickerHandleDeps {
   readonly shortcuts: GlobalShortcutPort;
   readonly cropSource?: CropSource;
+  /**
+   * Whether digit `1` resolves to the pinned Clipboard destination. True for
+   * Capture; false for Relay, whose slot 1 is deliberately skipped (the
+   * clipboard is its source) — panes still start at digit 2 either way, so the
+   * "2 is always the same pane" muscle memory holds across both verbs.
+   */
+  readonly includeClipboardSlot?: boolean;
 }
 
 /**
- * Registers slot 1 (Clipboard) + Esc atomically on open, then registers
- * slots 2–9 atomically with each `appendTargets` call — no digit shortcut is
- * ever live before its entry is renderable, and vice versa. Unregisters
- * every accelerator it registered on `close()`, on every exit path.
+ * Registers Esc (and, for Capture, slot 1 Clipboard) atomically on open, then
+ * registers slots 2–9 atomically with each `appendTargets` call — no digit
+ * shortcut is ever live before its entry is renderable, and vice versa.
+ * Unregisters every accelerator it registered on `close()`, on every exit path.
  */
 export function createCapturePickerHandle(
   deps: CapturePickerHandleDeps,
 ): CapturePickerHandle {
   const { shortcuts, cropSource } = deps;
+  const includeClipboardSlot = deps.includeClipboardSlot ?? true;
   const registeredAccelerators = new Set<string>();
   let pendingResolve: ((event: CaptureSelectionEvent) => void) | null = null;
   let closed = false;
@@ -56,7 +64,9 @@ export function createCapturePickerHandle(
     }
   }
 
-  registerAccelerator("1", () => resolveSelection({ kind: "clipboard" }));
+  if (includeClipboardSlot) {
+    registerAccelerator("1", () => resolveSelection({ kind: "clipboard" }));
+  }
   registerAccelerator("Escape", () => resolveSelection({ kind: "escape" }));
 
   if (cropSource) {
