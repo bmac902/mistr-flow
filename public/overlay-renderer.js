@@ -348,10 +348,11 @@ function renderCapturePickerEntries(snapshot) {
     makeRowClickable(againEl, { kind: "again" });
     pickerEntriesEl.appendChild(againEl);
   }
-  // Slot 1 is the pinned Clipboard destination for Capture; for Relay
-  // (clipboardSlot === false) it is skipped — the clipboard is the source —
-  // but panes still occupy digits 2–9 either way. Herald keeps the slot and
-  // relabels it "Paste here" via slotOneLabel (issue #55).
+  // Slot 1 is the pinned local outcome in every verb (#64): Capture and Relay
+  // both read the "Clipboard" default (Relay's = keep the copy, stop here);
+  // Herald relabels it "Paste here" via slotOneLabel (issue #55). Panes occupy
+  // digits 2–9 either way; clipboardSlot === false stays renderable but no
+  // verb sends it today.
   if (snapshot.clipboardSlot !== false) {
     const slotOneEl = buildPickerEntryEl(1, snapshot.slotOneLabel || "Clipboard");
     makeRowClickable(slotOneEl, { kind: "clipboard" });

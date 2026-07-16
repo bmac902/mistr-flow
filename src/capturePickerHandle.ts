@@ -61,19 +61,21 @@ export interface CapturePickerHandleDeps {
   readonly againSource?: AgainSource;
   readonly clickSource?: RowClickSource;
   /**
-   * Whether digit `1` resolves to the pinned Clipboard destination. True for
-   * Capture; false for Relay, whose slot 1 is deliberately skipped (the
-   * clipboard is its source) — panes still start at digit 2 either way, so the
-   * "2 is always the same pane" muscle memory holds across both verbs.
+   * Whether digit `1` resolves to the pinned local-outcome slot. True for
+   * every verb since #64 (slot 1 is always "end this locally, no pane" —
+   * CONTEXT.md); `false` remains the handle's contract for a slot-1-less
+   * picker, though no verb builds one today. Panes start at digit 2 either
+   * way, so the "2 is always the same pane" muscle memory holds regardless.
    */
   readonly includeClipboardSlot?: boolean;
 }
 
 /**
- * Registers Esc (and, for Capture, slot 1 Clipboard) atomically on open, then
- * registers slots 2–9 atomically with each `appendTargets` call — no digit
- * shortcut is ever live before its entry is renderable, and vice versa.
- * Unregisters every accelerator it registered on `close()`, on every exit path.
+ * Registers Esc and slot 1 (the local outcome — every verb since #64)
+ * atomically on open, then registers slots 2–9 atomically with each
+ * `appendTargets` call — no digit shortcut is ever live before its entry is
+ * renderable, and vice versa. Unregisters every accelerator it registered on
+ * `close()`, on every exit path.
  */
 export function createCapturePickerHandle(
   deps: CapturePickerHandleDeps,
@@ -101,8 +103,8 @@ export function createCapturePickerHandle(
   /**
    * A row click is a press of the row's key (issue #61, ADR 0005): it maps to
    * the identical selection event, or is dropped when no such row exists in
-   * this instance — a clipboard click into a Relay picker (which renders no
-   * slot 1), or a slot index the current render never populated.
+   * this instance — a clipboard click into a picker built without slot 1
+   * (no verb since #64), or a slot index the current render never populated.
    */
   function resolveRowClick(click: PickerRowClick): void {
     if (click.kind === "clipboard") {

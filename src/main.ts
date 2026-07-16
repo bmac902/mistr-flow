@@ -89,7 +89,6 @@ import { createLastTargetMemory, withLastTargetRecording } from "./lastTarget";
 import { queryHerdr, queryWatchedSet } from "./herdr";
 import {
   capturePickerWindowHeight,
-  relayPickerWindowHeight,
   resolveGrownWindowBounds,
   type WindowBounds,
 } from "./captureWindowBounds";
@@ -140,8 +139,10 @@ const CAPTURE_WINDOW_RESTORE_PHASES: ReadonlySet<OverlaySnapshot["phase"]> = new
   "capture-delivered",
   "capture-delivery-failed",
   // Herald's slot-1 salvage ends on dictation's done beat ("Pasted, sir."),
-  // so the picker-grown window must shrink back on it too. Plain dictation
-  // never routes through showCaptureOverlay, so this entry can't affect it.
+  // and Relay's slot-1 copy-kept beat (#64) rides the same phase with its own
+  // status copy — so the picker-grown window must shrink back on it. Plain
+  // dictation never routes through showCaptureOverlay, so this entry can't
+  // affect it.
   "done",
 ]);
 
@@ -303,16 +304,12 @@ function applyCaptureWindowBounds(snapshot: OverlaySnapshot): void {
   if (!overlayWindow || overlayWindow.isDestroyed() || !captureRestingBounds) return;
 
   if (snapshot.phase === "capture-picker") {
-    // Relay's picker skips slot 1 but still reserves its row (panes stay on
-    // 2–9), so relayPickerWindowHeight matches capturePickerWindowHeight by
-    // construction — the branch keeps the intent legible.
-    const heightFor =
-      snapshot.clipboardSlot === false
-        ? relayPickerWindowHeight
-        : capturePickerWindowHeight;
+    // One height for every verb's picker: slot 1 is the local outcome in all
+    // of them since #64 (Capture/Relay "Clipboard", Herald "Paste here"), so
+    // the old Relay-specific height alias no longer models anything.
     const bounds = resolveGrownWindowBounds({
       restingBounds: captureRestingBounds,
-      grownHeight: heightFor(
+      grownHeight: capturePickerWindowHeight(
         snapshot.captureTargets?.length ?? 0,
         Boolean(snapshot.capturePreview),
         Boolean(snapshot.againRow),
@@ -948,8 +945,10 @@ function openRelayPicker(): CapturePickerHandle {
     cropSource: captureCropSource,
     againSource: pickerAgainSource,
     clickSource: pickerRowClickSource,
-    // Slot 1 is skipped: the clipboard is Relay's source, not a destination.
-    includeClipboardSlot: false,
+    // Slot 1 returned (#64): "1 Clipboard" = keep the copy, stop here — the
+    // affirmative local ending now that Ctrl+Alt+C (with copySelectionFirst)
+    // is itself the copy. Same digit, same "Clipboard" label as Capture's.
+    includeClipboardSlot: true,
   });
 }
 

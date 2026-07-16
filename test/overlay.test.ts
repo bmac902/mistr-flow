@@ -12,8 +12,10 @@ import {
   fleetTierToOverlayPhase,
   buildErrorOverlaySnapshot,
   buildRefusedOverlaySnapshot,
+  buildRelayCopyKeptOverlaySnapshot,
   buildRelayDeliveringOverlaySnapshot,
   buildRelayNothingToSendOverlaySnapshot,
+  RELAY_COPY_KEPT_STATUS_COPY,
   runHappyPathOverlaySession,
 } from "../src/overlay";
 import type { EligibleTarget } from "../src/herdr";
@@ -422,10 +424,10 @@ test("buildCapturePickerOverlaySnapshot carries the capture preview when one exi
   assert.equal(buildCapturePickerOverlaySnapshot([]).capturePreview, undefined);
 });
 
-test("buildCapturePickerOverlaySnapshot defaults clipboardSlot true; Relay passes false", () => {
-  // Capture: slot 1 is the pinned Clipboard destination.
+test("buildCapturePickerOverlaySnapshot defaults clipboardSlot true; false stays renderable", () => {
+  // Slot 1 is the pinned local outcome — every verb renders it since #64.
   assert.equal(buildCapturePickerOverlaySnapshot([]).clipboardSlot, true);
-  // Relay: slot 1 is skipped — the clipboard is the source.
+  // The flag remains part of the snapshot contract (no verb passes false today).
   assert.equal(
     buildCapturePickerOverlaySnapshot([], undefined, undefined, false).clipboardSlot,
     false,
@@ -524,6 +526,20 @@ test("buildRelayDeliveringOverlaySnapshot carries a payload-specific prop and co
   // Each names what's being carried, so the payload is legible in copy too.
   assert.notEqual(note.statusCopy, ledger.statusCopy);
   assert.notEqual(ledger.statusCopy, portrait.statusCopy);
+});
+
+test("buildRelayCopyKeptOverlaySnapshot is dictation's done beat with Relay copy naming the outcome (issue #64)", () => {
+  const snapshot = buildRelayCopyKeptOverlaySnapshot();
+
+  // An EXISTING mascot phase — no new states, no new art, overlay.html
+  // untouched. `done` is the success beat (Herald's slot-1 precedent), and it
+  // sits in main.ts's restore set so the picker-grown window shrinks back.
+  assert.deepEqual(snapshot, {
+    ...buildOverlaySnapshot("done"),
+    statusCopy: RELAY_COPY_KEPT_STATUS_COPY,
+  });
+  // The copy names the outcome — the clipboard, not a paste, not a pane.
+  assert.match(snapshot.statusCopy, /clipboard/i);
 });
 
 test("overlay html gates the capture preview on the picker state and contains it in its box", () => {

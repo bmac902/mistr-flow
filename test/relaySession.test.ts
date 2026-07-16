@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -7,6 +9,8 @@ import {
   RELAY_NO_PANES_MESSAGE,
   type RunRelaySessionDependencies,
 } from "../src/relaySession";
+import { createLastTargetMemory, withLastTargetRecording } from "../src/lastTarget";
+import { RELAY_COPY_KEPT_STATUS_COPY } from "../src/overlay";
 import type {
   CaptureSessionClock,
   CapturePickerHandle,
@@ -34,10 +38,11 @@ function isTextPreview(preview: PickerPreview | undefined): boolean {
   return !!preview && "kind" in preview && preview.kind === "text";
 }
 
-// End-to-end Relay verb (issue #39, PRD #24): the clipboard source (#38) driven
-// through the shared send session (#37). These prove the wiring's acceptance
-// criteria — the empty state, the Clipboard-less 2–9 picker with a preview,
-// delivery via the payload-agnostic adapter, and the truthful Herdr-down state.
+// End-to-end Relay verb (issue #39, PRD #24; slot 1 returned in #64): the
+// clipboard source (#38) driven through the shared send session (#37). These
+// prove the wiring's acceptance criteria — the empty state, the picker with
+// slot 1 ("1 Clipboard" = keep the copy, stop here) and panes on 2–9, delivery
+// via the payload-agnostic adapter, and the truthful Herdr-down state.
 
 const CAPTURE_DIR = "/tmp/MistrFlowCaptures";
 
@@ -215,7 +220,7 @@ test("an empty clipboard renders the nothing-to-send state and never opens a pic
 // Text — picker shape + delivery
 // ---------------------------------------------------------------------------
 
-test("copying text opens a Clipboard-less picker (slot 1 skipped) with a text preview and panes on 2–9", async () => {
+test("copying text opens a picker with slot 1 (Clipboard, the renderer default label) and panes on 2–9", async () => {
   const h = makeHarness({
     port: fakeClipboardPort({ text: "const x = 1;\nconst y = 2;" }),
   });
@@ -225,7 +230,11 @@ test("copying text opens a Clipboard-less picker (slot 1 skipped) with a text pr
 
   const picker = h.states.find((s) => s.phase === "capture-picker");
   assert.ok(picker, "the picker phase was rendered");
-  assert.equal(picker!.clipboardSlot, false, "slot 1 (Clipboard) is skipped for Relay");
+  // Slot 1 returned (#64): "1 Clipboard" = keep the copy, stop here.
+  assert.equal(picker!.clipboardSlot, true, "slot 1 renders for Relay");
+  // No slotOneLabel override — the renderer's "Clipboard" default, byte-identical
+  // to Capture's (CONTEXT.md: Capture and Relay both label it "Clipboard").
+  assert.equal(picker!.slotOneLabel, undefined);
   assert.ok(isTextPreview(picker!.capturePreview), "a text preview, not a thumbnail");
 
   // Panes land on the picker exactly as Capture's do (digits 2–9 via the handle).
@@ -294,10 +303,10 @@ test("a clipboard image delivers the PNG's path", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Herdr unavailable — nowhere to send it
+// Herdr unavailable — the copy is safe on the clipboard, slot 1 stays usable
 // ---------------------------------------------------------------------------
 
-test("Herdr unavailable renders the nowhere-to-send-it state with no target list, dismissed by Esc", async () => {
+test("Herdr unavailable degrades to Clipboard + Esc — the truthful copy-is-safe message, never 'nowhere to send it'", async () => {
   const h = makeHarness({
     port: fakeClipboardPort({ text: "copied url" }),
     queryEligibleTargets: async () => ({
@@ -314,20 +323,23 @@ test("Herdr unavailable renders the nowhere-to-send-it state with no target list
     .filter((s) => s.phase === "capture-picker")
     .at(-1);
   assert.ok(downState);
-  // Relay's own copy — never Herdr's "Clipboard only" promise, which Relay can't keep.
+  // Relay's own copy — with slot 1 returned (#64) "nowhere to send it" is
+  // false, so the message says the copy is safe on the clipboard instead.
   assert.equal(downState!.toastCopy, RELAY_HERDR_DOWN_MESSAGE);
+  assert.match(RELAY_HERDR_DOWN_MESSAGE, /clipboard/i, "the message names where the copy is");
+  assert.doesNotMatch(RELAY_HERDR_DOWN_MESSAGE, /nowhere/i);
   assert.deepEqual(downState!.captureTargets, [], "no target list");
-  assert.equal(downState!.clipboardSlot, false, "and no Clipboard slot either");
+  assert.equal(downState!.clipboardSlot, true, "slot 1 survives a down Herdr");
   assert.equal(downState!.pickerSummoning, false, "not stuck on the summoning beat");
 
-  // No auto-fade: it waits for Esc.
-  h.picker.resolve({ kind: "escape" });
+  // No auto-fade — and slot 1 stays usable: keeping the copy still works.
+  h.picker.resolve({ kind: "clipboard" });
   const result = await session;
-  assert.deepEqual(result, { kind: "cancelled" });
-  assert.equal(h.picker.closeCalls(), 1, "picker closed cleanly on dismiss");
+  assert.deepEqual(result, { kind: "copy-kept" });
+  assert.equal(h.picker.closeCalls(), 1, "picker closed cleanly");
 });
 
-test("Herdr up but with no eligible panes is a truthful no-panes state, not a stuck summon", async () => {
+test("Herdr up but with no eligible panes is a truthful no-panes state — copy on the clipboard, slot 1 intact", async () => {
   const h = makeHarness({
     port: fakeClipboardPort({ text: "copied url" }),
     queryEligibleTargets: async () => ({ kind: "targets", targets: [] }),
@@ -338,10 +350,120 @@ test("Herdr up but with no eligible panes is a truthful no-panes state, not a st
 
   const state = h.states.filter((s) => s.phase === "capture-picker").at(-1);
   assert.equal(state!.toastCopy, RELAY_NO_PANES_MESSAGE);
+  assert.match(RELAY_NO_PANES_MESSAGE, /clipboard/i);
+  assert.doesNotMatch(RELAY_NO_PANES_MESSAGE, /nowhere/i);
+  assert.equal(state!.clipboardSlot, true, "slot 1 intact with an empty fleet");
   assert.equal(state!.pickerSummoning, false);
 
   h.picker.resolve({ kind: "escape" });
   await session;
+});
+
+// ---------------------------------------------------------------------------
+// Slot 1 — keep the copy, stop here (issue #64)
+// ---------------------------------------------------------------------------
+
+test("slot 1 ends with copy-kept and the success beat — never the cancelled beat", async () => {
+  const h = makeHarness({ port: fakeClipboardPort({ text: "copied url" }) });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "clipboard" });
+  const result = await session;
+
+  // The kept-copy ending is distinct in logs — never a bare clipboard-delivered
+  // (Herald's pasted-here mapping, mirrored).
+  assert.deepEqual(result, { kind: "copy-kept" });
+  assert.equal(h.picker.closeCalls(), 1, "picker closed on the local ending");
+
+  // An affirmative local ending: an existing success phase with Relay-specific
+  // status copy naming the outcome — and never Esc's cancelled beat.
+  const beat = h.states.at(-1)!;
+  assert.equal(beat.phase, "done", "reuses an existing mascot phase — no new art");
+  assert.equal(beat.statusCopy, RELAY_COPY_KEPT_STATUS_COPY);
+  assert.ok(!h.states.some((s) => s.phase === "cancelled"), "never the cancelled beat");
+});
+
+test("slot 1 renders and works for every source kind — text, file, and image", async () => {
+  // A relayed IMAGE especially: keeping the copy must not re-write (and so
+  // re-encode) the clipboard — slot 1 delivers nothing and writes nothing.
+  const ports = {
+    text: fakeClipboardPort({ text: "copied url" }),
+    file: fakeClipboardPort({ filePath: "C:\\dev\\thing.py" }),
+    image: fakeClipboardPort({ text: "", imagePng: Buffer.from([1, 2, 3, 4]) }),
+  };
+
+  for (const [kind, port] of Object.entries(ports)) {
+    const h = makeHarness({ port });
+    const session = runRelaySession(h.deps);
+    await flush();
+
+    const picker = h.states.find((s) => s.phase === "capture-picker");
+    assert.equal(picker!.clipboardSlot, true, `slot 1 renders for a ${kind} source`);
+
+    h.picker.resolve({ kind: "clipboard" });
+    const result = await session;
+    assert.deepEqual(result, { kind: "copy-kept" }, `${kind}: the copy is kept`);
+    assert.equal(h.delivered.length, 0, `${kind}: slot 1 bypasses deliver entirely`);
+  }
+});
+
+test("Esc still cancels with the cancelled beat — the affirmative ending didn't eat the escape hatch", async () => {
+  const h = makeHarness({ port: fakeClipboardPort({ text: "copied url" }) });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "escape" });
+  const result = await session;
+
+  assert.deepEqual(result, { kind: "cancelled" });
+  assert.equal(h.states.at(-1)!.phase, "cancelled");
+});
+
+test("slot 1 never updates the Last Target — a pane delivery does", async () => {
+  const memory = createLastTargetMemory();
+
+  // Session 1: slot 1 (keep the copy) — bypasses deliver, so structurally
+  // nothing can record (src/lastTarget.ts wraps deliver, and slot 1 never
+  // calls it).
+  const kept = makeHarness({ port: fakeClipboardPort({ text: "copied url" }) });
+  kept.deps.deliver = withLastTargetRecording(kept.deps.deliver, memory);
+  const keptSession = runRelaySession(kept.deps);
+  await flush();
+  kept.picker.resolve({ kind: "clipboard" });
+  await keptSession;
+  assert.equal(memory.current(), null, "slot 1 never updates the Last Target");
+
+  // Session 2: a digit delivery records — proving the wrapper was live and
+  // slot 1's null above wasn't a wiring accident.
+  const sent = makeHarness({ port: fakeClipboardPort({ text: "copied url" }) });
+  sent.deps.deliver = withLastTargetRecording(sent.deps.deliver, memory);
+  const sentSession = runRelaySession(sent.deps);
+  await flush();
+  sent.picker.resolve({ kind: "target", target: TARGET_A });
+  await sentSession;
+  assert.deepEqual(memory.current(), TARGET_A);
+});
+
+test("slot 1 writes nothing: the session has no clipboard-write seam and never sees copySelectionFirst", () => {
+  // Structural guards (house pattern: clickablePickerRows.test.ts reads main.ts):
+  // the content is ALREADY on the clipboard — whether the user copied it or
+  // main.ts's copySelectionFirst did, before the session opened — so the
+  // session must never re-write it (a relayed image would be clobbered by a
+  // re-encode), and must behave identically with the flag on or off.
+  const source = readFileSync(
+    path.join(__dirname, "..", "src", "relaySession.ts"),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /copyToClipboard/, "the copyToClipboard dep is omitted");
+  assert.doesNotMatch(source, /copySelectionFirst/, "the flag lives in main.ts, before the session");
+});
+
+test("main.ts wiring: openRelayPicker builds the picker WITH slot 1 (#64)", () => {
+  const main = readFileSync(path.join(__dirname, "..", "src", "main.ts"), "utf8");
+  const fromFactory = main.slice(main.indexOf("function openRelayPicker"));
+  const factory = fromFactory.slice(0, fromFactory.indexOf("\n}"));
+  assert.match(factory, /includeClipboardSlot: true/, "digit 1 registers for Relay");
 });
 
 // ---------------------------------------------------------------------------

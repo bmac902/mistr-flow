@@ -134,9 +134,11 @@ export interface RunSessionDependencies<A> {
   cropCapture?(artifact: A, rect: CropRect): Promise<A | null>;
   queryEligibleTargets(): Promise<HerdrQueryResult>;
   /**
-   * Copies the artifact to the local clipboard for digit slot 1 (Capture's
-   * pinned Clipboard destination). Optional: Relay skips slot 1 — the clipboard
-   * is its *source* — so it registers no `1` and never triggers this.
+   * Slot 1's local action on the artifact: Capture copies it to the clipboard,
+   * Herald pastes it into the focused window. Optional: Relay OMITS it (#64) —
+   * its slot 1 keeps the copy that's already on the clipboard, so writing
+   * anything would clobber the very content being kept. Omitted, slot 1 still
+   * resolves and shows its beat; it just performs no local write.
    */
   copyToClipboard?(artifact: A): void | Promise<void>;
   deliver(artifact: A, target: EligibleTarget): Promise<CaptureDeliverOutcome>;
@@ -150,9 +152,10 @@ export interface RunSessionDependencies<A> {
   deliveringSnapshot?(artifact: A): OverlaySnapshot;
   deliveredSnapshot?(artifact: A, target: EligibleTarget): OverlaySnapshot;
   /**
-   * Whether digit slot 1 is the pinned Clipboard destination (Capture) or
-   * skipped (Relay). Only affects the picker snapshot's `clipboardSlot` flag —
-   * the actual `1` shortcut is owned by the injected picker handle. Default true.
+   * Whether digit slot 1 renders the pinned local outcome. True for every verb
+   * since #64 (CONTEXT.md, "Slot 1 is the local outcome in every verb"). Only
+   * affects the picker snapshot's `clipboardSlot` flag — the actual `1`
+   * shortcut is owned by the injected picker handle. Default true.
    */
   clipboardSlot?: boolean;
   /**
@@ -165,7 +168,8 @@ export interface RunSessionDependencies<A> {
   /**
    * Overrides the beat shown after slot 1's local action, mirroring
    * deliveringSnapshot/deliveredSnapshot. Herald shows dictation's existing
-   * `done` ("Pasted, sir.") because its slot 1 IS the Ctrl+Alt+D outcome —
+   * `done` ("Pasted, sir.") because its slot 1 IS the Ctrl+Alt+D outcome;
+   * Relay rides the same phase with copy naming the kept clipboard (#64) —
    * no new mascot art. Default: the generic capture-delivered beat.
    */
   clipboardDeliveredSnapshot?(artifact: A): OverlaySnapshot;
