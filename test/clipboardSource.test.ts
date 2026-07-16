@@ -13,7 +13,11 @@ import {
   type ClipboardSourcePort,
 } from "../src/clipboardSource";
 
-const CAPTURE_DIR = "/tmp/MistrFlowCaptures";
+// Platform-native, not POSIX-hardcoded: production joins this with path.join,
+// which yields backslashes on Windows. A literal "/tmp/..." passes in the
+// Linux batch container and fails on the Windows host this app actually runs
+// on — the assertion must be about the directory, not the separator.
+const CAPTURE_DIR = path.join(path.sep, "tmp", "MistrFlowCaptures");
 
 interface FakeClipboardOptions {
   text?: string;
