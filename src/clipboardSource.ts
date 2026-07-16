@@ -70,9 +70,19 @@ export interface ClipboardSourcePort {
    * relay" (confirmed live 2026-07-15). Electron surfaces the path via
    * `clipboard.readBuffer("FileNameW")` as UTF-16LE.
    *
-   * Single file only: `FileNameW` carries just the first of a multi-select.
+   * Single file only: `FileNameW` carries just the first of a multi-select —
+   * by design. It stays as the fallback when {@link readFileDropBuffer}'s
+   * `CF_HDROP` is absent or unparseable (issue #67).
    */
   readFilePath(): string | null;
+  /**
+   * The clipboard's raw `CF_HDROP` buffer — the Windows DROPFILES struct that
+   * carries EVERY file of an Explorer multi-select — or null when the
+   * clipboard holds no file drop. `clipboard.readBuffer("CF_HDROP")` in
+   * production; {@link parseFileDropList} does the pure parse here, so main.ts
+   * supplies only the raw read (issue #67).
+   */
+  readFileDropBuffer(): Buffer | null;
   writeFile(filePath: string, data: Buffer | string): Promise<void>;
   /** Mints the payload/artifact id. `randomUUID` in production. */
   mintId(): string;
@@ -84,6 +94,42 @@ export interface ClipboardSourcePort {
 
 /** Preview data for a relayed image — the label the existing thumbnail treatment renders. */
 export const CLIPBOARD_IMAGE_LABEL = "Clipboard image";
+
+/**
+ * Byte size of the DROPFILES header (shlobj_core.h): `pFiles` (DWORD, offset
+ * 0 — where the path list starts), `pt` (POINT, 8 bytes), `fNC` (BOOL), and
+ * `fWide` (BOOL, offset 16 — 1 means the list is UTF-16LE).
+ */
+const DROPFILES_HEADER_BYTES = 20;
+const DROPFILES_FWIDE_OFFSET = 16;
+
+/**
+ * Parses the clipboard's raw `CF_HDROP` buffer — a Windows DROPFILES struct —
+ * into the full path list of an Explorer multi-select (issue #67). `FileNameW`
+ * carries only the FIRST file of a multi-select by design; this is the format
+ * that carries them all.
+ *
+ * The list is NUL-terminated paths starting at the header's `pFiles` offset,
+ * ending in a double NUL. Returns null for anything unparseable — a short or
+ * malformed buffer, an out-of-range offset, an empty list, or an ANSI list
+ * (`fWide` = 0, vanishingly rare from Explorer) — so the caller falls back to
+ * the proven single-file `FileNameW` read rather than guessing.
+ */
+export function parseFileDropList(buffer: Buffer): string[] | null {
+  if (buffer.length < DROPFILES_HEADER_BYTES) return null;
+
+  const pFiles = buffer.readUInt32LE(0);
+  if (pFiles < DROPFILES_HEADER_BYTES || pFiles >= buffer.length) return null;
+
+  if (buffer.readUInt32LE(DROPFILES_FWIDE_OFFSET) === 0) return null;
+
+  const paths: string[] = [];
+  for (const entry of buffer.toString("utf16le", pFiles).split("\0")) {
+    if (entry.length === 0) break; // the double-NUL terminator
+    paths.push(entry);
+  }
+  return paths.length > 0 ? paths : null;
+}
 
 /**
  * The typed outcome of reading the clipboard. Distinct cases so the caller (the
@@ -123,6 +169,27 @@ export type ClipboardSource =
       readonly preview: ClipboardTextPreview;
       readonly filePath: string;
     }
+  | {
+      /**
+       * N≥2 files of an Explorer multi-select, read from `CF_HDROP` (issue
+       * #67). One atomic block: the paths inject as a single newline-joined
+       * body — one payload, one ledger entry, one ack, one retry — and every
+       * path is a delivery precondition (`requiresFiles`), so a file that
+       * vanished since the copy fails the WHOLE delivery, never a partial.
+       * N=1 never lands here — it stays the byte-identical `file` case above,
+       * bare and unbracketed, so path-detection/auto-attach is untouched.
+       */
+      readonly kind: "files";
+      readonly payload: SendPayload;
+      readonly preview: ClipboardTextPreview;
+      readonly filePaths: readonly string[];
+      /**
+       * Present when the joined list exceeded {@link CLIPBOARD_SPILL_THRESHOLD}
+       * — an absurd multi-select rides the existing spill machinery, whole
+       * (no enforced cap, nothing truncated, nothing refused).
+       */
+      readonly spillPath?: string;
+    }
   | { readonly kind: "empty" };
 
 /**
@@ -147,13 +214,90 @@ export async function readClipboardSource(
   }
 
   // Last, because a file copy is the only case that sets neither text nor a
-  // bitmap — so it can't collide with the branches above.
+  // bitmap — so it can't collide with the branches above. CF_HDROP first: it
+  // carries EVERY file of a multi-select, where FileNameW carries only the
+  // first (issue #67). FileNameW stays as the fallback for an absent or
+  // unparseable drop list, so a plain single-file copy can never regress.
+  const dropBuffer = port.readFileDropBuffer();
+  const dropPaths = dropBuffer ? parseFileDropList(dropBuffer) : null;
+  const filePaths = (dropPaths ?? [])
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  if (filePaths.length > 0) {
+    return classifyFiles(port, filePaths);
+  }
+
   const filePath = port.readFilePath();
   if (filePath && filePath.trim().length > 0) {
     return classifyFile(port, filePath.trim());
   }
 
   return { kind: "empty" };
+}
+
+/**
+ * N files of an Explorer multi-select. N=1 delegates to {@link classifyFile}
+ * — byte-identical to a FileNameW read, so auto-attach on the receiving agent
+ * is untouched. N≥2 mirrors BOTH existing branches at once: the paths join
+ * with newlines into one atomic injectText like text (bracketed-paste makes
+ * the delivery atomic), and every path is a delivery precondition like a file.
+ * A joined list over the spill threshold rides the text spill machinery whole
+ * — no enforced cap, nothing truncated (grilled decisions, CONTEXT.md
+ * 2026-07-16).
+ */
+async function classifyFiles(
+  port: ClipboardSourcePort,
+  filePaths: readonly string[],
+): Promise<ClipboardSource> {
+  if (filePaths.length === 1) {
+    return classifyFile(port, filePaths[0]);
+  }
+
+  const id = port.mintId();
+  const joined = filePaths.join("\n");
+  const spilled = joined.length > CLIPBOARD_SPILL_THRESHOLD;
+
+  // Full paths, one per line: the directory is the payload's identity —
+  // basenames would hide exactly the wrong-file mistake the preview exists
+  // to catch (grilled decision 3).
+  const preview: ClipboardTextPreview = {
+    kind: "text",
+    firstLines: filePaths.slice(0, CLIPBOARD_PREVIEW_LINES).join("\n"),
+    truncated: filePaths.length > CLIPBOARD_PREVIEW_LINES,
+    lineCount: filePaths.length,
+    byteSize: Buffer.byteLength(joined, "utf8"),
+    spilled,
+    summary: spilled
+      ? `Files · ${filePaths.length} · spilled to file`
+      : `Files · ${filePaths.length}`,
+  };
+
+  if (!spilled) {
+    return {
+      kind: "files",
+      payload: { id, injectText: joined, requiresFiles: filePaths },
+      preview,
+      filePaths,
+    };
+  }
+
+  // The absurd-list case: the WHOLE list spills to a temp file and its path is
+  // injected, exactly as long text does. The originals stay preconditions —
+  // the all-or-nothing guard survives the spill.
+  const spillPath = path.join(port.captureDir, `relay-${id}.txt`);
+  await port.writeFile(spillPath, joined);
+  return {
+    kind: "files",
+    payload: {
+      id,
+      injectText: spillPath,
+      requiresFile: spillPath,
+      requiresFiles: filePaths,
+    },
+    preview,
+    filePaths,
+    spillPath,
+  };
 }
 
 function classifyFile(port: ClipboardSourcePort, filePath: string): ClipboardSource {

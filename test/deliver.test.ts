@@ -9,8 +9,10 @@ import {
   bracketMultilinePaste,
   captureArtifactToPayload,
   createHerdrDeliveryAdapter,
+  missingFileMessage,
   safeMessageFor,
   type DeliverExecFile,
+  type SendPayload,
 } from "../src/deliver";
 import type { EligibleTarget } from "../src/herdr";
 
@@ -367,6 +369,144 @@ test("deliver: a multi-line text payload is bracketed on the wire", async () => 
       args: ["agent", "send", TARGET_A.target, `${PASTE_START}${body}${PASTE_END}`],
     },
   ]);
+});
+
+// ---------------------------------------------------------------------------
+// Multi-file payloads — the all-or-nothing requiresFiles guard (issue #67)
+// ---------------------------------------------------------------------------
+
+// String.raw: backslash-heavy Windows paths, exactly as CF_HDROP hands them over.
+const MULTI_FILE_PATHS = [
+  String.raw`C:\Users\blair\OneDrive\Documents\generate_finops_json.py`,
+  String.raw`C:\Users\blair\OneDrive\Documents\finops_report.xlsx`,
+  String.raw`C:\Users\blair\OneDrive\Documents\notes.md`,
+];
+
+const MULTI_FILE_PAYLOAD: SendPayload = {
+  id: "relay-files-1",
+  injectText: MULTI_FILE_PATHS.join("\n"),
+  requiresFiles: MULTI_FILE_PATHS,
+};
+
+test("deliver: a multi-file payload verifies EVERY path before injecting, then goes on the wire bracketed", async () => {
+  const recorder = recordingExecFile();
+  const checked: string[] = [];
+  const deliver = createHerdrDeliveryAdapter({
+    execFile: recorder.execFile,
+    pathExists: async (filePath) => {
+      checked.push(filePath);
+      return true;
+    },
+  });
+
+  const outcomePromise = deliver(MULTI_FILE_PAYLOAD, TARGET_A);
+  await flush();
+  recorder.respond(null);
+  const outcome = await outcomePromise;
+
+  assert.deepEqual(outcome, { kind: "delivered" });
+  assert.deepEqual(checked, MULTI_FILE_PATHS, "all N paths verified, in order");
+  // The joined body is multi-line, so bracketed-paste wraps it — that IS the
+  // atomicity: one paste, never a chunk-split partial (grilled decision 1).
+  assert.deepEqual(recorder.calls, [
+    {
+      file: "herdr",
+      args: [
+        "agent",
+        "send",
+        TARGET_A.target,
+        `${PASTE_START}${MULTI_FILE_PATHS.join("\n")}${PASTE_END}`,
+      ],
+    },
+  ]);
+});
+
+test("deliver: ANY missing file fails the WHOLE delivery, naming that file's basename — nothing injected", async () => {
+  const recorder = recordingExecFile();
+  const missing = MULTI_FILE_PATHS[1];
+  const deliver = createHerdrDeliveryAdapter({
+    execFile: recorder.execFile,
+    pathExists: async (filePath) => filePath !== missing,
+  });
+
+  const outcome = await deliver(MULTI_FILE_PAYLOAD, TARGET_A);
+
+  assert.deepEqual(outcome, {
+    kind: "failed",
+    code: "delivery-file-missing",
+    message: missingFileMessage("finops_report.xlsx"),
+  });
+  assert.deepEqual(recorder.calls, [], "never a partial: nothing reached the pane");
+});
+
+test("the missing-file message names the basename and nothing else — never a raw path or error", () => {
+  const message = missingFileMessage("finops_report.xlsx");
+  assert.match(message, /finops_report\.xlsx/);
+  assert.doesNotMatch(message, /[\\/]/, "no directories: the basename only");
+  assert.match(message, /sir/i, "in the house voice");
+});
+
+test("deliver: the single-file failure message is unchanged — the basename wording is multi-file only", async () => {
+  const deliver = createHerdrDeliveryAdapter({
+    execFile: recordingExecFile().execFile,
+    pathExists: async () => false,
+  });
+
+  const outcome = await deliver(PAYLOAD, TARGET_A);
+
+  assert.deepEqual(outcome, {
+    kind: "failed",
+    code: "delivery-file-missing",
+    message: safeMessageFor("delivery-file-missing"),
+  });
+});
+
+test("deliver: a spilled multi-select verifies the spill file AND every original", async () => {
+  // The absurd-list case: injectText is the spill path (requiresFile), and the
+  // originals stay preconditions (requiresFiles) — all-or-nothing survives the
+  // spill. A vanished original fails the delivery even though the spill exists.
+  const recorder = recordingExecFile();
+  const spillPath = String.raw`C:\tmp\MistrFlowCaptures\relay-files-2.txt`;
+  const missing = MULTI_FILE_PATHS[2];
+  const deliver = createHerdrDeliveryAdapter({
+    execFile: recorder.execFile,
+    pathExists: async (filePath) => filePath !== missing,
+  });
+
+  const outcome = await deliver(
+    {
+      id: "relay-files-2",
+      injectText: spillPath,
+      requiresFile: spillPath,
+      requiresFiles: MULTI_FILE_PATHS,
+    },
+    TARGET_A,
+  );
+
+  assert.deepEqual(outcome, {
+    kind: "failed",
+    code: "delivery-file-missing",
+    message: missingFileMessage("notes.md"),
+  });
+  assert.deepEqual(recorder.calls, []);
+});
+
+test("deliver: retrying the same multi-file payload + target is idempotent — single injection", async () => {
+  const recorder = recordingExecFile();
+  const deliver = createHerdrDeliveryAdapter({
+    execFile: recorder.execFile,
+    pathExists: async () => true,
+  });
+
+  const first = deliver(MULTI_FILE_PAYLOAD, TARGET_A);
+  await flush();
+  recorder.respond(null);
+  assert.deepEqual(await first, { kind: "delivered" });
+
+  const second = await deliver(MULTI_FILE_PAYLOAD, TARGET_A);
+
+  assert.deepEqual(second, { kind: "delivered" });
+  assert.equal(recorder.calls.length, 1);
 });
 
 test("deliver: a single-line PNG path reaches the wire unbracketed", async () => {

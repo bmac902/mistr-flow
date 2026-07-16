@@ -1,5 +1,6 @@
 import { execFile as nodeExecFile } from "node:child_process";
 import { promises as fsPromises } from "node:fs";
+import path from "node:path";
 
 import type { CaptureArtifact } from "./capture";
 import type { CaptureDeliverOutcome } from "./captureSession";
@@ -43,12 +44,13 @@ import {
  * in the same primitive — `herdr agent send <target> <string>` — and the only
  * differences are *what string* and *whether a file must exist first*:
  *
- * | payload             | injectText              | requiresFile |
- * |---------------------|-------------------------|--------------|
- * | screenshot          | the PNG's absolute path | that PNG     |
- * | short clipboard text| the text itself         | (none)       |
- * | long clipboard text | the spill file's path   | that .txt    |
- * | clipboard image     | the PNG's absolute path | that PNG     |
+ * | payload             | injectText               | requiresFile(s)   |
+ * |---------------------|--------------------------|-------------------|
+ * | screenshot          | the PNG's absolute path  | that PNG          |
+ * | short clipboard text| the text itself          | (none)            |
+ * | long clipboard text | the spill file's path    | that .txt         |
+ * | clipboard image     | the PNG's absolute path  | that PNG          |
+ * | multi-file copy     | the N paths, one per line| every one of them |
  */
 export interface SendPayload {
   readonly id: string;
@@ -61,6 +63,15 @@ export interface SendPayload {
    * inline text: there's no file, so there's nothing to verify.
    */
   readonly requiresFile?: string;
+  /**
+   * Files the payload depends on — a multi-file relay's all-or-nothing guard
+   * (issue #67): EVERY one is verified before injecting, and any missing
+   * fails the whole delivery, naming that file. Alongside {@link
+   * requiresFile}, not replacing it — capture/spill/image payloads keep their
+   * single-file precondition, and a spilled multi-select carries both (the
+   * spill file it injects, plus the originals it lists).
+   */
+  readonly requiresFiles?: readonly string[];
 }
 
 /**
@@ -92,6 +103,17 @@ const SAFE_MESSAGES: Record<DeliveryFailureCode, string> = {
 /** The only text a consumer may render for a failure. Never raw error output. */
 export function safeMessageFor(code: DeliveryFailureCode): string {
   return SAFE_MESSAGES[code];
+}
+
+/**
+ * The multi-file missing-file message (issue #67): all-or-nothing means the
+ * WHOLE delivery fails when one file of a multi-select has vanished, and the
+ * failure must name WHICH — the static {@link SAFE_MESSAGES} entry can't carry
+ * that. Basename only, and nothing else dynamic: still never a raw path, raw
+ * error, or exception text (the never-raw-error rule).
+ */
+export function missingFileMessage(basename: string): string {
+  return `${basename} has gone missing — nothing was delivered, sir.`;
 }
 
 type ExecCallbackError = (Error & { code?: string | number }) | null;
@@ -213,6 +235,24 @@ async function runDelivery(
     const exists = await pathExists(payload.requiresFile);
     if (!exists) {
       return failure("delivery-file-missing");
+    }
+  }
+
+  // Multi-file (issue #67): EVERY listed file is verified before anything is
+  // injected — any one missing fails the whole delivery, naming that file.
+  // Never a partial, never silent dropping (the Polish-drops-words rule,
+  // applied to files).
+  for (const filePath of payload.requiresFiles ?? []) {
+    const exists = await pathExists(filePath);
+    if (!exists) {
+      return {
+        kind: "failed",
+        code: "delivery-file-missing",
+        // path.win32.basename, not path.basename: these paths come from the
+        // Windows clipboard, so backslashes are the separator regardless of
+        // the host Node thinks it's running on (the clipboardSource mirror).
+        message: missingFileMessage(path.win32.basename(filePath)),
+      };
     }
   }
 

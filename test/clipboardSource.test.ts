@@ -8,6 +8,7 @@ import {
   CLIPBOARD_IMAGE_LABEL,
   CLIPBOARD_PREVIEW_LINES,
   CLIPBOARD_SPILL_THRESHOLD,
+  parseFileDropList,
   readClipboardSource,
   type ClipboardImagePort,
   type ClipboardSourcePort,
@@ -23,6 +24,7 @@ interface FakeClipboardOptions {
   text?: string;
   imagePng?: Buffer | null;
   filePath?: string | null;
+  dropBuffer?: Buffer | null;
 }
 
 interface FakeClipboard {
@@ -45,6 +47,7 @@ function fakeClipboard(options: FakeClipboardOptions = {}): FakeClipboard {
     readText: () => options.text ?? "",
     readImage: () => image,
     readFilePath: () => options.filePath ?? null,
+    readFileDropBuffer: () => options.dropBuffer ?? null,
     writeFile: async (filePath, data) => {
       writes.set(filePath, data);
     },
@@ -351,4 +354,225 @@ test("a blank file path is treated as no file, never as a payload", async () => 
   const { port } = fakeClipboard({ filePath: "   " });
 
   assert.equal((await readClipboardSource(port)).kind, "empty");
+});
+
+// ---------------------------------------------------------------------------
+// Files (Explorer multi-select) — the CF_HDROP DROPFILES parse (issue #67)
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a CF_HDROP buffer the way Windows lays out a DROPFILES struct: a
+ * 20-byte header whose first DWORD (LE) is `pFiles` — the offset of the path
+ * list — and whose DWORD at offset 16 is `fWide` (1 = UTF-16LE). The list is
+ * NUL-terminated paths ending in a double NUL.
+ */
+function hdropBuffer(
+  paths: string[],
+  options: { fWide?: boolean; pFiles?: number } = {},
+): Buffer {
+  const pFiles = options.pFiles ?? 20;
+  const fWide = options.fWide ?? true;
+  const header = Buffer.alloc(20); // pt (8 bytes) and fNC stay zero
+  header.writeUInt32LE(pFiles, 0);
+  header.writeUInt32LE(fWide ? 1 : 0, 16);
+  const list = Buffer.from(
+    paths.map((p) => `${p}\0`).join("") + "\0",
+    fWide ? "utf16le" : "latin1",
+  );
+  // pFiles beyond the header means padding between struct and list — the
+  // parse must honor the offset, never assume the list starts at byte 20.
+  const padding = Buffer.alloc(Math.max(0, pFiles - header.length));
+  return Buffer.concat([header, padding, list]);
+}
+
+const MULTI_SELECT = [
+  String.raw`C:\Users\blair\OneDrive\Documents\generate_finops_json.py`,
+  String.raw`C:\Users\blair\OneDrive\Documents\finops_report.xlsx`,
+  String.raw`C:\Users\blair\OneDrive\Documents\notes.md`,
+];
+
+test("parseFileDropList reads every path of a wide list, in order", () => {
+  assert.deepEqual(parseFileDropList(hdropBuffer(MULTI_SELECT)), MULTI_SELECT);
+});
+
+test("parseFileDropList handles a single-path list", () => {
+  assert.deepEqual(parseFileDropList(hdropBuffer([MULTI_SELECT[0]])), [
+    MULTI_SELECT[0],
+  ]);
+});
+
+test("parseFileDropList honors pFiles — the list can start past the 20-byte header", () => {
+  const buffer = hdropBuffer(MULTI_SELECT, { pFiles: 28 });
+  assert.deepEqual(parseFileDropList(buffer), MULTI_SELECT);
+});
+
+test("parseFileDropList returns null for an ANSI list (fWide=0) — FileNameW is the fallback", () => {
+  assert.equal(parseFileDropList(hdropBuffer(MULTI_SELECT, { fWide: false })), null);
+});
+
+test("parseFileDropList returns null for a buffer shorter than the DROPFILES header", () => {
+  assert.equal(parseFileDropList(Buffer.alloc(0)), null);
+  assert.equal(parseFileDropList(Buffer.alloc(19)), null);
+});
+
+test("parseFileDropList returns null when pFiles points outside the buffer", () => {
+  const header = Buffer.alloc(20);
+  header.writeUInt32LE(9999, 0);
+  header.writeUInt32LE(1, 16);
+  assert.equal(parseFileDropList(header), null);
+});
+
+test("parseFileDropList returns null for an empty list (just the double NUL)", () => {
+  assert.equal(parseFileDropList(hdropBuffer([])), null);
+});
+
+test("parseFileDropList stops at the double NUL — trailing bytes never leak into a path", () => {
+  const trailing = Buffer.concat([
+    hdropBuffer(MULTI_SELECT),
+    Buffer.from("garbage-after-terminator", "utf16le"),
+  ]);
+  assert.deepEqual(parseFileDropList(trailing), MULTI_SELECT);
+});
+
+// ---------------------------------------------------------------------------
+// Files (Explorer multi-select) — classification (issue #67)
+// ---------------------------------------------------------------------------
+
+test("a multi-select classifies to a files source: every path, newline-joined, ONE payload", async () => {
+  const { port, writes } = fakeClipboard({ dropBuffer: hdropBuffer(MULTI_SELECT) });
+
+  const source = await readClipboardSource(port);
+
+  assert.equal(source.kind, "files");
+  if (source.kind !== "files") return;
+  assert.deepEqual(source.filePaths, MULTI_SELECT);
+  // One atomic block: N paths inject as a single newline-joined body — one
+  // payload, one ledger entry, one ack, one retry (grilled decision 1).
+  assert.equal(source.payload.injectText, MULTI_SELECT.join("\n"));
+  // All-or-nothing guard: every path is a delivery precondition (decision 2).
+  assert.deepEqual(source.payload.requiresFiles, MULTI_SELECT);
+  assert.equal(source.payload.requiresFile, undefined);
+  assert.equal(writes.size, 0, "no spill: the files are their own payload");
+});
+
+test("the files preview shows FULL paths one per line — the directory is the payload's identity", async () => {
+  const { port } = fakeClipboard({ dropBuffer: hdropBuffer(MULTI_SELECT) });
+
+  const source = await readClipboardSource(port);
+  assert.equal(source.kind, "files");
+  if (source.kind !== "files") return;
+
+  assert.equal(source.preview.firstLines, MULTI_SELECT.join("\n"));
+  assert.equal(source.preview.truncated, false);
+  assert.equal(source.preview.lineCount, MULTI_SELECT.length);
+  assert.equal(source.preview.spilled, false);
+  assert.equal(source.preview.summary, `Files · ${MULTI_SELECT.length}`);
+});
+
+test("the files preview truncates past the existing line limit, exactly like text", async () => {
+  const many = Array.from(
+    { length: CLIPBOARD_PREVIEW_LINES + 2 },
+    (_, i) => String.raw`C:\dev\mistr-flow\src\file-${i + 1}.ts`,
+  );
+  const { port } = fakeClipboard({ dropBuffer: hdropBuffer(many) });
+
+  const source = await readClipboardSource(port);
+  assert.equal(source.kind, "files");
+  if (source.kind !== "files") return;
+
+  assert.equal(
+    source.preview.firstLines,
+    many.slice(0, CLIPBOARD_PREVIEW_LINES).join("\n"),
+  );
+  assert.equal(source.preview.truncated, true);
+  assert.equal(source.preview.summary, `Files · ${many.length}`);
+});
+
+test("a single-file CF_HDROP list is byte-identical to today's FileNameW result", async () => {
+  // N=1 must stay exactly today's single-file relay: same payload shape (no
+  // requiresFiles key), same 'file · name.py' summary, same single-line
+  // unbracketed injection — the receiving agent's auto-attach depends on it.
+  const viaHdrop = await readClipboardSource(
+    fakeClipboard({ dropBuffer: hdropBuffer([COPIED_FILE]) }).port,
+  );
+  const viaFileNameW = await readClipboardSource(
+    fakeClipboard({ filePath: COPIED_FILE }).port,
+  );
+
+  assert.deepEqual(viaHdrop, viaFileNameW);
+  assert.equal(viaHdrop.kind, "file");
+});
+
+test("an ANSI CF_HDROP (fWide=0) falls back to the FileNameW single-file read", async () => {
+  const { port } = fakeClipboard({
+    dropBuffer: hdropBuffer(MULTI_SELECT, { fWide: false }),
+    filePath: COPIED_FILE,
+  });
+
+  const source = await readClipboardSource(port);
+
+  assert.equal(source.kind, "file");
+  if (source.kind !== "file") return;
+  assert.equal(source.filePath, COPIED_FILE);
+});
+
+test("a malformed CF_HDROP falls back to FileNameW rather than guessing", async () => {
+  const { port } = fakeClipboard({
+    dropBuffer: Buffer.from([1, 2, 3]),
+    filePath: COPIED_FILE,
+  });
+
+  const source = await readClipboardSource(port);
+
+  assert.equal(source.kind, "file");
+});
+
+test("a CF_HDROP of blank entries is no file at all, never a payload", async () => {
+  const { port } = fakeClipboard({ dropBuffer: hdropBuffer(["   ", " "]) });
+
+  assert.equal((await readClipboardSource(port)).kind, "empty");
+});
+
+test("text still wins over a multi-select; an image still wins too", async () => {
+  const text = await readClipboardSource(
+    fakeClipboard({ text: "copied text", dropBuffer: hdropBuffer(MULTI_SELECT) }).port,
+  );
+  assert.equal(text.kind, "text");
+
+  const image = await readClipboardSource(
+    fakeClipboard({
+      imagePng: Buffer.from([137, 80, 78, 71]),
+      dropBuffer: hdropBuffer(MULTI_SELECT),
+    }).port,
+  );
+  assert.equal(image.kind, "image");
+});
+
+test("an absurd list over the spill threshold rides the existing spill machinery — nothing truncated", async () => {
+  // No enforced cap (grilled decision 4): designed-for-small-N is an
+  // assumption, not a wall. A list whose joined body exceeds the threshold
+  // spills whole to a temp file, exactly as long text does.
+  const dir = String.raw`C:\Users\blair\Downloads\a-directory-name-long-enough-to-matter`;
+  const absurd = Array.from(
+    { length: 200 },
+    (_, i) => `${dir}\\file-${String(i + 1).padStart(3, "0")}.log`,
+  );
+  const joined = absurd.join("\n");
+  assert.ok(joined.length > CLIPBOARD_SPILL_THRESHOLD, "the fixture really exceeds the threshold");
+
+  const { port, writes } = fakeClipboard({ dropBuffer: hdropBuffer(absurd) });
+  const source = await readClipboardSource(port);
+
+  assert.equal(source.kind, "files");
+  if (source.kind !== "files") return;
+  const spillPath = source.spillPath;
+  assert.ok(spillPath, "the list spilled to a file");
+  assert.equal(path.dirname(spillPath as string), CAPTURE_DIR);
+  assert.equal(source.payload.injectText, spillPath, "the injected string is the spill path");
+  assert.equal(source.payload.requiresFile, spillPath, "the spill file is a precondition");
+  // The originals stay preconditions too — all-or-nothing survives the spill.
+  assert.deepEqual(source.payload.requiresFiles, absurd);
+  assert.equal(writes.get(spillPath as string), joined, "the whole list reached disk");
+  assert.equal(source.preview.spilled, true);
+  assert.equal(source.preview.summary, `Files · ${absurd.length} · spilled to file`);
 });

@@ -918,6 +918,22 @@ function readClipboardFilePath(): string | null {
   }
 }
 
+/**
+ * The raw `CF_HDROP` buffer — the DROPFILES struct carrying EVERY file of an
+ * Explorer multi-select, where `FileNameW` above carries only the first
+ * (issue #67). Raw read only: the pure parse lives in clipboardSource.ts
+ * (`parseFileDropList`), behind the port, where it's unit-tested.
+ */
+function readClipboardFileDropBuffer(): Buffer | null {
+  try {
+    const buffer = clipboard.readBuffer("CF_HDROP");
+    return buffer && buffer.length > 0 ? buffer : null;
+  } catch {
+    // Format absent on this clipboard — not an error, just no file drop.
+    return null;
+  }
+}
+
 function relayClipboardPort(): ClipboardSourcePort {
   return {
     readText: () => clipboard.readText(),
@@ -926,6 +942,7 @@ function relayClipboardPort(): ClipboardSourcePort {
       return { isEmpty: () => image.isEmpty(), toPNG: () => image.toPNG() };
     },
     readFilePath: () => readClipboardFilePath(),
+    readFileDropBuffer: () => readClipboardFileDropBuffer(),
     writeFile: async (filePath, data) => {
       await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
       await fs.promises.writeFile(filePath, data);

@@ -24,7 +24,10 @@ import {
   type ClipboardSourcePort,
 } from "../src/clipboardSource";
 import {
+  PASTE_END,
+  PASTE_START,
   createHerdrDeliveryAdapter,
+  missingFileMessage,
   type DeliverExecFile,
   type SendPayload,
 } from "../src/deliver";
@@ -67,6 +70,9 @@ function fakeClipboardPort(options: {
   text?: string;
   imagePng?: Buffer | null;
   filePath?: string | null;
+  dropBuffer?: Buffer | null;
+  /** When supplied, records every writeFile path — the slot-1 no-write guard. */
+  writes?: string[];
 }): ClipboardSourcePort {
   const imagePng = options.imagePng;
   const image: ClipboardImagePort = {
@@ -78,12 +84,32 @@ function fakeClipboardPort(options: {
     readText: () => options.text ?? "",
     readImage: () => image,
     readFilePath: () => options.filePath ?? null,
-    writeFile: async () => {},
+    readFileDropBuffer: () => options.dropBuffer ?? null,
+    writeFile: async (filePath) => {
+      options.writes?.push(filePath);
+    },
     mintId: () => `relay-id-${++minted}`,
     timestampIso: () => "2026-07-16T09:00:00.000Z",
     captureDir: CAPTURE_DIR,
   };
 }
+
+/** CF_HDROP as Windows lays it out — wide list at offset 20 (mirrors clipboardSource.test.ts). */
+function hdropBuffer(paths: string[]): Buffer {
+  const header = Buffer.alloc(20);
+  header.writeUInt32LE(20, 0); // pFiles
+  header.writeUInt32LE(1, 16); // fWide
+  return Buffer.concat([
+    header,
+    Buffer.from(paths.map((p) => `${p}\0`).join("") + "\0", "utf16le"),
+  ]);
+}
+
+const MULTI_SELECT = [
+  String.raw`C:\Users\blair\OneDrive\Documents\generate_finops_json.py`,
+  String.raw`C:\Users\blair\OneDrive\Documents\finops_report.xlsx`,
+  String.raw`C:\Users\blair\OneDrive\Documents\notes.md`,
+];
 
 // --- Fake picker handle -----------------------------------------------------
 
@@ -619,6 +645,164 @@ test("a copied file delivers with the LEDGER prop — it injects a path like a s
 
   const delivering = h.states.find((s) => s.phase === "relay-delivering");
   assert.equal(delivering!.relayPayloadKind, "ledger");
+});
+
+// ---------------------------------------------------------------------------
+// Multi-file relay — every file of a multi-select, one atomic block (issue #67)
+// ---------------------------------------------------------------------------
+
+test("a multi-select delivers as ONE bracketed paste of all N full paths", async () => {
+  // The REAL adapter with only execFile mocked (the ack-timeout precedent):
+  // the joined body is multi-line, so bracketMultilinePaste wraps it — that
+  // IS the atomicity, one paste that can never chunk-split into a partial.
+  const execFileCalls: { args: readonly string[] }[] = [];
+  const execFile: DeliverExecFile = (_file, args, callback) => {
+    execFileCalls.push({ args: [...args] });
+    callback(null, "", "");
+  };
+  const realDeliver = createHerdrDeliveryAdapter({ execFile, pathExists: async () => true });
+
+  const h = makeHarness({
+    port: fakeClipboardPort({ dropBuffer: hdropBuffer(MULTI_SELECT) }),
+    deliver: (payload, target) => realDeliver(payload, target),
+  });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "target", target: TARGET_A });
+  const result = await session;
+
+  assert.deepEqual(result, { kind: "target-delivered", target: TARGET_A });
+  assert.deepEqual(execFileCalls, [
+    {
+      args: [
+        "agent",
+        "send",
+        TARGET_A.target,
+        `${PASTE_START}${MULTI_SELECT.join("\n")}${PASTE_END}`,
+      ],
+    },
+  ]);
+});
+
+test("the multi-select preview rides the existing text-preview slot: full paths, Files · N", async () => {
+  const h = makeHarness({
+    port: fakeClipboardPort({ dropBuffer: hdropBuffer(MULTI_SELECT) }),
+  });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+
+  const picker = h.states.find((s) => s.phase === "capture-picker");
+  assert.ok(isTextPreview(picker!.capturePreview), "no new preview kind — the text slot");
+  const preview = picker!.capturePreview as Extract<PickerPreview, { kind: "text" }>;
+  assert.equal(preview.firstLines, MULTI_SELECT.join("\n"), "full paths, one per line");
+  assert.equal(preview.summary, `Files · ${MULTI_SELECT.length}`);
+
+  h.picker.resolve({ kind: "escape" });
+  await session;
+});
+
+test("a multi-select delivers with the LEDGER prop — a path-injecting payload per #41's mapping", async () => {
+  const h = makeHarness({
+    port: fakeClipboardPort({ dropBuffer: hdropBuffer(MULTI_SELECT) }),
+  });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "target", target: TARGET_A });
+  await session;
+
+  const delivering = h.states.find((s) => s.phase === "relay-delivering");
+  assert.equal(delivering!.relayPayloadKind, "ledger");
+});
+
+test("a vanished file fails the WHOLE multi-select truthfully, naming the file — nothing injected", async () => {
+  const execFileCalls: unknown[] = [];
+  const execFile: DeliverExecFile = (_file, args, callback) => {
+    execFileCalls.push(args);
+    callback(null, "", "");
+  };
+  const realDeliver = createHerdrDeliveryAdapter({
+    execFile,
+    // The .xlsx vanished between the copy and the digit press.
+    pathExists: async (filePath) => !filePath.endsWith(".xlsx"),
+  });
+
+  const h = makeHarness({
+    port: fakeClipboardPort({ dropBuffer: hdropBuffer(MULTI_SELECT) }),
+    deliver: (payload, target) => realDeliver(payload, target),
+  });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "target", target: TARGET_A });
+  const result = await session;
+
+  assert.deepEqual(result, {
+    kind: "delivery-failed",
+    target: TARGET_A,
+    code: "delivery-file-missing",
+    message: missingFileMessage("finops_report.xlsx"),
+  });
+  assert.deepEqual(execFileCalls, [], "all-or-nothing: nothing reached the pane");
+  assert.equal(h.states.at(-1)!.phase, "capture-delivery-failed");
+});
+
+test("slot 1 keeps a multi-select fully intact — nothing delivered, nothing written, CF_HDROP untouched", async () => {
+  const writes: string[] = [];
+  const h = makeHarness({
+    port: fakeClipboardPort({ dropBuffer: hdropBuffer(MULTI_SELECT), writes }),
+  });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "clipboard" });
+  const result = await session;
+
+  assert.deepEqual(result, { kind: "copy-kept" });
+  assert.equal(h.delivered.length, 0, "slot 1 bypasses deliver entirely");
+  // No port write of any kind: the session has no clipboard-write seam at all
+  // (asserted structurally below), and the source never spilled — so the
+  // multi-select's CF_HDROP sits on the clipboard exactly as Explorer put it.
+  assert.deepEqual(writes, [], "no write through the port");
+});
+
+test("a multi-select retry after delivery-unknown reuses the same payload — one real injection", async () => {
+  const fakeClock = makeFakeClock();
+  const execFileCalls: { args: readonly string[] }[] = [];
+  let pending:
+    | ((error: (Error & { code?: string | number }) | null, stdout: string, stderr: string) => void)
+    | null = null;
+  const execFile: DeliverExecFile = (_file, args, callback) => {
+    execFileCalls.push({ args: [...args] });
+    pending = callback;
+  };
+  const realDeliver = createHerdrDeliveryAdapter({ execFile, pathExists: async () => true });
+
+  const h = makeHarness({
+    port: fakeClipboardPort({ dropBuffer: hdropBuffer(MULTI_SELECT) }),
+    clock: fakeClock.clock,
+    deliver: (payload, target) => realDeliver(payload, target),
+  });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "target", target: TARGET_A });
+  await flush();
+  assert.equal(execFileCalls.length, 1, "one real herdr agent send in flight");
+
+  // The 3s ack deadline fires first → delivery-unknown; the same digit retries.
+  fakeClock.fire();
+  await flush();
+  assert.equal(h.states.at(-1)!.phase, "capture-delivery-unknown");
+  h.picker.resolve({ kind: "target", target: TARGET_A });
+  await flush();
+  assert.equal(execFileCalls.length, 1, "the retry attached to the ledger, never re-injected");
+
+  pending!(null, "", "");
+  const result = await session;
+  assert.deepEqual(result, { kind: "target-delivered", target: TARGET_A });
 });
 
 test("an image to a WORKING pane earns the honest busy beat; to an idle pane it doesn't", async () => {
