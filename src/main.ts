@@ -9,8 +9,10 @@ import {
   screen,
   session as electronSession,
   dialog,
+  type NativeImage,
 } from "electron";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -21,16 +23,16 @@ import {
 } from "./barControls";
 import {
   getConfigPath,
-  readAzureOpenAiConfig,
+  readCopySelectionFirst,
   readFocusOnDeliver,
   readMuteSystemAudioWhileRecording,
   readOverlayPosition,
+  readProvider,
   readVocabularyConfig,
   writeOverlayPosition,
-  type AzureOpenAiConfig,
 } from "./config";
+import { resolveAiProvider, type AiProvider } from "./aiProvider";
 import { createDictationCancelledError, runDictationSession } from "./dictation";
-import { polishTranscript, transcribeAudio } from "./openai";
 import { buildPolishVocabularyInstruction, buildWhisperVocabularyPrompt } from "./vocabulary";
 import { pasteText as pasteTextImpl } from "./paste";
 import { buildOverlaySnapshot, buildRefusedOverlaySnapshot, type OverlaySnapshot } from "./overlay";
@@ -42,25 +44,43 @@ import {
 } from "./overlayPosition";
 import { createSessionIdleReturn, type SessionIdleReturn } from "./sessionIdleReturn";
 import { muteSystemAudio, type SystemAudioMuteHandle } from "./systemAudio";
-import { captureActiveWindow as captureActiveWindowImpl, type CaptureArtifact } from "./capture";
+import {
+  captureActiveWindow as captureActiveWindowImpl,
+  defaultCaptureDir,
+  type CaptureArtifact,
+} from "./capture";
+import { readClipboardSource, type ClipboardSourcePort } from "./clipboardSource";
+import { runRelaySession } from "./relaySession";
 import {
   createCaptureGrabFailedError,
   runCaptureSession,
   type CapturePickerHandle,
 } from "./captureSession";
-import { createCapturePickerHandle } from "./capturePickerHandle";
-import { createHerdrDeliveryAdapter } from "./deliver";
+import { createCapturePickerHandle, type CropSource } from "./capturePickerHandle";
+import {
+  cropCaptureImage,
+  type CropImagePort,
+  type CropRect,
+} from "./captureCrop";
+import {
+  renderCapturePreview,
+  type CapturePreview,
+  type ThumbnailImagePort,
+} from "./captureThumbnail";
+import { captureArtifactToPayload, createHerdrDeliveryAdapter } from "./deliver";
 import { queryHerdr } from "./herdr";
 import {
   capturePickerWindowHeight,
+  relayPickerWindowHeight,
   resolveGrownWindowBounds,
   type WindowBounds,
 } from "./captureWindowBounds";
 import { nativeWindowHandleToHwnd } from "./nativeWindowHandle";
 
 let overlayWindow: BrowserWindow | null = null;
-let azureConfig: AzureOpenAiConfig | null = null;
+let aiProvider: AiProvider | null = null;
 let muteSystemAudioWhileRecording = true;
+let copySelectionFirst = false;
 let whisperVocabularyPrompt: string | null = null;
 let polishVocabularyInstruction: string | null = null;
 
@@ -92,19 +112,74 @@ const CAPTURE_WINDOW_RESTORE_PHASES: ReadonlySet<OverlaySnapshot["phase"]> = new
   "capture-delivery-failed",
 ]);
 
+// The last overlay state that wasn't the refusal — so when refused self-clears
+// we can restore whatever the active verb was actually showing, rather than
+// blanking to idle over a live session.
+let lastNonRefusedOverlay: OverlaySnapshot | null = null;
+
 function sendToRenderer(channel: string, payload?: unknown): void {
+  if (
+    channel === "overlay-state" &&
+    payload &&
+    typeof payload === "object" &&
+    (payload as OverlaySnapshot).phase !== "refused"
+  ) {
+    lastNonRefusedOverlay = payload as OverlaySnapshot;
+  }
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.webContents.send(channel, payload);
   }
+}
+
+/** How long the "One thing at a time, sir." refusal holds before self-clearing. */
+const REFUSED_HOLD_MS = 3500;
+let refusedReturnTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelRefusedReturn(): void {
+  if (refusedReturnTimer) {
+    clearTimeout(refusedReturnTimer);
+    refusedReturnTimer = null;
+  }
+}
+
+/**
+ * Shows the mutual-exclusion refusal, then clears it on its own after a few
+ * seconds so it never sits there until Esc. On clear it RESTORES whatever the
+ * active verb was showing (e.g. the Relay picker you refused capture over is
+ * still open underneath), or idle if nothing is active — so a refusal is a
+ * transient notice, never a trap.
+ */
+function refuseVerb(): void {
+  const restore = lastNonRefusedOverlay;
+  sendToRenderer("overlay-state", buildRefusedOverlaySnapshot());
+  cancelRefusedReturn();
+  refusedReturnTimer = setTimeout(() => {
+    refusedReturnTimer = null;
+    if (verbLock.activeVerb() !== null && restore) {
+      sendToRenderer("overlay-state", restore);
+    } else {
+      sendToRenderer("overlay-state", buildOverlaySnapshot("idle"));
+    }
+  }, REFUSED_HOLD_MS);
 }
 
 function applyCaptureWindowBounds(snapshot: OverlaySnapshot): void {
   if (!overlayWindow || overlayWindow.isDestroyed() || !captureRestingBounds) return;
 
   if (snapshot.phase === "capture-picker") {
+    // Relay's picker skips slot 1 but still reserves its row (panes stay on
+    // 2–9), so relayPickerWindowHeight matches capturePickerWindowHeight by
+    // construction — the branch keeps the intent legible.
+    const heightFor =
+      snapshot.clipboardSlot === false
+        ? relayPickerWindowHeight
+        : capturePickerWindowHeight;
     const bounds = resolveGrownWindowBounds({
       restingBounds: captureRestingBounds,
-      grownHeight: capturePickerWindowHeight(snapshot.captureTargets?.length ?? 0),
+      grownHeight: heightFor(
+        snapshot.captureTargets?.length ?? 0,
+        Boolean(snapshot.capturePreview),
+      ),
       workArea: screen.getPrimaryDisplay().workArea,
     });
     overlayWindow.setBounds(bounds);
@@ -157,6 +232,58 @@ function simulatePasteKeystroke(): Promise<void> {
   });
 }
 
+/**
+ * Sends Ctrl+C to the foreground app so a *selection* lands on the clipboard
+ * before Relay reads it (config `copySelectionFirst`). Best-effort: a failure
+ * just means the existing clipboard is relayed, which the preview surfaces.
+ * The overlay is non-focusable, so focus stays on the app being copied from.
+ */
+function simulateCopyKeystroke(): Promise<void> {
+  return new Promise((resolve) => {
+    execFile(
+      "powershell",
+      [
+        "-NoProfile",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^c')",
+      ],
+      () => resolve(),
+    );
+  });
+}
+
+/** A cheap clipboard fingerprint, to detect when a simulated copy has landed. */
+function clipboardSignature(): string {
+  const text = clipboard.readText();
+  if (text) return `t:${text.length}:${text.slice(0, 64)}`;
+  const image = clipboard.readImage();
+  if (!image.isEmpty()) {
+    const size = image.getSize();
+    return `i:${size.width}x${size.height}`;
+  }
+  return `f:${readClipboardFilePath() ?? ""}`;
+}
+
+/**
+ * Simulates a copy, then waits (briefly) for the clipboard to actually change,
+ * so Relay reads the freshly-copied selection rather than the pre-copy content.
+ * If it never changes within the window — nothing was selected, or the
+ * selection already equalled the clipboard — we proceed with what's there; the
+ * preview shows the truth either way.
+ */
+async function copySelectionIntoClipboard(): Promise<void> {
+  const before = clipboardSignature();
+  await simulateCopyKeystroke();
+
+  const deadline = Date.now() + 400;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 30));
+    if (clipboardSignature() !== before) return;
+  }
+}
+
 function requestStopRecording(): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(
@@ -173,6 +300,8 @@ function requestStopRecording(): Promise<Buffer> {
 
 function startSession(): void {
   if (activeSession) return;
+  if (!aiProvider) return;
+  const provider = aiProvider;
 
   let resolveAudio!: (buffer: Buffer) => void;
   let rejectAudio!: (error: Error) => void;
@@ -200,22 +329,8 @@ function startSession(): void {
     showOverlay: (snapshot) => sendToRenderer("overlay-state", snapshot),
     playBeep: () => beep(),
     recordAudio: () => audioPromise,
-    transcribe: (buffer) =>
-      transcribeAudio(buffer, {
-        endpoint: azureConfig!.endpoint,
-        apiKey: azureConfig!.apiKey,
-        apiVersion: azureConfig!.apiVersion,
-        deployment: azureConfig!.transcribeDeployment,
-        vocabularyPrompt: whisperVocabularyPrompt,
-      }),
-    polish: (rawTranscript) =>
-      polishTranscript(rawTranscript, {
-        endpoint: azureConfig!.endpoint,
-        apiKey: azureConfig!.apiKey,
-        apiVersion: azureConfig!.apiVersion,
-        deployment: azureConfig!.polishDeployment,
-        vocabularyInstruction: polishVocabularyInstruction,
-      }),
+    transcribe: (buffer) => provider.transcribe(buffer, { vocabularyPrompt: whisperVocabularyPrompt }),
+    polish: (rawTranscript) => provider.polish(rawTranscript, { vocabularyInstruction: polishVocabularyInstruction }),
     pasteText: (text) =>
       pasteTextImpl(text, {
         writeClipboard: (t) => clipboard.writeText(t),
@@ -295,10 +410,11 @@ function registerHotkey(): void {
     }
 
     if (!verbLock.tryStart("dictation")) {
-      sendToRenderer("overlay-state", buildRefusedOverlaySnapshot());
+      refuseVerb();
       return;
     }
 
+    cancelRefusedReturn();
     startSession();
   });
 
@@ -314,16 +430,42 @@ const CAPTURE_ACCELERATOR = "Control+Shift+`";
 function registerCaptureHotkey(): void {
   const registered = globalShortcut.register(CAPTURE_ACCELERATOR, () => {
     if (!verbLock.tryStart("capture")) {
-      sendToRenderer("overlay-state", buildRefusedOverlaySnapshot());
+      refuseVerb();
       return;
     }
 
+    cancelRefusedReturn();
     startCapture();
   });
 
   if (!registered) {
     throw new Error(
       `Failed to register global hotkey "${CAPTURE_ACCELERATOR}". It may already be in use by another app.`,
+    );
+  }
+}
+
+// Ctrl+Alt+C ("clipboard"), matching Ctrl+Alt+D ("dictate"). Pre-verified live
+// on the home machine (2026-07-15, issue #39): registers cleanly via
+// globalShortcut with no hard conflict. Do not swap it out speculatively — the
+// residual risk (globalShortcut intercepts system-wide) is covered by the human
+// verification issue (#40).
+const RELAY_ACCELERATOR = "Control+Alt+C";
+
+function registerRelayHotkey(): void {
+  const registered = globalShortcut.register(RELAY_ACCELERATOR, () => {
+    if (!verbLock.tryStart("relay")) {
+      refuseVerb();
+      return;
+    }
+
+    cancelRefusedReturn();
+    startRelay();
+  });
+
+  if (!registered) {
+    throw new Error(
+      `Failed to register global hotkey "${RELAY_ACCELERATOR}". It may already be in use by another app.`,
     );
   }
 }
@@ -345,6 +487,79 @@ function copyCaptureToClipboard(artifact: CaptureArtifact): void {
   clipboard.writeImage(nativeImage.createFromPath(artifact.pngPath));
 }
 
+/**
+ * Adapts Electron's `nativeImage` to the pure module's port. `resize` returns
+ * a fresh NativeImage, so wrapping on the way out keeps the chain typed
+ * without leaking Electron into captureThumbnail.ts.
+ */
+function toThumbnailPort(image: NativeImage): ThumbnailImagePort {
+  return {
+    getSize: () => image.getSize(),
+    resize: (size) => toThumbnailPort(image.resize(size)),
+    toDataURL: () => image.toDataURL(),
+    isEmpty: () => image.isEmpty(),
+  };
+}
+
+async function renderCaptureThumbnail(
+  artifact: CaptureArtifact,
+): Promise<CapturePreview | null> {
+  return renderCapturePreview(
+    (pngPath) => toThumbnailPort(nativeImage.createFromPath(pngPath)),
+    artifact,
+  );
+}
+
+/** Adapts `nativeImage` to the crop port, mirroring toThumbnailPort. */
+function toCropPort(image: NativeImage): CropImagePort {
+  return {
+    getSize: () => image.getSize(),
+    crop: (rect) => toCropPort(image.crop(rect)),
+    toPNG: () => image.toPNG(),
+    isEmpty: () => image.isEmpty(),
+  };
+}
+
+/**
+ * Writes the cropped pixels as a fresh capture — new id and new file, because
+ * a crop really is a different capture: delivery injects a path, and the
+ * delivery ledger keys idempotency on (id, path, target). Reusing the id
+ * would make a post-crop retry look like a mismatched replay of the original.
+ * The new file lands beside the original and is swept by the same TTL.
+ */
+async function cropCaptureArtifact(
+  artifact: CaptureArtifact,
+  rect: CropRect,
+): Promise<CaptureArtifact | null> {
+  const png = cropCaptureImage(
+    (pngPath) => toCropPort(nativeImage.createFromPath(pngPath)),
+    artifact.pngPath,
+    rect,
+  );
+  if (!png) return null;
+
+  try {
+    const id = randomUUID();
+    const croppedPath = path.join(path.dirname(artifact.pngPath), `${id}.png`);
+    await fs.promises.writeFile(croppedPath, png);
+    return { ...artifact, id, pngPath: croppedPath };
+  } catch (error) {
+    console.warn("[mistr-flow] capture crop: failed to write cropped png:", error);
+    return null;
+  }
+}
+
+// Crop drags arrive from the renderer over IPC; the active picker handle
+// subscribes here so they join the same selection stream as the digits.
+let activeCropEmit: ((rect: CropRect) => void) | null = null;
+
+const captureCropSource: CropSource = (emit) => {
+  activeCropEmit = emit;
+  return () => {
+    if (activeCropEmit === emit) activeCropEmit = null;
+  };
+};
+
 // One adapter instance for the app's lifetime: its delivery ledger must
 // persist across a session's unknown → retry digit presses (#32). Rebuilt
 // once at startup once config (focusOnDeliver) is known — see whenReady.
@@ -356,6 +571,7 @@ function openCapturePicker(): CapturePickerHandle {
       register: (accelerator, callback) => globalShortcut.register(accelerator, callback),
       unregister: (accelerator) => globalShortcut.unregister(accelerator),
     },
+    cropSource: captureCropSource,
   });
 }
 
@@ -368,14 +584,107 @@ function startCapture(): void {
     showOverlay: (snapshot) => showCaptureOverlay(snapshot),
     captureActiveWindow: () => grabActiveWindow(),
     openPicker: () => openCapturePicker(),
+    renderThumbnail: (artifact) => renderCaptureThumbnail(artifact),
+    cropCapture: (artifact, rect) => cropCaptureArtifact(artifact, rect),
     queryEligibleTargets: () => queryHerdr({}),
     copyToClipboard: (artifact) => copyCaptureToClipboard(artifact),
-    deliver: (capture, target) => deliverCapture(capture, target),
+    deliver: (capture, target) =>
+      deliverCapture(captureArtifactToPayload(capture), target),
   })
     .then((result) => console.log("[mistr-flow] capture session result:", result.kind))
     .catch((error) => console.error("[mistr-flow] capture session failed:", error))
     .finally(() => {
       verbLock.release("capture");
+      captureRestingBounds = null;
+    });
+}
+
+// Relay reads/PNG-spills into the same temp dir captures use, so the existing
+// TTL sweep reclaims relay spill/image files too (CONTEXT.md).
+const relayCaptureDir = defaultCaptureDir();
+
+/** Adapts Electron's clipboard + fs to the pure Relay source port (issue #38). */
+/**
+ * The absolute path of a file copied in Explorer, or null.
+ *
+ * Verified live (2026-07-15) against a copied `.py`: `availableFormats()` is
+ * `["text/uri-list"]`, `readText()` is empty and `readImage()` is empty — a
+ * file copy sets neither — while `readBuffer("FileNameW")` carries the full
+ * path as UTF-16LE with a trailing NUL. Without this, a copied file reads as
+ * an empty clipboard and Relay truthfully says it has nothing to send.
+ *
+ * `FileName` (the ANSI 8.3 sibling) is deliberately ignored: it's lossy, and
+ * `FileNameW` is present alongside it.
+ */
+function readClipboardFilePath(): string | null {
+  try {
+    const buffer = clipboard.readBuffer("FileNameW");
+    if (!buffer || buffer.length === 0) return null;
+
+    const decoded = buffer.toString("utf16le").replace(/\0+$/g, "").trim();
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    // Format absent on this clipboard — not an error, just no file.
+    return null;
+  }
+}
+
+function relayClipboardPort(): ClipboardSourcePort {
+  return {
+    readText: () => clipboard.readText(),
+    readImage: () => {
+      const image = clipboard.readImage();
+      return { isEmpty: () => image.isEmpty(), toPNG: () => image.toPNG() };
+    },
+    readFilePath: () => readClipboardFilePath(),
+    writeFile: async (filePath, data) => {
+      await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.promises.writeFile(filePath, data);
+    },
+    mintId: () => randomUUID(),
+    timestampIso: () => new Date().toISOString(),
+    captureDir: relayCaptureDir,
+  };
+}
+
+function openRelayPicker(): CapturePickerHandle {
+  return createCapturePickerHandle({
+    shortcuts: {
+      register: (accelerator, callback) => globalShortcut.register(accelerator, callback),
+      unregister: (accelerator) => globalShortcut.unregister(accelerator),
+    },
+    cropSource: captureCropSource,
+    // Slot 1 is skipped: the clipboard is Relay's source, not a destination.
+    includeClipboardSlot: false,
+  });
+}
+
+function startRelay(): void {
+  captureRestingBounds = overlayWindow && !overlayWindow.isDestroyed()
+    ? overlayWindow.getBounds()
+    : null;
+
+  void runRelaySession({
+    readClipboardSource: async () => {
+      // Opt-in: grab the current selection first (Ctrl+C), so select → hotkey →
+      // digit skips an explicit copy. No selection → the copy no-ops and the
+      // existing clipboard is read; the preview shows whichever it is.
+      if (copySelectionFirst) await copySelectionIntoClipboard();
+      return readClipboardSource(relayClipboardPort());
+    },
+    showOverlay: (snapshot) => showCaptureOverlay(snapshot),
+    openPicker: () => openRelayPicker(),
+    renderImageThumbnail: (artifact) => renderCaptureThumbnail(artifact),
+    cropImage: (artifact, rect) => cropCaptureArtifact(artifact, rect),
+    queryEligibleTargets: () => queryHerdr({}),
+    // Same adapter, same ledger, same ack/unknown-retry semantics, same
+    // focusOnDeliver as Capture — Relay's payload just isn't always a PNG.
+    deliver: (payload, target) => deliverCapture(payload, target),
+  })
+    .then((result) => console.log("[mistr-flow] relay session result:", result.kind))
+    .catch((error) => console.error("[mistr-flow] relay session failed:", error))
+    .finally(() => {
+      verbLock.release("relay");
       captureRestingBounds = null;
     });
 }
@@ -476,20 +785,12 @@ async function ensureConfigExists(): Promise<boolean> {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(
     configPath,
-    JSON.stringify(
-      {
-        azureEndpoint: "https://<your-resource>.cognitiveservices.azure.com/",
-        azureApiKey: "",
-        muteSystemAudioWhileRecording: true,
-      },
-      null,
-      2,
-    ),
+    JSON.stringify({ openaiApiKey: "", muteSystemAudioWhileRecording: true }, null, 2),
     "utf8",
   );
   dialog.showErrorBox(
-    "Mistr Flow needs your Azure AI Foundry details",
-    `Created ${configPath}. Set "azureEndpoint" and "azureApiKey" for your Azure AI Foundry resource, then restart Mistr Flow.`,
+    "Mistr Flow needs an OpenAI API key",
+    `Created ${configPath}. Add your OpenAI API key as "openaiApiKey" and restart Mistr Flow.`,
   );
   return false;
 }
@@ -506,11 +807,15 @@ app.whenReady().then(async () => {
   }
 
   try {
-    azureConfig = await readAzureOpenAiConfig();
+    const providerName = await readProvider();
+    console.log("[mistr-flow] config: provider =", providerName);
+    aiProvider = await resolveAiProvider(providerName);
     muteSystemAudioWhileRecording = await readMuteSystemAudioWhileRecording();
     const focusOnDeliver = await readFocusOnDeliver();
     console.log("[mistr-flow] config: focusOnDeliver =", focusOnDeliver);
     deliverCapture = createHerdrDeliveryAdapter({ focusOnDeliver });
+    copySelectionFirst = await readCopySelectionFirst();
+    console.log("[mistr-flow] config: copySelectionFirst =", copySelectionFirst);
   } catch (error) {
     dialog.showErrorBox("Mistr Flow config error", String(error));
     app.quit();
@@ -537,10 +842,14 @@ app.whenReady().then(async () => {
   ipcMain.on("move-overlay-by", (_event, delta: { deltaX: number; deltaY: number }) => {
     moveOverlayBy(delta);
   });
+  ipcMain.on("capture-crop", (_event, rect: CropRect) => {
+    activeCropEmit?.(rect);
+  });
 
   try {
     registerHotkey();
     registerCaptureHotkey();
+    registerRelayHotkey();
   } catch (error) {
     dialog.showErrorBox("Mistr Flow hotkey error", String(error));
   }

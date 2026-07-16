@@ -34,6 +34,43 @@ import { raiseHerdrWindow, type HerdrWindowOutcome } from "./herdrWindow";
 // stall on an interactive prompt at the human's pane — so deliver() verifies
 // the file exists itself before ever injecting anything.
 
+/**
+ * The payload-agnostic unit of delivery (issue #37). Every delivery path ends
+ * in the same primitive — `herdr agent send <target> <string>` — and the only
+ * differences are *what string* and *whether a file must exist first*:
+ *
+ * | payload             | injectText              | requiresFile |
+ * |---------------------|-------------------------|--------------|
+ * | screenshot          | the PNG's absolute path | that PNG     |
+ * | short clipboard text| the text itself         | (none)       |
+ * | long clipboard text | the spill file's path   | that .txt    |
+ * | clipboard image     | the PNG's absolute path | that PNG     |
+ */
+export interface SendPayload {
+  readonly id: string;
+  /** Exactly what gets handed to `herdr agent send`. */
+  readonly injectText: string;
+  /**
+   * A file the payload depends on. `deliver` verifies it exists BEFORE
+   * injecting — a bad path doesn't fail cleanly, it can stall on an
+   * interactive prompt at the human's pane (#28 spike finding). Absent for
+   * inline text: there's no file, so there's nothing to verify.
+   */
+  readonly requiresFile?: string;
+}
+
+/**
+ * A CaptureArtifact is one producer of {@link SendPayload}: the injected text
+ * and the required file are both the capture's absolute PNG path.
+ */
+export function captureArtifactToPayload(capture: CaptureArtifact): SendPayload {
+  return {
+    id: capture.id,
+    injectText: capture.pngPath,
+    requiresFile: capture.pngPath,
+  };
+}
+
 export type DeliveryFailureCode =
   | "delivery-file-missing"
   | "delivery-id-mismatch"
@@ -98,23 +135,23 @@ const defaultPathExists = async (filePath: string): Promise<boolean> => {
 };
 
 interface DeliveryRecord {
-  readonly pngPath: string;
+  readonly injectText: string;
   readonly target: string;
   readonly outcome: Promise<CaptureDeliverOutcome>;
 }
 
 export type DeliverFn = (
-  capture: CaptureArtifact,
+  payload: SendPayload,
   target: EligibleTarget,
 ) => Promise<CaptureDeliverOutcome>;
 
 /**
- * Builds the `deliver` dependency for `runCaptureSession`. Owns an in-memory
- * ledger keyed by capture id so a retry (same artifact, same target) can
- * never inject twice — it hands back the original in-flight/settled attempt
- * instead of shelling out again. A capture id reused against a different
- * target or a different pngPath (payload) is rejected outright: never
- * silently delivered against a stale or mismatched destination.
+ * Builds the `deliver` dependency for the send session. Owns an in-memory
+ * ledger keyed by payload id so a retry (same payload, same target) can never
+ * inject twice — it hands back the original in-flight/settled attempt instead
+ * of shelling out again. A payload id reused against a different target or a
+ * different injected string is rejected outright: never silently delivered
+ * against a stale or mismatched destination.
  */
 export function createHerdrDeliveryAdapter(
   deps: DeliveryAdapterDeps = {},
@@ -127,12 +164,15 @@ export function createHerdrDeliveryAdapter(
   const ledger = new Map<string, DeliveryRecord>();
 
   return function deliver(
-    capture: CaptureArtifact,
+    payload: SendPayload,
     target: EligibleTarget,
   ): Promise<CaptureDeliverOutcome> {
-    const existing = ledger.get(capture.id);
+    const existing = ledger.get(payload.id);
     if (existing) {
-      if (existing.pngPath !== capture.pngPath || existing.target !== target.target) {
+      if (
+        existing.injectText !== payload.injectText ||
+        existing.target !== target.target
+      ) {
         return Promise.resolve(failure("delivery-id-mismatch"));
       }
       return existing.outcome;
@@ -141,14 +181,14 @@ export function createHerdrDeliveryAdapter(
     const outcome = runDelivery(
       execFile,
       pathExists,
-      capture,
+      payload,
       target,
       focusOnDeliver,
       raiseWindow,
       readSocketPath,
     );
-    ledger.set(capture.id, {
-      pngPath: capture.pngPath,
+    ledger.set(payload.id, {
+      injectText: payload.injectText,
       target: target.target,
       outcome,
     });
@@ -159,18 +199,22 @@ export function createHerdrDeliveryAdapter(
 async function runDelivery(
   execFile: DeliverExecFile,
   pathExists: (filePath: string) => Promise<boolean>,
-  capture: CaptureArtifact,
+  payload: SendPayload,
   target: EligibleTarget,
   focusOnDeliver: boolean,
   raiseWindow: RaiseHerdrWindowFn,
   readSocketPath: ReadHerdrSocketPathFn,
 ): Promise<CaptureDeliverOutcome> {
-  const exists = await pathExists(capture.pngPath);
-  if (!exists) {
-    return failure("delivery-file-missing");
+  // Only a payload that declares a file has a precondition — inline text has
+  // no file, so there is nothing to verify before injecting it.
+  if (payload.requiresFile !== undefined) {
+    const exists = await pathExists(payload.requiresFile);
+    if (!exists) {
+      return failure("delivery-file-missing");
+    }
   }
 
-  const outcome = await runHerdrAgentSend(execFile, target.target, capture.pngPath);
+  const outcome = await runHerdrAgentSend(execFile, target.target, payload.injectText);
   if (outcome.kind === "delivered" && focusOnDeliver) {
     await focusDeliveredPane(execFile, target.target, raiseWindow, readSocketPath);
   }
@@ -229,13 +273,46 @@ function runHerdrAgentFocus(
   });
 }
 
+/**
+ * Wraps multi-line text in bracketed-paste markers so the receiving terminal
+ * treats it as ONE atomic paste (found live, 2026-07-15).
+ *
+ * `agent send` streams its text into the pane's PTY. For a multi-line body the
+ * stream arrives in chunks, and the receiving CLI's paste detection reads each
+ * chunk as a separate event — observed live as
+ * `[Pasted text #1 +10 lines][Pasted text #2 +9 lines]` for a single 20-line
+ * send. Worse, where a chunk boundary lands such that a newline is read as
+ * *typed* input rather than pasted, that newline is Enter: the leading chunk
+ * submits itself and only the tail survives in the input box. That is the
+ * "it only pasted the latter half" bug, and it is chunk-boundary dependent —
+ * hence intermittent.
+ *
+ * Bracketing makes it atomic (verified: the same 20-line body arrives as one
+ * `[Pasted text #3 +19 lines]`).
+ *
+ * Deliberately only when the text contains a newline: a single-line body is a
+ * PNG/spill *path*, and paths must keep arriving as plain typed text so the
+ * receiving agent's own path-detection still upgrades them into a real image
+ * attachment (CONTEXT.md, *Auto-attach requires the receiving agent to be
+ * idle*). Bracketing those risks silently breaking image delivery.
+ */
+/** ESC[200~ / ESC[201~ — written as explicit escapes: a raw ESC byte in
+ *  source is invisible and one stray editor/linter pass silently kills it. */
+export const PASTE_START = "\x1b[200~";
+export const PASTE_END = "\x1b[201~";
+
+export function bracketMultilinePaste(text: string): string {
+  if (!text.includes("\n")) return text;
+  return `${PASTE_START}${text}${PASTE_END}`;
+}
+
 function runHerdrAgentSend(
   execFile: DeliverExecFile,
   target: string,
-  pngPath: string,
+  injectText: string,
 ): Promise<CaptureDeliverOutcome> {
   return new Promise((resolve) => {
-    execFile("herdr", ["agent", "send", target, pngPath], (error) => {
+    execFile("herdr", ["agent", "send", target, bracketMultilinePaste(injectText)], (error) => {
       if (!error) {
         resolve({ kind: "delivered" });
         return;

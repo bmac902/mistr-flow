@@ -7,28 +7,13 @@ export interface AppConfig {
   openaiApiKey?: unknown;
   apiKey?: unknown;
   OPENAI_API_KEY?: unknown;
-  azureEndpoint?: unknown;
-  azureApiKey?: unknown;
-  azureApiVersion?: unknown;
-  transcribeDeployment?: unknown;
-  polishDeployment?: unknown;
   overlayPosition?: unknown;
   muteSystemAudioWhileRecording?: unknown;
   vocabulary?: unknown;
   focusOnDeliver?: unknown;
+  copySelectionFirst?: unknown;
+  provider?: unknown;
 }
-
-export interface AzureOpenAiConfig {
-  endpoint: string;
-  apiKey: string;
-  apiVersion: string;
-  transcribeDeployment: string;
-  polishDeployment: string;
-}
-
-const DEFAULT_AZURE_API_VERSION = "2025-04-01-preview";
-const DEFAULT_TRANSCRIBE_DEPLOYMENT = "gpt-4o-transcribe";
-const DEFAULT_POLISH_DEPLOYMENT = "gpt-5-mini";
 
 export interface VocabularyReplacement {
   wrong: string;
@@ -55,52 +40,26 @@ export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(appData, "MistrFlow", "config.json");
 }
 
-export async function readAzureOpenAiConfig(
+export async function readOpenAiApiKey(
   env: NodeJS.ProcessEnv = process.env,
   fileSystem = fs,
-): Promise<AzureOpenAiConfig> {
+): Promise<string> {
+  if (typeof env.OPENAI_API_KEY === "string" && env.OPENAI_API_KEY.trim()) {
+    return env.OPENAI_API_KEY.trim();
+  }
+
   const configPath = getConfigPath(env);
+  const rawConfig = await fileSystem.readFile(configPath, "utf8");
+  const parsed = JSON.parse(rawConfig) as AppConfig;
+  const apiKey = pickApiKey(parsed);
 
-  let parsed: AppConfig = {};
-  try {
-    const rawConfig = await fileSystem.readFile(configPath, "utf8");
-    if (rawConfig.trim()) parsed = JSON.parse(rawConfig) as AppConfig;
-  } catch (error) {
-    if (!(isNodeError(error) && error.code === "ENOENT")) throw error;
-  }
-
-  const endpoint = pickString(env.AZURE_OPENAI_ENDPOINT, parsed.azureEndpoint);
-  if (!endpoint) {
-    throw new Error(
-      `Missing azureEndpoint in ${configPath} (or AZURE_OPENAI_ENDPOINT). ` +
-        `Expected your Azure AI Foundry endpoint, e.g. https://<resource>.cognitiveservices.azure.com/.`,
-    );
-  }
-
-  const apiKey = pickString(
-    env.AZURE_OPENAI_API_KEY,
-    parsed.azureApiKey,
-    parsed.apiKey,
-    parsed.openaiApiKey,
-    parsed.OPENAI_API_KEY,
-  );
   if (!apiKey) {
     throw new Error(
-      `Missing azureApiKey in ${configPath} (or AZURE_OPENAI_API_KEY). Expected a JSON string field.`,
+      `Missing openaiApiKey in ${configPath}. Expected a JSON string field.`,
     );
   }
 
-  return {
-    endpoint,
-    apiKey,
-    apiVersion:
-      pickString(env.AZURE_OPENAI_API_VERSION, parsed.azureApiVersion) ??
-      DEFAULT_AZURE_API_VERSION,
-    transcribeDeployment:
-      pickString(parsed.transcribeDeployment) ?? DEFAULT_TRANSCRIBE_DEPLOYMENT,
-    polishDeployment:
-      pickString(parsed.polishDeployment) ?? DEFAULT_POLISH_DEPLOYMENT,
-  };
+  return apiKey;
 }
 
 export async function readOverlayPosition(
@@ -176,6 +135,44 @@ export async function readFocusOnDeliver(
   return parsed.focusOnDeliver === true;
 }
 
+/**
+ * Opt-in only — defaults to false. When true, the Relay hotkey simulates
+ * Ctrl+C first, so a *selection* is grabbed without an explicit copy: select →
+ * hotkey → digit, one keystroke saved. Footgun (mitigated by the picker
+ * preview, which shows exactly what will be sent): if nothing is selected the
+ * simulated copy no-ops and the existing clipboard is relayed instead — visible
+ * and Esc-able rather than silent. Off by default so the safe read-existing-
+ * clipboard behaviour is the baseline.
+ */
+export async function readCopySelectionFirst(
+  env: NodeJS.ProcessEnv = process.env,
+  fileSystem = fs,
+): Promise<boolean> {
+  const configPath = getConfigPath(env);
+  const rawConfig = await fileSystem.readFile(configPath, "utf8");
+  const parsed = JSON.parse(rawConfig) as AppConfig;
+  return parsed.copySelectionFirst === true;
+}
+
+/**
+ * Which AI provider to resolve at startup, defaulting to "openai" when absent
+ * so every config already in the wild keeps working untouched. This reads only
+ * the provider *name* — provider-specific fields (openaiApiKey, and a future
+ * Azure adapter's own fields) are read by each adapter's factory, never here.
+ * That's the seam that keeps config.ts out of the fork's conflict zone (#43).
+ */
+export async function readProvider(
+  env: NodeJS.ProcessEnv = process.env,
+  fileSystem = fs,
+): Promise<string> {
+  const configPath = getConfigPath(env);
+  const rawConfig = await fileSystem.readFile(configPath, "utf8");
+  const parsed = JSON.parse(rawConfig) as AppConfig;
+  return typeof parsed.provider === "string" && parsed.provider.trim()
+    ? parsed.provider.trim()
+    : "openai";
+}
+
 export async function writeOverlayPosition(
   position: OverlayPosition,
   env: NodeJS.ProcessEnv = process.env,
@@ -238,7 +235,8 @@ function normalizeReplacements(value: unknown): VocabularyReplacement[] {
   return result;
 }
 
-function pickString(...candidates: unknown[]): string | null {
+function pickApiKey(config: AppConfig): string | null {
+  const candidates = [config.openaiApiKey, config.apiKey, config.OPENAI_API_KEY];
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.trim()) {
       return candidate.trim();

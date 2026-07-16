@@ -1,4 +1,6 @@
 import type { CaptureArtifact, CaptureFailureCode } from "./capture";
+import type { CropRect } from "./captureCrop";
+import type { PickerPreview } from "./captureThumbnail";
 import type { EligibleTarget, HerdrQueryResult } from "./herdr";
 import { PANE_QUERY_TIMEOUT_MS, safeMessageFor as herdrSafeMessageFor } from "./herdr";
 import {
@@ -57,7 +59,9 @@ function isCaptureGrabFailedError(
 export type CaptureSelectionEvent =
   | { readonly kind: "clipboard" }
   | { readonly kind: "target"; readonly target: EligibleTarget }
-  | { readonly kind: "escape" };
+  | { readonly kind: "escape" }
+  /** A drag on the preview: trim the capture and keep the picker open. */
+  | { readonly kind: "crop"; readonly rect: CropRect };
 
 /**
  * The injected picker handle (concrete implementation lands in the picker UI
@@ -82,21 +86,62 @@ export interface CaptureSessionClock {
   clearTimeout(handle: unknown): void;
 }
 
-export interface RunCaptureSessionDependencies {
+/**
+ * The dependency bag for the shared send session, generic in the artifact type
+ * `A` the verb flows through the loop (issue #37). Capture supplies a
+ * {@link CaptureArtifact}; a second verb can supply a different payload type
+ * with its own grab, preview, crop, clipboard, and delivery — the loop itself
+ * is agnostic to what `A` is.
+ */
+export interface RunSessionDependencies<A> {
   showOverlay(snapshot: OverlaySnapshot): void | Promise<void>;
   /** Rejects with a {@link CaptureGrabFailedError} on a bad grab — never a fake artifact. */
-  captureActiveWindow(): Promise<CaptureArtifact>;
+  captureActiveWindow(): Promise<A>;
   openPicker(): CapturePickerHandle;
+  /**
+   * Best-effort preview of the grab for the picker (#35). An image thumbnail or
+   * a relayed-text head — {@link PickerPreview}. Returning null — or rejecting —
+   * renders the picker without a preview; it never fails the operation or
+   * changes a delivery outcome.
+   */
+  renderThumbnail?(artifact: A): Promise<PickerPreview | null>;
+  /**
+   * Trims an artifact to `rect`, returning a fresh artifact (new id, new file)
+   * for the cropped pixels. Best-effort: null keeps the uncropped artifact, so
+   * a failed crop costs the user nothing but the drag.
+   */
+  cropCapture?(artifact: A, rect: CropRect): Promise<A | null>;
   queryEligibleTargets(): Promise<HerdrQueryResult>;
-  copyToClipboard(artifact: CaptureArtifact): void | Promise<void>;
-  deliver(
-    capture: CaptureArtifact,
-    target: EligibleTarget,
-  ): Promise<CaptureDeliverOutcome>;
+  /**
+   * Copies the artifact to the local clipboard for digit slot 1 (Capture's
+   * pinned Clipboard destination). Optional: Relay skips slot 1 — the clipboard
+   * is its *source* — so it registers no `1` and never triggers this.
+   */
+  copyToClipboard?(artifact: A): void | Promise<void>;
+  deliver(artifact: A, target: EligibleTarget): Promise<CaptureDeliverOutcome>;
+  /**
+   * Overrides the delivering/delivered beats so a verb can show a payload-aware
+   * mascot (Relay carries a note/ledger/portrait; issue #41). Defaults to the
+   * generic capture-delivering/capture-delivered snapshots — Capture passes
+   * neither, so its beats are unchanged. Receives the current (possibly
+   * cropped) artifact so the snapshot can reflect what's actually being sent.
+   */
+  deliveringSnapshot?(artifact: A): OverlaySnapshot;
+  deliveredSnapshot?(artifact: A, target: EligibleTarget): OverlaySnapshot;
+  /**
+   * Whether digit slot 1 is the pinned Clipboard destination (Capture) or
+   * skipped (Relay). Only affects the picker snapshot's `clipboardSlot` flag —
+   * the actual `1` shortcut is owned by the injected picker handle. Default true.
+   */
+  clipboardSlot?: boolean;
   clock?: CaptureSessionClock;
   paneQueryTimeoutMs?: number;
   deliveryAckTimeoutMs?: number;
 }
+
+/** The Capture verb's concrete instantiation of the shared session deps. */
+export type RunCaptureSessionDependencies =
+  RunSessionDependencies<CaptureArtifact>;
 
 export type RunCaptureSessionResult =
   | {
@@ -119,16 +164,17 @@ const defaultClock: CaptureSessionClock = {
   clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
 };
 
-export async function runCaptureSession(
-  dependencies: RunCaptureSessionDependencies,
+export async function runSendSession<A>(
+  dependencies: RunSessionDependencies<A>,
 ): Promise<RunCaptureSessionResult> {
   const clock = dependencies.clock ?? defaultClock;
   const paneQueryTimeoutMs =
     dependencies.paneQueryTimeoutMs ?? PANE_QUERY_TIMEOUT_MS;
   const deliveryAckTimeoutMs =
     dependencies.deliveryAckTimeoutMs ?? DELIVERY_ACK_TIMEOUT_MS;
+  const clipboardSlot = dependencies.clipboardSlot ?? true;
 
-  let artifact: CaptureArtifact;
+  let artifact: A;
   try {
     artifact = await dependencies.captureActiveWindow();
   } catch (error) {
@@ -139,6 +185,33 @@ export async function runCaptureSession(
     return { kind: "capture-failed", code: error.code, message: error.message };
   }
 
+  // Best-effort throughout: a thumbnail failure must never cost the user
+  // their capture, so this swallows everything and falls back to a
+  // preview-less picker.
+  async function renderPreviewFor(
+    forArtifact: A,
+  ): Promise<PickerPreview | null> {
+    if (!dependencies.renderThumbnail) return null;
+    try {
+      return await dependencies.renderThumbnail(forArtifact);
+    } catch {
+      return null;
+    }
+  }
+
+  async function cropCurrent(rect: CropRect): Promise<A | null> {
+    if (!dependencies.cropCapture) return null;
+    try {
+      return await dependencies.cropCapture(artifact, rect);
+    } catch {
+      return null;
+    }
+  }
+
+  const originalArtifact = artifact;
+  let preview = await renderPreviewFor(artifact);
+  const originalPreview = preview;
+
   const picker = dependencies.openPicker();
   let pickerClosed = false;
   function closePicker(): void {
@@ -147,7 +220,22 @@ export async function runCaptureSession(
     picker.close();
   }
 
-  void dependencies.showOverlay(buildCapturePickerOverlaySnapshot([]));
+  // The picker re-renders on every crop/reset, so its target list and any
+  // local-only message have to outlive the async query that produced them.
+  let currentTargets: readonly EligibleTarget[] = [];
+  let currentMessage: string | undefined;
+  function showPicker(): void {
+    void dependencies.showOverlay(
+      buildCapturePickerOverlaySnapshot(
+        currentTargets,
+        currentMessage,
+        preview,
+        clipboardSlot,
+      ),
+    );
+  }
+
+  showPicker();
 
   void queryTargetsWithDeadline(
     dependencies.queryEligibleTargets,
@@ -159,21 +247,39 @@ export async function runCaptureSession(
     if (pickerClosed) return;
 
     if (result.kind === "targets") {
+      currentTargets = result.targets;
       picker.appendTargets(result.targets);
-      void dependencies.showOverlay(
-        buildCapturePickerOverlaySnapshot(result.targets),
-      );
     } else {
-      void dependencies.showOverlay(
-        buildCapturePickerOverlaySnapshot([], result.message),
-      );
+      currentMessage = result.message;
     }
+    showPicker();
   });
 
   for (;;) {
     const selection = await picker.awaitSelection();
 
+    if (selection.kind === "crop") {
+      // Crop keeps the picker open and re-renders the preview from the
+      // cropped pixels, so the result is seen rather than assumed.
+      const cropped = await cropCurrent(selection.rect);
+      if (cropped) {
+        artifact = cropped;
+        preview = await renderPreviewFor(cropped);
+      }
+      showPicker();
+      continue;
+    }
+
     if (selection.kind === "escape") {
+      // Esc undoes a crop before it dismisses: a mis-drag that clipped the
+      // thing you wanted must cost one keypress, not the whole capture.
+      if (artifact !== originalArtifact) {
+        artifact = originalArtifact;
+        preview = originalPreview;
+        showPicker();
+        continue;
+      }
+
       closePicker();
       void dependencies.showOverlay(buildCancelledOverlaySnapshot());
       return { kind: "cancelled" };
@@ -181,13 +287,16 @@ export async function runCaptureSession(
 
     if (selection.kind === "clipboard") {
       closePicker();
-      await dependencies.copyToClipboard(artifact);
+      await dependencies.copyToClipboard?.(artifact);
       void dependencies.showOverlay(buildOverlaySnapshot("capture-delivered"));
       return { kind: "clipboard-delivered" };
     }
 
     const { target } = selection;
-    void dependencies.showOverlay(buildOverlaySnapshot("capture-delivering"));
+    void dependencies.showOverlay(
+      dependencies.deliveringSnapshot?.(artifact) ??
+        buildOverlaySnapshot("capture-delivering"),
+    );
 
     const outcome = await deliverWithDeadline(
       () => dependencies.deliver(artifact, target),
@@ -197,7 +306,10 @@ export async function runCaptureSession(
 
     if (outcome.kind === "delivered") {
       closePicker();
-      void dependencies.showOverlay(buildOverlaySnapshot("capture-delivered"));
+      void dependencies.showOverlay(
+        dependencies.deliveredSnapshot?.(artifact, target) ??
+          buildOverlaySnapshot("capture-delivered"),
+      );
       return { kind: "target-delivered", target };
     }
 
@@ -220,6 +332,17 @@ export async function runCaptureSession(
     // CaptureArtifact id, keeping the retry idempotent.
     void dependencies.showOverlay(buildOverlaySnapshot("capture-delivery-unknown"));
   }
+}
+
+/**
+ * The Capture verb's entry into the shared session. A thin concrete alias over
+ * {@link runSendSession} so existing callers and tests keep their signature;
+ * the loop itself is generic in the payload type (issue #37).
+ */
+export function runCaptureSession(
+  dependencies: RunCaptureSessionDependencies,
+): Promise<RunCaptureSessionResult> {
+  return runSendSession(dependencies);
 }
 
 function queryTargetsWithDeadline(

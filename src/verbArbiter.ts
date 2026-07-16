@@ -1,4 +1,4 @@
-export type Verb = "dictation" | "capture";
+export type Verb = "dictation" | "capture" | "relay";
 
 export interface ArbiterState {
   activeVerb: Verb | null;

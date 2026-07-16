@@ -10,6 +10,8 @@ import {
   buildOverlaySnapshot,
   buildErrorOverlaySnapshot,
   buildRefusedOverlaySnapshot,
+  buildRelayDeliveringOverlaySnapshot,
+  buildRelayNothingToSendOverlaySnapshot,
   runHappyPathOverlaySession,
 } from "../src/overlay";
 import type { EligibleTarget } from "../src/herdr";
@@ -346,4 +348,124 @@ test("runHappyPathOverlaySession advances through real phase boundaries without 
     "polish:raw transcript",
     "paste:polished transcript",
   ]);
+});
+
+test("buildCapturePickerOverlaySnapshot carries the capture preview when one exists (issue #35)", () => {
+  const preview = {
+    dataUrl: "data:image/png;base64,Zm9v",
+    windowTitle: "Mozilla Firefox — GitHub",
+  };
+  const target = {
+    target: "herdr-session-a",
+    label: "claude · idle — pane a",
+    agentStatus: "idle" as const,
+  };
+
+  // Present on every picker call site: summoning, populated, and local-only.
+  assert.deepEqual(
+    buildCapturePickerOverlaySnapshot([], undefined, preview).capturePreview,
+    preview,
+  );
+  assert.deepEqual(
+    buildCapturePickerOverlaySnapshot([target], undefined, preview).capturePreview,
+    preview,
+  );
+  assert.deepEqual(
+    buildCapturePickerOverlaySnapshot([], "Herdr isn't answering — Clipboard only, sir.", preview)
+      .capturePreview,
+    preview,
+  );
+
+  // A failed thumbnail is absent, not null — the picker just renders without it.
+  assert.equal(buildCapturePickerOverlaySnapshot([], undefined, null).capturePreview, undefined);
+  assert.equal(buildCapturePickerOverlaySnapshot([]).capturePreview, undefined);
+});
+
+test("buildCapturePickerOverlaySnapshot defaults clipboardSlot true; Relay passes false", () => {
+  // Capture: slot 1 is the pinned Clipboard destination.
+  assert.equal(buildCapturePickerOverlaySnapshot([]).clipboardSlot, true);
+  // Relay: slot 1 is skipped — the clipboard is the source.
+  assert.equal(
+    buildCapturePickerOverlaySnapshot([], undefined, undefined, false).clipboardSlot,
+    false,
+  );
+});
+
+test("buildCapturePickerOverlaySnapshot carries a relayed text preview (issue #39)", () => {
+  const textPreview = {
+    kind: "text" as const,
+    firstLines: "Traceback (most recent call last):",
+    truncated: true,
+    lineCount: 42,
+    byteSize: 1200,
+    spilled: false,
+    summary: "Text · 42 lines · 1.2 KB",
+  };
+
+  assert.deepEqual(
+    buildCapturePickerOverlaySnapshot([], undefined, textPreview, false).capturePreview,
+    textPreview,
+  );
+});
+
+test("buildRelayNothingToSendOverlaySnapshot is a truthful, un-faded nothing-to-send beat (issue #39/#41)", () => {
+  const snapshot = buildRelayNothingToSendOverlaySnapshot();
+
+  assert.equal(snapshot.phase, "relay-nothing-to-send");
+  assert.equal(snapshot.barMode, "expanded");
+  // No target list at all — never a fake success, never a picker.
+  assert.equal(snapshot.captureTargets, undefined);
+  assert.match(snapshot.statusCopy, /empty|nothing|pockets/i);
+  // Funny, never ambiguous about what happened (personality is a product property).
+  assert.ok(snapshot.mascotCopy.length > 0);
+
+  // buildOverlaySnapshot routes the phase to the same builder.
+  assert.deepEqual(buildOverlaySnapshot("relay-nothing-to-send"), snapshot);
+});
+
+test("buildRelayDeliveringOverlaySnapshot carries a payload-specific prop and copy (issue #41)", () => {
+  const note = buildRelayDeliveringOverlaySnapshot("note");
+  const ledger = buildRelayDeliveringOverlaySnapshot("ledger");
+  const portrait = buildRelayDeliveringOverlaySnapshot("portrait");
+
+  assert.equal(note.phase, "relay-delivering");
+  assert.equal(note.relayPayloadKind, "note");
+  assert.equal(note.ledgerSpill, false, "a note is not the ledger");
+
+  // The ledger prop is the spill modifier — spilled text lugs the ledger.
+  assert.equal(ledger.relayPayloadKind, "ledger");
+  assert.equal(ledger.ledgerSpill, true);
+
+  assert.equal(portrait.relayPayloadKind, "portrait");
+
+  // Each names what's being carried, so the payload is legible in copy too.
+  assert.notEqual(note.statusCopy, ledger.statusCopy);
+  assert.notEqual(ledger.statusCopy, portrait.statusCopy);
+});
+
+test("overlay html gates the capture preview on the picker state and contains it in its box", () => {
+  const html = readFileSync(path.join(rootDir, "public", "overlay.html"), "utf8");
+
+  assert.match(html, /id="capture-preview"/);
+  assert.match(html, /id="capture-preview-image"/);
+  assert.match(html, /id="capture-preview-title"/);
+  // Hidden by default, shown only for the picker phase — never leaks into the
+  // delivering/delivered/failed beats.
+  assert.match(html, /#capture-preview\s*\{[\s\S]*?display:\s*none/);
+  assert.match(html, /\.mf-state-capture-picker #capture-preview\.has-preview\s*\{[\s\S]*?display:\s*flex/);
+  // Letterboxed, never stretched.
+  assert.match(html, /#capture-preview-image[\s\S]*?object-fit:\s*contain/);
+});
+
+test("overlay renderer populates and clears the capture preview", () => {
+  const renderer = readFileSync(
+    path.join(rootDir, "public", "overlay-renderer.js"),
+    "utf8",
+  );
+
+  assert.match(renderer, /snapshot\.capturePreview/);
+  assert.match(renderer, /previewImageEl\.src\s*=\s*preview\.dataUrl/);
+  assert.match(renderer, /previewTitleEl\.textContent\s*=\s*preview\.windowTitle/);
+  // Cleared rather than left holding a stale capture's data URL.
+  assert.match(renderer, /previewImageEl\.removeAttribute\("src"\)/);
 });
