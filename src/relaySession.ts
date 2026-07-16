@@ -14,6 +14,7 @@ import { captureArtifactToPayload, type SendPayload } from "./deliver";
 import type { EligibleTarget, HerdrQueryResult } from "./herdr";
 import {
   buildOverlaySnapshot,
+  buildRelayCopyKeptOverlaySnapshot,
   buildRelayDeliveringOverlaySnapshot,
   buildRelayNothingToSendOverlaySnapshot,
   type OverlaySnapshot,
@@ -40,11 +41,15 @@ function relayPayloadKind(
 // → Ctrl+V dance for copied code, stack traces, URLs, and terminal output.
 //
 // This is deliberately a THIN wrapper around the shared send session (#37): it
-// reads + classifies the clipboard (#38), handles the two states the shared
-// loop has no concept of (an empty clipboard, and Relay's Clipboard-less
-// picker), and otherwise hands the picker → select → deliver loop straight to
-// runSendSession. Relay differs from Capture only in what flows and in a
-// deliberately wasted slot 1 — not in the machinery, so it forks none of it.
+// reads + classifies the clipboard (#38), handles the one state the shared
+// loop has no concept of (an empty clipboard), and otherwise hands the
+// picker → select → deliver loop straight to runSendSession. Relay differs
+// from Capture only in what flows — not in the machinery, so it forks none of
+// it. Slot 1 is "1 Clipboard" = keep the copy, stop here (issue #64): with
+// copy-selection-first on (a main.ts concern — this session never sees the
+// flag), Ctrl+Alt+C already performed the copy before the picker opened, so
+// slot 1 is the affirmative local ending — select → hotkey → 1 replaces plain
+// Ctrl+C while 2–9 still reach the panes.
 
 /**
  * What flows through the shared loop for Relay. Text carries its inline/spill
@@ -67,20 +72,27 @@ export type RelayArtifact =
 
 export type RunRelaySessionResult =
   | { readonly kind: "nothing-to-send" }
-  | RunCaptureSessionResult;
+  /**
+   * Slot 1: the copy was kept — the affirmative local ending (issue #64).
+   * Distinct from a bare `clipboard-delivered` in logs, mirroring Herald's
+   * `pasted-here` mapping: slot 1 delivered nothing anywhere, it stopped here.
+   */
+  | { readonly kind: "copy-kept" }
+  | Exclude<RunCaptureSessionResult, { kind: "clipboard-delivered" }>;
 
 /**
- * Herdr-down copy for Relay. Capture degrades to "Clipboard + Esc", but Relay's
- * *source* is the clipboard and its slot 1 is skipped — so there is genuinely
- * nowhere left to offer. Never Herdr's own "— Clipboard only, sir." messages:
- * those promise a fallback Relay does not have (CONTEXT.md).
+ * Herdr-down copy for Relay. With slot 1 returned (#64), a down Herdr degrades
+ * to "Clipboard + Esc" exactly like Capture — the copy is already safe on the
+ * clipboard, and the message says so. Never "nowhere to send it" (false now),
+ * and never Herdr's own "— Clipboard only, sir." messages: Relay's slot 1
+ * keeps a copy rather than making one, so it words the fallback itself.
  */
 export const RELAY_HERDR_DOWN_MESSAGE =
-  "Herdr isn't answering — nowhere to send it, sir.";
+  "Herdr isn't answering — your copy is safe on the clipboard, sir.";
 
-/** Herdr is up, but has no agent pane to send to — still nowhere to send it. */
+/** Herdr is up, but has no agent pane to offer — the copy is still safe. */
 export const RELAY_NO_PANES_MESSAGE =
-  "No agent panes open — nowhere to send it, sir.";
+  "No agent panes open — your copy is on the clipboard, sir.";
 
 export interface RunRelaySessionDependencies {
   /** Reads + classifies the Windows clipboard once (issue #38). */
@@ -114,7 +126,7 @@ export async function runRelaySession(
 
   const relayArtifact = toRelayArtifact(source);
 
-  return runSendSession<RelayArtifact>({
+  const result = await runSendSession<RelayArtifact>({
     showOverlay: deps.showOverlay,
     // The clipboard was already read above; the shared loop's "grab" step just
     // hands back what we classified. It never fails — the empty/read outcomes
@@ -144,14 +156,28 @@ export async function runRelaySession(
       relayPayloadKind(artifact) === "portrait" && target.agentStatus === "working"
         ? buildOverlaySnapshot("relay-delivered-busy")
         : buildOverlaySnapshot("relay-delivered"),
-    // Slot 1 is skipped for Relay: the clipboard is the source, not a
-    // destination — but panes still occupy digits 2–9 (CONTEXT.md).
-    clipboardSlot: false,
+    // Slot 1 (issue #64): "1 Clipboard" = keep the copy, stop here. No
+    // slotOneLabel — the renderer's "Clipboard" default, byte-identical to
+    // Capture's — and no clipboard-write dependency at all: the content is
+    // already on the clipboard (the user's own Ctrl+C, or the copy main.ts
+    // performed before this session opened), whatever the source kind, so
+    // writing anything here could only clobber it — a relayed image would be
+    // re-encoded over itself. Slot 1 writes nothing.
+    clipboardSlot: true,
+    clipboardDeliveredSnapshot: () => buildRelayCopyKeptOverlaySnapshot(),
     again: deps.again,
     clock: deps.clock,
     paneQueryTimeoutMs: deps.paneQueryTimeoutMs,
     deliveryAckTimeoutMs: deps.deliveryAckTimeoutMs,
   });
+
+  // The kept-copy ending gets its own result kind for logs (Herald's
+  // pasted-here precedent): "clipboard-delivered" would read as a write that
+  // never happened — slot 1 kept the copy, it delivered nothing.
+  if (result.kind === "clipboard-delivered") {
+    return { kind: "copy-kept" };
+  }
+  return result;
 }
 
 function toRelayArtifact(
@@ -187,11 +213,13 @@ async function cropRelayImage(
 
 /**
  * Maps Herdr's query result into Relay's picker states. Anything that isn't a
- * non-empty target list becomes a truthful "nowhere to send it" message so the
- * picker never sticks on the "summoning…" beat — and never repeats Herdr's own
- * "— Clipboard only" messages, which promise a fallback Relay lacks. The
- * `incompatible` message makes no such promise (and is actionable), so it is
- * kept verbatim. The synthesized `code` for the no-panes case is internal only:
+ * non-empty target list becomes Relay's own truthful message — the copy is
+ * safe on the clipboard, and slot 1 stays usable through all of them (#64) —
+ * so the picker never sticks on the "summoning…" beat. Herdr's "— Clipboard
+ * only" messages are still never repeated: Relay's slot 1 *keeps* a copy
+ * rather than making one, so Relay words the fallback itself. The
+ * `incompatible` message is actionable and promises nothing, so it is kept
+ * verbatim. The synthesized `code` for the no-panes case is internal only:
  * the session renders the message, never the code.
  */
 function toRelayQueryResult(result: HerdrQueryResult): HerdrQueryResult {

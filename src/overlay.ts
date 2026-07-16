@@ -70,10 +70,11 @@ export interface OverlaySnapshot {
   /** True only during the brief pre-target "summoning" sub-beat of the picker. */
   pickerSummoning?: boolean;
   /**
-   * Whether digit slot 1 renders the pinned Clipboard destination. True for
-   * Capture; false for Relay, where the clipboard is the *source* so slot 1 is
-   * deliberately skipped — panes still occupy 2–9 to keep the muscle-memory
-   * alignment ("2 is always the same pane" in both verbs; CONTEXT.md).
+   * Whether digit slot 1 renders the pinned local outcome. True for every verb
+   * since #64 — slot 1 is always "end this locally, no pane": Capture copies
+   * the grab, Relay keeps the copy Ctrl+Alt+C already made, Herald pastes here
+   * (CONTEXT.md, "Slot 1 is the local outcome in every verb"). Panes occupy
+   * 2–9 either way; `false` remains renderable but no verb passes it today.
    */
   clipboardSlot?: boolean;
   /**
@@ -355,8 +356,8 @@ export function buildCapturePickerOverlaySnapshot(
  * The Relay "nothing to send" beat: the clipboard was empty, so there is no
  * target picker at all — a truthful, un-faded state, not a misleading success
  * (CONTEXT.md — Relay never fakes a send). He pats his pockets and finds
- * nothing. Distinct from the Herdr-down "nowhere to send it" state
- * (relay-no-destination): there he's holding something, here he has nothing.
+ * nothing. Distinct from the Herdr-down state: there he's holding something
+ * (safe on the clipboard, slot 1 usable — #64), here he has nothing.
  */
 export function buildRelayNothingToSendOverlaySnapshot(): OverlaySnapshot {
   return {
@@ -365,6 +366,25 @@ export function buildRelayNothingToSendOverlaySnapshot(): OverlaySnapshot {
     waveformVisible: false,
     mascotCopy: MASCOT_COPY["relay-nothing-to-send"],
     statusCopy: STATUS_COPY["relay-nothing-to-send"],
+  };
+}
+
+/** Relay slot 1 (issue #64): the kept-copy success beat's status line. */
+export const RELAY_COPY_KEPT_STATUS_COPY =
+  "Copied, sir — it's on your clipboard.";
+
+/**
+ * Relay's slot-1 ending (issue #64): "1 Clipboard" = keep the copy, stop here.
+ * An affirmative local ending — a success beat, never the cancelled beat Esc
+ * gives — so it reuses dictation's existing `done` phase (top hat bow;
+ * Herald's slot-1 precedent) with Relay-specific status copy naming the
+ * outcome. No new mascot states or art; `done` already sits in main.ts's
+ * window-restore set, so the picker-grown window shrinks back on it.
+ */
+export function buildRelayCopyKeptOverlaySnapshot(): OverlaySnapshot {
+  return {
+    ...buildOverlaySnapshot("done"),
+    statusCopy: RELAY_COPY_KEPT_STATUS_COPY,
   };
 }
 

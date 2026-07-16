@@ -50,23 +50,9 @@ export function capturePickerWindowHeight(
   );
 }
 
-/**
- * Relay picker height (issue #39). Slot 1 is *skipped* — the clipboard is the
- * source, so there's no Clipboard destination to pin — but its row is still
- * reserved so panes stay on digits 2–9, keeping the muscle-memory alignment
- * with Capture ("2 is always the same pane"; CONTEXT.md). Reserving the skipped
- * slot is exactly what {@link capturePickerEntryCount}'s leading `1` already
- * counts, so the height is a pure function of the same entry count — extended
- * for the skipped slot rather than hardcoding a new number. Identical to
- * Capture's for the same target count, by construction.
- */
-export function relayPickerWindowHeight(
-  targetCount: number,
-  hasPreview = false,
-  hasAgainRow = false,
-): number {
-  return capturePickerWindowHeight(targetCount, hasPreview, hasAgainRow);
-}
+// (The former relayPickerWindowHeight alias — Relay's "slot 1 skipped but its
+// row reserved" height from #39 — is gone: since #64 slot 1 is the local
+// outcome in every verb, so every picker is capturePickerWindowHeight tall.)
 
 /**
  * Grows the resting window bounds upward: the bottom edge and horizontal

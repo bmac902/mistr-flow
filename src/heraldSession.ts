@@ -37,11 +37,11 @@ import {
 export const HERALD_SLOT_ONE_LABEL = "Paste here";
 
 /**
- * Herdr-down / no-panes copy for Herald. Unlike Relay — whose slot 1 is
- * skipped, leaving genuinely nowhere to send — Herald's slot 1 ("Paste here")
+ * Herdr-down / no-panes copy for Herald. Herald's slot 1 ("Paste here")
  * survives every Herdr failure, so the dictation is never lost. The copy says
  * so; never Herdr's own "— Clipboard only, sir." messages, which name a slot
- * Herald doesn't have.
+ * Herald doesn't have. (Relay's slot 1 survives the same failures since #64,
+ * with its own copy-is-safe wording — see relaySession.ts.)
  */
 export const HERALD_HERDR_DOWN_MESSAGE =
   "Herdr isn't answering — I can still paste it here, sir.";

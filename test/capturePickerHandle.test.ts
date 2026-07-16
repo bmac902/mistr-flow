@@ -341,7 +341,31 @@ test("a click on a slot the current render never populated is dropped — never 
   assert.deepEqual(await selection, { kind: "target", target: TARGET_A });
 });
 
-test("Relay picker: a clipboard click is dropped — Relay renders no slot 1", async () => {
+test("Relay picker: a slot-1 click resolves the clipboard event — slot 1 returned in #64", async () => {
+  // Was #61's "a clipboard click is dropped — Relay renders no slot 1". Slot 1
+  // is back ("1 Clipboard" = keep the copy, stop here), so Relay's picker is
+  // built WITH the slot and a click on it is a press of `1`.
+  const shortcuts = makeFakeShortcuts();
+  let click: ((c: PickerRowClick) => void) | null = null;
+  const handle = createCapturePickerHandle({
+    shortcuts,
+    includeClipboardSlot: true,
+    clickSource: (cb) => {
+      click = cb;
+      return () => {};
+    },
+  });
+  handle.appendTargets([TARGET_A]);
+
+  const selection = handle.awaitSelection();
+  click!({ kind: "clipboard" });
+
+  assert.deepEqual(await selection, { kind: "clipboard" });
+});
+
+test("a clipboard click into a picker built without slot 1 is dropped — no such row exists", async () => {
+  // No verb builds this picker since #64, but the option remains the handle's
+  // contract: a click resolves only against rows THIS instance registered.
   const shortcuts = makeFakeShortcuts();
   let click: ((c: PickerRowClick) => void) | null = null;
   const handle = createCapturePickerHandle({
@@ -417,23 +441,27 @@ test("a picker with no clickSource still works", async () => {
   assert.deepEqual(await selection, { kind: "escape" });
 });
 
-// --- Relay: slot 1 skipped (issue #39) -----------------------------------
+// --- includeClipboardSlot: false — the option's contract ------------------
+// (Built for Relay's original slot-skipping in #39; since #64 slot 1 is the
+// local outcome in EVERY verb, so no verb builds a slot-1-less picker today.
+// The option stays generic machinery, pinned here.)
 
-test("Relay picker (includeClipboardSlot: false) registers only Esc on open — no slot 1", () => {
+test("includeClipboardSlot: false registers only Esc on open — no slot 1", () => {
   const shortcuts = makeFakeShortcuts();
   createCapturePickerHandle({ shortcuts, includeClipboardSlot: false });
 
   assert.deepEqual(shortcuts.registeredAccelerators(), ["Escape"]);
 });
 
-test("Relay picker still puts panes on digits 2-9 — slot 1 is skipped, not compacted", () => {
+test("includeClipboardSlot: false still puts panes on digits 2-9 — slot 1 is reserved, not compacted", () => {
   const shortcuts = makeFakeShortcuts();
   const handle = createCapturePickerHandle({ shortcuts, includeClipboardSlot: false });
 
   handle.appendTargets([TARGET_A, TARGET_B]);
 
   // No "1": pane A on digit 2, pane B on digit 3 — panes are NOT pulled down
-  // to slot 1 (CONTEXT.md: the digit is deliberately wasted).
+  // to slot 1, so "2 is always the same pane" would hold even for a picker
+  // built without the slot.
   assert.deepEqual(shortcuts.registeredAccelerators().sort(), ["2", "3", "Escape"]);
 });
 
@@ -441,18 +469,18 @@ test("the same pane sits on the same digit in the Capture and Relay pickers", ()
   const captureShortcuts = makeFakeShortcuts();
   const relayShortcuts = makeFakeShortcuts();
 
+  // Since #64 both verbs build the identical picker: slot 1 (the local
+  // outcome) plus panes on 2–9 — the muscle-memory guarantee ("2 is always
+  // the same pane") is now alignment by construction.
   const captureHandle = createCapturePickerHandle({ shortcuts: captureShortcuts });
   const relayHandle = createCapturePickerHandle({
     shortcuts: relayShortcuts,
-    includeClipboardSlot: false,
+    includeClipboardSlot: true,
   });
 
   captureHandle.appendTargets([TARGET_A, TARGET_B]);
   relayHandle.appendTargets([TARGET_A, TARGET_B]);
 
-  // Digit 2 resolves to TARGET_A in BOTH verbs — the muscle-memory guarantee
-  // ("2 is always the same pane") holds because Relay wastes slot 1 rather
-  // than compacting panes down to it.
   const capturePick = captureHandle.awaitSelection();
   captureShortcuts.press("2");
   const relayPick = relayHandle.awaitSelection();
@@ -464,7 +492,7 @@ test("the same pane sits on the same digit in the Capture and Relay pickers", ()
   });
 });
 
-test("Relay picker: pressing 1 is a harmless no-op (never registered)", () => {
+test("includeClipboardSlot: false — pressing 1 is a harmless no-op (never registered)", () => {
   const shortcuts = makeFakeShortcuts();
   createCapturePickerHandle({ shortcuts, includeClipboardSlot: false });
 

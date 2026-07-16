@@ -7,7 +7,6 @@ import {
   CAPTURE_PREVIEW_BLOCK_HEIGHT,
   capturePickerEntryCount,
   capturePickerWindowHeight,
-  relayPickerWindowHeight,
   resolveGrownWindowBounds,
 } from "../src/captureWindowBounds";
 import { OVERLAY_WINDOW_HEIGHT } from "../src/overlayPosition";
@@ -46,45 +45,18 @@ test("capturePickerWindowHeight adds the preview block only when a preview exist
   assert.equal(capturePickerWindowHeight(2, false), capturePickerWindowHeight(2));
 });
 
-test("relayPickerWindowHeight reserves the skipped slot 1 — identical to Capture's height", () => {
-  // Relay skips slot 1 (clipboard is the source), but its row is still
-  // reserved so panes stay on digits 2–9. So the height accounts for the
-  // skipped slot exactly as Capture accounts for the Clipboard slot — same
-  // entry count, same height (CONTEXT.md).
-  for (const targets of [0, 1, 3, 8, 20]) {
-    assert.equal(relayPickerWindowHeight(targets), capturePickerWindowHeight(targets));
-  }
-});
-
-test("relayPickerWindowHeight adds the preview block only when a preview exists", () => {
-  assert.equal(
-    relayPickerWindowHeight(2, true),
-    relayPickerWindowHeight(2) + CAPTURE_PREVIEW_BLOCK_HEIGHT,
-  );
-  assert.equal(relayPickerWindowHeight(2, false), relayPickerWindowHeight(2));
-});
-
-test("relayPickerWindowHeight accounts for the skipped slot 1 in the entry count", () => {
-  // 3 panes → 4 rows tall (skipped slot 1 + 3 panes), not 3 — the skipped
-  // slot is extended into the height, never hardcoded away.
-  assert.equal(
-    relayPickerWindowHeight(3),
-    OVERLAY_WINDOW_HEIGHT +
-      CAPTURE_PICKER_LIST_PADDING +
-      capturePickerEntryCount(3) * CAPTURE_PICKER_ENTRY_HEIGHT,
-  );
-});
-
-test("the again-row adds one entry row to both pickers' heights (issue #58)", () => {
+test("the again-row adds one entry row to the picker height (issue #58)", () => {
   // The row is a real list entry from the picker's first frame, so the grown
   // window must budget for it — otherwise a full picker clips its last row.
+  // One height serves every verb: since #64 slot 1 is the local outcome in
+  // all of them, so the former Relay-specific alias is gone.
   assert.equal(
     capturePickerWindowHeight(2, false, true),
     capturePickerWindowHeight(2) + CAPTURE_PICKER_ENTRY_HEIGHT,
   );
   assert.equal(
-    relayPickerWindowHeight(2, true, true),
-    relayPickerWindowHeight(2, true) + CAPTURE_PICKER_ENTRY_HEIGHT,
+    capturePickerWindowHeight(2, true, true),
+    capturePickerWindowHeight(2, true) + CAPTURE_PICKER_ENTRY_HEIGHT,
   );
   // Defaults to no row, so existing callers keep their height.
   assert.equal(capturePickerWindowHeight(2, false, false), capturePickerWindowHeight(2));
