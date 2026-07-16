@@ -1,0 +1,290 @@
+import type { EligibleTarget } from "./herdr";
+
+export type OverlayPhase =
+  | "idle"
+  | "listening"
+  | "recording"
+  | "cancelled"
+  | "processing"
+  | "polishing"
+  | "done"
+  | "error"
+  | "refused"
+  | "capture-picker"
+  | "capture-delivering"
+  | "capture-delivered"
+  | "capture-delivery-failed"
+  | "capture-delivery-unknown"
+  | "capture-framing"
+  | "relay-nothing-to-send"
+  | "relay-no-destination"
+  | "relay-delivering"
+  | "relay-delivered"
+  | "relay-delivered-busy";
+
+export interface OverlaySnapshot {
+  phase: OverlayPhase;
+  barMode: "peek" | "expanded";
+  waveformVisible: boolean;
+  mascotCopy: string;
+  statusCopy: string;
+  toastCopy?: string;
+  /** Eligible-target entries for the capture picker (slot 1 Clipboard is implicit/pinned). */
+  captureTargets?: readonly EligibleTarget[];
+  /** True only during the brief pre-target "summoning" sub-beat of capture-picker. */
+  pickerSummoning?: boolean;
+  /** Rides capture-picker / relay-delivering as a modifier: clipboard text spilled to a file. */
+  ledgerSpill?: boolean;
+  /** Which prop relay-delivering shows: a folded note, the ledger, or a framed portrait. */
+  relayPayloadKind?: "note" | "ledger" | "portrait";
+}
+
+const STATUS_COPY: Record<OverlayPhase, string> = {
+  idle: "Ready when you are, sir.",
+  listening: "Listening…",
+  recording: "Go on, I’m taking notes…",
+  cancelled: "Very well. We shall pretend that never happened.",
+  processing: "Tidying your ramble…",
+  polishing: "Ahem. Much better…",
+  done: "Pasted, sir.",
+  error: "Mistr Flo tripped over the microphone.",
+  refused: "One thing at a time, sir.",
+  "capture-picker": "Pick your target, sir.",
+  "capture-delivering": "Delivering to the pane…",
+  "capture-delivered": "Delivered, sir.",
+  "capture-delivery-failed": "That pane didn't take it.",
+  "capture-delivery-unknown": "Not sure that landed — try again?",
+  "capture-framing": "Say when, sir.",
+  "relay-nothing-to-send": "Your pockets are empty, sir.",
+  "relay-no-destination": "I have it, sir. There's no one to give it to.",
+  "relay-delivering": "Delivering to the pane…",
+  "relay-delivered": "Delivered, sir.",
+  "relay-delivered-busy": "Delivered, sir — though he's rather engrossed.",
+};
+
+const RELAY_DELIVERING_PAYLOAD_COPY: Record<"note" | "ledger" | "portrait", string> = {
+  note: "Conveying your note, sir…",
+  ledger: "Still conveying that ledger, sir…",
+  portrait: "Conveying the portrait, sir…",
+};
+
+const SUMMONING_STATUS_COPY = "Summoning targets…";
+
+const MASCOT_COPY: Record<OverlayPhase, string> = {
+  idle: "hat + eyes",
+  listening: "tips top hat",
+  recording: "moustache wiggle",
+  cancelled: "exits stage left",
+  processing: "cane twirl",
+  polishing: "brushes sentence ribbon",
+  done: "top hat bow",
+  error: "top hat askew",
+  refused: "wags a scolding finger",
+  "capture-picker": "counts on gloved fingers",
+  "capture-delivering": "leans toward the pane",
+  "capture-delivered": "tips hat toward the pane",
+  "capture-delivery-failed": "hat droops",
+  "capture-delivery-unknown": "tilts head, puzzled",
+  "capture-framing": "raises a monocle to appraise the crop",
+  "relay-nothing-to-send": "pats his pockets, finds nothing",
+  "relay-no-destination": "taps the bell at an empty desk",
+  "relay-delivering": "leans toward the pane",
+  "relay-delivered": "tips hat toward the pane",
+  "relay-delivered-busy": "tips hat, glances sideways at a busy pane",
+};
+
+export interface HappyPathOverlayDependencies {
+  showOverlay(snapshot: OverlaySnapshot): void | Promise<void>;
+  playBeep(): void | Promise<void>;
+  recordAudio(): Promise<Buffer>;
+  transcribe(audioBuffer: Buffer): Promise<string>;
+  polish(rawTranscript: string): Promise<string>;
+  pasteText(text: string): Promise<void> | void;
+}
+
+export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
+  switch (phase) {
+    case "idle":
+      return {
+        phase,
+        barMode: "peek",
+        waveformVisible: false,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
+    case "listening":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: true,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
+    case "recording":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: true,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
+    case "cancelled":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: false,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
+    case "processing":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: false,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
+    case "polishing":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: false,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
+    case "done":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: false,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
+    case "error":
+      return buildErrorOverlaySnapshot();
+    case "refused":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: false,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
+    case "capture-picker":
+      return buildCapturePickerOverlaySnapshot([]);
+    case "capture-delivering":
+    case "capture-delivered":
+    case "capture-delivery-unknown":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: false,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
+    case "capture-delivery-failed":
+      return buildCaptureDeliveryFailedOverlaySnapshot();
+    case "capture-framing":
+    case "relay-nothing-to-send":
+    case "relay-no-destination":
+    case "relay-delivered":
+    case "relay-delivered-busy":
+      return {
+        phase,
+        barMode: "expanded",
+        waveformVisible: false,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
+    case "relay-delivering":
+      return buildRelayDeliveringOverlaySnapshot("note");
+  }
+}
+
+/**
+ * The picker phase covers both the two-phase-render "summoning" beat (no
+ * targets yet, no message) and the populated/local-only states — same
+ * phase, different copy, so a late Herdr response only ever changes copy,
+ * never resurrects a closed picker.
+ */
+export function buildCapturePickerOverlaySnapshot(
+  targets: readonly EligibleTarget[],
+  message?: string,
+): OverlaySnapshot {
+  const summoning = targets.length === 0 && message === undefined;
+  return {
+    phase: "capture-picker",
+    barMode: "expanded",
+    waveformVisible: false,
+    mascotCopy: MASCOT_COPY["capture-picker"],
+    statusCopy: summoning ? SUMMONING_STATUS_COPY : STATUS_COPY["capture-picker"],
+    toastCopy: message,
+    captureTargets: targets,
+    pickerSummoning: summoning,
+  };
+}
+
+export function buildRelayDeliveringOverlaySnapshot(
+  payloadKind: "note" | "ledger" | "portrait",
+): OverlaySnapshot {
+  return {
+    phase: "relay-delivering",
+    barMode: "expanded",
+    waveformVisible: false,
+    mascotCopy: MASCOT_COPY["relay-delivering"],
+    statusCopy: RELAY_DELIVERING_PAYLOAD_COPY[payloadKind],
+    relayPayloadKind: payloadKind,
+  };
+}
+
+export function buildCaptureDeliveryFailedOverlaySnapshot(
+  message?: string,
+): OverlaySnapshot {
+  return {
+    phase: "capture-delivery-failed",
+    barMode: "expanded",
+    waveformVisible: false,
+    mascotCopy: MASCOT_COPY["capture-delivery-failed"],
+    statusCopy: STATUS_COPY["capture-delivery-failed"],
+    toastCopy: message,
+  };
+}
+
+export function buildErrorOverlaySnapshot(
+  toastCopy?: string,
+): OverlaySnapshot {
+  return {
+    phase: "error",
+    barMode: "expanded",
+    waveformVisible: false,
+    mascotCopy: MASCOT_COPY.error,
+    statusCopy: STATUS_COPY.error,
+    toastCopy,
+  };
+}
+
+export function buildCancelledOverlaySnapshot(): OverlaySnapshot {
+  return buildOverlaySnapshot("cancelled");
+}
+
+export function buildRefusedOverlaySnapshot(): OverlaySnapshot {
+  return buildOverlaySnapshot("refused");
+}
+
+export async function runHappyPathOverlaySession(
+  dependencies: HappyPathOverlayDependencies,
+): Promise<void> {
+  void dependencies.showOverlay(buildOverlaySnapshot("listening"));
+  void dependencies.playBeep();
+  void dependencies.showOverlay(buildOverlaySnapshot("recording"));
+
+  const audioBuffer = await dependencies.recordAudio();
+  void dependencies.showOverlay(buildOverlaySnapshot("processing"));
+
+  const rawTranscript = await dependencies.transcribe(audioBuffer);
+  void dependencies.showOverlay(buildOverlaySnapshot("polishing"));
+
+  const polishedText = await dependencies.polish(rawTranscript);
+  await dependencies.pasteText(polishedText);
+  void dependencies.showOverlay(buildOverlaySnapshot("done"));
+}
