@@ -77,34 +77,42 @@ body {
 }
 .mf-recording-only,
 .mf-polishing-only,
+.mf-refused-only,
 .mf-summon-only,
 .mf-picker-rest-only,
 .mf-delivering-only,
 .mf-delivery-failed-only,
-.mf-refused-only,
 .mf-pocket-only,
 .mf-bell-only,
 .mf-ledger-only,
 .mf-note-only,
 .mf-portrait-only,
 .mf-monocle-only,
-.mf-busy-only {
+.mf-busy-only,
+.mf-watch-only,
+.mf-folder-only,
+.mf-folders-only,
+.mf-behind-arm-only {
   display: none;
 }
 .mf-state-recording .mf-recording-only,
 .mf-state-polishing .mf-polishing-only,
+.mf-state-refused .mf-refused-only,
 .mf-state-capture-picker.mf-picker-summoning .mf-summon-only,
 .mf-state-capture-picker:not(.mf-picker-summoning) .mf-picker-rest-only,
 .mf-state-capture-delivering .mf-delivering-only,
 .mf-state-capture-delivery-failed .mf-delivery-failed-only,
-.mf-state-refused .mf-refused-only,
 .mf-state-relay-nothing-to-send .mf-pocket-only,
 .mf-state-relay-no-destination .mf-bell-only,
 .mf-ledger-spill .mf-ledger-only,
 .mf-state-relay-delivering.mf-payload-note .mf-note-only,
 .mf-state-relay-delivering.mf-payload-portrait .mf-portrait-only,
 .mf-state-capture-framing .mf-monocle-only,
-.mf-state-relay-delivered-busy .mf-busy-only {
+.mf-state-relay-delivered-busy .mf-busy-only,
+.mf-state-fleet-unknown .mf-watch-only,
+.mf-state-fleet-2-3-blocked .mf-folder-only,
+.mf-state-fleet-4-plus-blocked .mf-folders-only,
+.mf-state-fleet-4-plus-blocked .mf-behind-arm-only {
   display: inline;
 }
 #mistr-flow-card {
@@ -588,8 +596,6 @@ body {
   50%       { transform: rotate(6deg); }
 }
 
-/* ── Relay / framing keyframes (issue #41) ────────────────────────────────── */
-
 @keyframes mf-pocket-pat {
   0%, 10%   { transform: rotate(0deg) translate(0,0); }
   30%       { transform: rotate(50deg) translate(-3px,10px); }
@@ -663,6 +669,31 @@ body {
   50%       { transform: rotate(-10deg) translateX(3px); }
 }
 
+@keyframes mf-watch-raise {
+  0%, 10%   { transform: rotate(0deg) translate(0,0); }
+  40%, 100% { transform: rotate(-72deg) translate(-3px,-9px); }
+}
+
+@keyframes mf-look-around {
+  0%, 100%  { transform: rotate(-4deg); }
+  50%       { transform: rotate(4deg); }
+}
+
+@keyframes mf-alert-turn {
+  0%, 15%   { transform: rotate(0deg); }
+  100%      { transform: rotate(3deg); }
+}
+
+@keyframes mf-eyes-forward {
+  0%, 20%   { transform: translateX(0); }
+  60%, 100% { transform: translateX(1.2px); }
+}
+
+@keyframes mf-brace-shift {
+  0%, 100%  { transform: translateX(-1px) rotate(-1deg); }
+  50%       { transform: translateX(1px) rotate(1deg); }
+}
+
 /* ── Base transform properties ────────────────────────────────────────────── */
 /* Applied unconditionally so animations have correct origins. */
 
@@ -714,32 +745,6 @@ body {
 .mf-state-idle .mf-eyes {
   animation: mf-blink 5s ease-in-out infinite;
 }
-
-/* ── Fleet posture (PRD #44) — PLACEHOLDER visuals + data-phase hooks ──────── */
-/*
- * Idle-only ambient postures for the blocked-count tiers and the honest
- * "can't see the fleet" state. These are deliberately un-bespoke: the mascot
- * keeps breathing/blinking (never frozen) and each phase carries a distinct
- * data-phase / .mf-state-fleet-* hook for the Claude Design butler postures to
- * be swapped in later. A slight upward hold hints at escalating attentiveness
- * without hand-authoring art. Tier 0 is the plain .mf-state-idle bar.
- */
-.mf-state-fleet-1 .mf-body,
-.mf-state-fleet-2-3 .mf-body,
-.mf-state-fleet-4-plus .mf-body,
-.mf-state-fleet-unknown .mf-body {
-  animation: mf-breathe 3.8s ease-in-out infinite;
-}
-.mf-state-fleet-1 .mf-eyes,
-.mf-state-fleet-2-3 .mf-eyes,
-.mf-state-fleet-4-plus .mf-eyes,
-.mf-state-fleet-unknown .mf-eyes {
-  animation: mf-blink 5s ease-in-out infinite;
-}
-.mf-state-fleet-1 .mf-hat { transform: translateY(-1px); }
-.mf-state-fleet-2-3 .mf-hat { transform: translateY(-2px); }
-.mf-state-fleet-4-plus .mf-hat { transform: translateY(-3px); }
-.mf-state-fleet-unknown .mf-body { transform: rotate(-2deg); }
 
 /* ── State: listening ─────────────────────────────────────────────────────── */
 
@@ -874,7 +879,7 @@ body {
   animation: mf-facepalm 2.2s ease-in-out infinite;
 }
 
-/* ── State: relay-nothing-to-send (issue #41) ─────────────────────────────── */
+/* ── State: relay-nothing-to-send ─────────────────────────────────────────── */
 
 .mf-state-relay-nothing-to-send .mf-body {
   animation: mf-disappoint 900ms ease-in forwards;
@@ -898,7 +903,7 @@ body {
   animation: mf-ding-ripple 900ms ease-out forwards;
 }
 
-/* ── Modifier: ledger spill (rides capture-picker / relay-delivering) ─────── */
+/* ── Modifier: ledger spill (rides capture-picker / relay-delivering) ────── */
 
 .mf-ledger-spill .mf-body {
   animation: mf-ledger-stagger 1.8s ease-in-out infinite;
@@ -925,7 +930,7 @@ body {
   animation: mf-ledger-hug 1.8s ease-in-out infinite;
 }
 
-/* ── State: capture-framing (crop drag) ───────────────────────────────────── */
+/* ── State: capture-framing ───────────────────────────────────────────────── */
 
 .mf-state-capture-framing .mf-body {
   animation: mf-appraise-tilt 3s ease-in-out infinite alternate;
@@ -934,7 +939,7 @@ body {
   animation: mf-monocle-raise 900ms ease-out forwards;
 }
 
-/* ── State: relay-delivered-busy (extends relay-delivered visuals) ────────── */
+/* ── State: relay-delivered-busy (extends relay-delivered visuals) ───────── */
 
 .mf-state-relay-delivered-busy .mf-hat {
   animation: mf-tiphat-toward 520ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
@@ -945,11 +950,41 @@ body {
 .mf-state-relay-delivered-busy .mf-eyes {
   animation: mf-glance-aside 2.4s ease-in-out infinite;
 }
-.mf-state-relay-delivered .mf-hat {
-  animation: mf-tiphat-toward 520ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+
+/* ── State: fleet-unknown ─────────────────────────────────────────────────── */
+
+.mf-state-fleet-unknown .mf-body {
+  animation: mf-look-around 2.6s ease-in-out infinite;
 }
-.mf-state-relay-delivered .mf-body {
-  animation: mf-lean-deliver 520ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+.mf-state-fleet-unknown .mf-arm {
+  animation: mf-watch-raise 900ms ease-out forwards;
+}
+
+/* ── State: fleet-0-blocked ────────────────────────────────────────────────── */
+
+.mf-state-fleet-0-blocked .mf-body {
+  animation: mf-breathe 3.8s ease-in-out infinite;
+}
+.mf-state-fleet-0-blocked .mf-eyes {
+  animation: mf-blink 5s ease-in-out infinite;
+}
+
+/* ── State: fleet-1-blocked ───────────────────────────────────────────────── */
+
+.mf-state-fleet-1-blocked .mf-body {
+  animation: mf-alert-turn 700ms ease-out forwards;
+}
+.mf-state-fleet-1-blocked .mf-eyes {
+  animation: mf-eyes-forward 700ms ease-out forwards;
+}
+
+/* ── State: fleet-2-3-blocked ─────────────────────────────────────────────── */
+/* Static posture — folder held, no motion needed to read the count. */
+
+/* ── State: fleet-4-plus-blocked ──────────────────────────────────────────── */
+
+.mf-state-fleet-4-plus-blocked .mf-body {
+  animation: mf-brace-shift 3.2s ease-in-out infinite;
 }
 
 /* ── Overlay card ─────────────────────────────────────────────────────────── */
@@ -1066,10 +1101,6 @@ body {
   .mf-wave-2,
   .mf-words-messy,
   .mf-words-clean,
-  .mf-summon-only,
-  .mf-delivering-only,
-  .mf-delivery-failed-only,
-  .mf-pocket-only,
   .mf-ding {
     animation: none !important;
   }
@@ -1204,6 +1235,9 @@ body {
               <g class="mf-pocket-only">
                 <path d="M60,138 L69,138 L67,148 L62,148 Z" fill="#463C34" stroke="#1F1A17" stroke-width="0.8" />
               </g>
+              <g class="mf-behind-arm-only">
+                <circle cx="45" cy="121" r="4.4" fill="#F4ECD9" stroke="#2A241F" stroke-width="1" />
+              </g>
               <g class="mf-arm">
                 <path d="M74,100 Q84,104 88,110" stroke="#2A241F" stroke-width="7" fill="none" stroke-linecap="round" />
                 <circle cx="88" cy="111" r="4.6" fill="#F4ECD9" stroke="#2A241F" stroke-width="1" />
@@ -1211,6 +1245,21 @@ body {
                 <g class="mf-monocle-only">
                   <circle cx="88" cy="111" r="4.6" fill="none" stroke="#2A241F" stroke-width="2.4" />
                   <line x1="92" y1="114" x2="95" y2="119" stroke="#2A241F" stroke-width="1.4" />
+                </g>
+                <g class="mf-watch-only">
+                  <circle cx="88" cy="111" r="5.6" fill="none" stroke="#B8893C" stroke-width="1.4" />
+                  <line x1="88" y1="106.5" x2="88" y2="109" stroke="#2A241F" stroke-width="0.9" />
+                  <line x1="90" y1="106" x2="80" y2="99" stroke="#B8893C" stroke-width="1" />
+                </g>
+                <g class="mf-folder-only">
+                  <rect x="72" y="99" width="20" height="15" rx="1.5" fill="#8A5A38" stroke="#1F1A17" stroke-width="1" />
+                  <line x1="72" y1="103" x2="92" y2="103" stroke="#1F1A17" stroke-width="0.8" />
+                </g>
+                <g class="mf-folders-only">
+                  <rect x="70" y="96" width="22" height="16" rx="1.5" fill="#8A5A38" stroke="#1F1A17" stroke-width="1" />
+                  <rect x="72" y="100" width="22" height="16" rx="1.5" fill="#5C3A24" stroke="#1F1A17" stroke-width="1" />
+                  <rect x="74" y="104" width="22" height="16" rx="1.5" fill="#8A5A38" stroke="#1F1A17" stroke-width="1" />
+                  <line x1="76" y1="109" x2="94" y2="109" stroke="#1F1A17" stroke-width="0.8" />
                 </g>
               </g>
               <circle cx="62" cy="73" r="18" fill="#EBDCBE" stroke="#2A241F" stroke-width="1.4" />

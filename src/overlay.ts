@@ -31,14 +31,16 @@ export type OverlayPhase =
   /**
    * Fleet awareness (PRD #44): the resting bar's ambient posture, one per
    * blocked-count tier plus the honest "can't see the fleet" state. Rendered at
-   * idle only; tier 0 reuses the plain `idle` posture (the calm resting bar).
-   * Ships with placeholder visuals + `data-phase` hooks — the bespoke butler
-   * postures from Claude Design are swapped in a later slice.
+   * idle only. Tier 0 has its own calm "perfectly relaxed" posture (distinct
+   * from plain `idle`, which still shows before the first fleet poll resolves).
+   * The bespoke butler postures come from Claude Design (#53), integrated
+   * verbatim into the overlay markup.
    */
-  | "fleet-1"
-  | "fleet-2-3"
-  | "fleet-4-plus"
-  | "fleet-unknown";
+  | "fleet-unknown"
+  | "fleet-0-blocked"
+  | "fleet-1-blocked"
+  | "fleet-2-3-blocked"
+  | "fleet-4-plus-blocked";
 
 export interface OverlaySnapshot {
   phase: OverlayPhase;
@@ -96,10 +98,11 @@ const STATUS_COPY: Record<OverlayPhase, string> = {
   "relay-delivering": "Delivering to the pane…",
   "relay-delivered": "Delivered, sir.",
   "relay-delivered-busy": "Delivered, sir — though he's rather engrossed.",
-  "fleet-1": "One agent awaits you, sir.",
-  "fleet-2-3": "A few agents await you, sir.",
-  "fleet-4-plus": "Several agents await you, sir.",
-  "fleet-unknown": "I can't see the fleet just now, sir.",
+  "fleet-unknown": "I don't actually know, sir.",
+  "fleet-0-blocked": "Whenever you're ready, sir.",
+  "fleet-1-blocked": "One moment requires you, sir.",
+  "fleet-2-3-blocked": "A few matters await, sir.",
+  "fleet-4-plus-blocked": "Sir… we have accumulated some matters.",
 };
 
 /** relay-delivering's status line names what's being carried — see relayPayloadKind. */
@@ -132,10 +135,11 @@ const MASCOT_COPY: Record<OverlayPhase, string> = {
   "relay-delivering": "leans toward the pane",
   "relay-delivered": "tips hat toward the pane",
   "relay-delivered-busy": "tips hat, glances sideways at a busy pane",
-  "fleet-1": "stands a touch more upright",
-  "fleet-2-3": "holds a folder, attentive",
-  "fleet-4-plus": "holds several folders, one hand behind his back",
-  "fleet-unknown": "checks his pocket watch",
+  "fleet-unknown": "checks his pocket watch, glancing around",
+  "fleet-0-blocked": "perfectly relaxed",
+  "fleet-1-blocked": "turns and looks toward you",
+  "fleet-2-3-blocked": "upright, a folder in hand",
+  "fleet-4-plus-blocked": "one hand behind his back, a stack of folders in the other",
 };
 
 export interface HappyPathOverlayDependencies {
@@ -243,10 +247,11 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
       };
     case "relay-delivering":
       return buildRelayDeliveringOverlaySnapshot("note");
-    case "fleet-1":
-    case "fleet-2-3":
-    case "fleet-4-plus":
     case "fleet-unknown":
+    case "fleet-0-blocked":
+    case "fleet-1-blocked":
+    case "fleet-2-3-blocked":
+    case "fleet-4-plus-blocked":
       // A posture is an expression of the *resting* bar, so it stays in peek —
       // the bar never grows to reflect fleet state (PRD: "never steal focus /
       // stay out of the way exactly as it does today").
@@ -261,21 +266,21 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
 }
 
 /**
- * Map an ambient fleet tier to the overlay phase that renders it. Tier `0` — the
- * calm "all is well" posture — is the plain resting `idle` bar, so a healthy
- * fleet leaves the beloved idle mascot untouched; only pressure or an unknown
- * fleet swaps in a distinct posture.
+ * Map an ambient fleet tier to the overlay phase that renders it. Every tier —
+ * including the calm tier `0` ("perfectly relaxed") — has its own bespoke butler
+ * posture from Claude Design (#53). Plain `idle` still shows before the first
+ * fleet poll resolves; once it does, tier 0 swaps to its distinct resting bar.
  */
 export function fleetTierToOverlayPhase(tier: FleetTier): OverlayPhase {
   switch (tier) {
     case "0":
-      return "idle";
+      return "fleet-0-blocked";
     case "1":
-      return "fleet-1";
+      return "fleet-1-blocked";
     case "2-3":
-      return "fleet-2-3";
+      return "fleet-2-3-blocked";
     case "4+":
-      return "fleet-4-plus";
+      return "fleet-4-plus-blocked";
     case "unknown":
       return "fleet-unknown";
   }
