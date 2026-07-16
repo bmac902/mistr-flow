@@ -1,5 +1,6 @@
 import type { PickerPreview } from "./captureThumbnail";
 import type { EligibleTarget } from "./herdr";
+import type { FleetTier } from "./fleetState";
 
 export type OverlayPhase =
   | "idle"
@@ -26,7 +27,18 @@ export type OverlayPhase =
   | "relay-delivering"
   | "relay-delivered"
   /** Relay: delivered, but the pane was mid-turn — landed as text, not an attachment. */
-  | "relay-delivered-busy";
+  | "relay-delivered-busy"
+  /**
+   * Fleet awareness (PRD #44): the resting bar's ambient posture, one per
+   * blocked-count tier plus the honest "can't see the fleet" state. Rendered at
+   * idle only; tier 0 reuses the plain `idle` posture (the calm resting bar).
+   * Ships with placeholder visuals + `data-phase` hooks — the bespoke butler
+   * postures from Claude Design are swapped in a later slice.
+   */
+  | "fleet-1"
+  | "fleet-2-3"
+  | "fleet-4-plus"
+  | "fleet-unknown";
 
 export interface OverlaySnapshot {
   phase: OverlayPhase;
@@ -84,6 +96,10 @@ const STATUS_COPY: Record<OverlayPhase, string> = {
   "relay-delivering": "Delivering to the pane…",
   "relay-delivered": "Delivered, sir.",
   "relay-delivered-busy": "Delivered, sir — though he's rather engrossed.",
+  "fleet-1": "One agent awaits you, sir.",
+  "fleet-2-3": "A few agents await you, sir.",
+  "fleet-4-plus": "Several agents await you, sir.",
+  "fleet-unknown": "I can't see the fleet just now, sir.",
 };
 
 /** relay-delivering's status line names what's being carried — see relayPayloadKind. */
@@ -116,6 +132,10 @@ const MASCOT_COPY: Record<OverlayPhase, string> = {
   "relay-delivering": "leans toward the pane",
   "relay-delivered": "tips hat toward the pane",
   "relay-delivered-busy": "tips hat, glances sideways at a busy pane",
+  "fleet-1": "stands a touch more upright",
+  "fleet-2-3": "holds a folder, attentive",
+  "fleet-4-plus": "holds several folders, one hand behind his back",
+  "fleet-unknown": "checks his pocket watch",
 };
 
 export interface HappyPathOverlayDependencies {
@@ -223,7 +243,47 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
       };
     case "relay-delivering":
       return buildRelayDeliveringOverlaySnapshot("note");
+    case "fleet-1":
+    case "fleet-2-3":
+    case "fleet-4-plus":
+    case "fleet-unknown":
+      // A posture is an expression of the *resting* bar, so it stays in peek —
+      // the bar never grows to reflect fleet state (PRD: "never steal focus /
+      // stay out of the way exactly as it does today").
+      return {
+        phase,
+        barMode: "peek",
+        waveformVisible: false,
+        mascotCopy: MASCOT_COPY[phase],
+        statusCopy: STATUS_COPY[phase],
+      };
   }
+}
+
+/**
+ * Map an ambient fleet tier to the overlay phase that renders it. Tier `0` — the
+ * calm "all is well" posture — is the plain resting `idle` bar, so a healthy
+ * fleet leaves the beloved idle mascot untouched; only pressure or an unknown
+ * fleet swaps in a distinct posture.
+ */
+export function fleetTierToOverlayPhase(tier: FleetTier): OverlayPhase {
+  switch (tier) {
+    case "0":
+      return "idle";
+    case "1":
+      return "fleet-1";
+    case "2-3":
+      return "fleet-2-3";
+    case "4+":
+      return "fleet-4-plus";
+    case "unknown":
+      return "fleet-unknown";
+  }
+}
+
+/** The idle-time overlay snapshot for a given fleet tier. */
+export function buildFleetPostureOverlaySnapshot(tier: FleetTier): OverlaySnapshot {
+  return buildOverlaySnapshot(fleetTierToOverlayPhase(tier));
 }
 
 /**

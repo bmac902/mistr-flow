@@ -3,8 +3,12 @@ import { promises as fsPromises } from "node:fs";
 
 import type { CaptureArtifact } from "./capture";
 import type { CaptureDeliverOutcome } from "./captureSession";
-import { readHerdrSocketPath, type EligibleTarget } from "./herdr";
-import { raiseHerdrWindow, type HerdrWindowOutcome } from "./herdrWindow";
+import type { EligibleTarget } from "./herdr";
+import {
+  focusHerdrPane,
+  type RaiseHerdrWindowFn,
+  type ReadHerdrSocketPathFn,
+} from "./focusPane";
 
 // Delivery execution (issue #32, PRD #24) — the mechanism proven by the live
 // spike (#28 findings, 2026-07-15) and only that mechanism: inject the
@@ -99,11 +103,7 @@ export type DeliverExecFile = (
   callback: (error: ExecCallbackError, stdout: string, stderr: string) => void,
 ) => void;
 
-export type RaiseHerdrWindowFn = (args: {
-  readonly socketPath: string | null;
-}) => Promise<HerdrWindowOutcome>;
-
-export type ReadHerdrSocketPathFn = () => Promise<string | null>;
+export type { RaiseHerdrWindowFn, ReadHerdrSocketPathFn } from "./focusPane";
 
 export interface DeliveryAdapterDeps {
   readonly execFile?: DeliverExecFile;
@@ -159,8 +159,10 @@ export function createHerdrDeliveryAdapter(
   const execFile = deps.execFile ?? defaultExecFile;
   const pathExists = deps.pathExists ?? defaultPathExists;
   const focusOnDeliver = deps.focusOnDeliver ?? false;
-  const raiseWindow = deps.raiseWindow ?? ((args) => raiseHerdrWindow(args));
-  const readSocketPath = deps.readSocketPath ?? (() => readHerdrSocketPath());
+  // Passed through undefined-able: focusHerdrPane supplies the real defaults
+  // (raiseHerdrWindow / readHerdrSocketPath), so there's one source of truth.
+  const raiseWindow = deps.raiseWindow;
+  const readSocketPath = deps.readSocketPath;
   const ledger = new Map<string, DeliveryRecord>();
 
   return function deliver(
@@ -202,8 +204,8 @@ async function runDelivery(
   payload: SendPayload,
   target: EligibleTarget,
   focusOnDeliver: boolean,
-  raiseWindow: RaiseHerdrWindowFn,
-  readSocketPath: ReadHerdrSocketPathFn,
+  raiseWindow: RaiseHerdrWindowFn | undefined,
+  readSocketPath: ReadHerdrSocketPathFn | undefined,
 ): Promise<CaptureDeliverOutcome> {
   // Only a payload that declares a file has a precondition — inline text has
   // no file, so there is nothing to verify before injecting it.
@@ -222,55 +224,29 @@ async function runDelivery(
 }
 
 /**
- * Focus has two halves and needs both — this is what v1's focusOnDeliver was
- * missing. `herdr agent focus` moves focus *inside* Herdr (it cascades
- * workspace+tab+pane on its own; no separate workspace/tab focus call is
- * needed — confirmed in Herdr's server log). But Herdr is a TUI with no window
- * of its own, so that alone is invisible: the host terminal still has to be
- * raised to the OS foreground. See src/herdrWindow.ts.
- *
- * Best-effort throughout — a focus failure never turns a delivery into a failure.
+ * The opt-in focus-after-delivery half (config `focusOnDeliver`). Delegates to
+ * the shared {@link focusHerdrPane} primitive — the same focus+raise machinery
+ * the jump-to-blocked hotkey uses — so there is one proven implementation, not
+ * two. Best-effort throughout: a focus failure never turns a delivery into a
+ * failure.
  */
 async function focusDeliveredPane(
   execFile: DeliverExecFile,
   target: string,
-  raiseWindow: RaiseHerdrWindowFn,
-  readSocketPath: ReadHerdrSocketPathFn,
+  raiseWindow: RaiseHerdrWindowFn | undefined,
+  readSocketPath: ReadHerdrSocketPathFn | undefined,
 ): Promise<void> {
-  const focused = await runHerdrAgentFocus(execFile, target);
-  if (!focused) return;
+  const outcome = await focusHerdrPane(target, { execFile, raiseWindow, readSocketPath });
+  if (outcome.kind === "focus-failed") return;
 
-  const socketPath = await readSocketPath();
-  const outcome = await raiseWindow({ socketPath });
-  if (outcome.kind === "raised") {
-    console.log("[mistr-flow] focusOnDeliver: raised herdr window", outcome.hwnd);
+  if (outcome.raise.kind === "raised") {
+    console.log("[mistr-flow] focusOnDeliver: raised herdr window", outcome.raise.hwnd);
   } else {
     console.warn(
       "[mistr-flow] focusOnDeliver: pane focused but window not raised:",
-      outcome.code,
+      outcome.raise.code,
     );
   }
-}
-
-/** Best-effort only — a focus failure never turns a delivery into a failure. */
-function runHerdrAgentFocus(
-  execFile: DeliverExecFile,
-  target: string,
-): Promise<boolean> {
-  return new Promise((resolve) => {
-    execFile("herdr", ["agent", "focus", target], (error, _stdout, stderr) => {
-      if (error) {
-        console.warn(
-          "[mistr-flow] focusOnDeliver: herdr agent focus failed:",
-          stderr || error.message,
-        );
-        resolve(false);
-        return;
-      }
-      console.log("[mistr-flow] focusOnDeliver: focused target", target);
-      resolve(true);
-    });
-  });
 }
 
 /**

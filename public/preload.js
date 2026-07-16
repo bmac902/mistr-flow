@@ -11,4 +11,5 @@ contextBridge.exposeInMainWorld("mistrFlow", {
   moveOverlayBy: ({ deltaX, deltaY }) => ipcRenderer.send("move-overlay-by", { deltaX, deltaY }),
   sendCaptureCrop: (rect) => ipcRenderer.send("capture-crop", rect),
   requestContextMenu: () => ipcRenderer.send("show-context-menu"),
+  requestJumpToBlocked: () => ipcRenderer.send("bar-clicked"),
 });

@@ -167,7 +167,12 @@ function classifyFile(port: ClipboardSourcePort, filePath: string): ClipboardSou
     lineCount: 1,
     byteSize: Buffer.byteLength(filePath, "utf8"),
     spilled: false,
-    summary: `file · ${path.basename(filePath)}`,
+    // path.win32.basename, not path.basename: a clipboard file path always comes
+    // from Windows' FileNameW, so backslashes are the separator regardless of the
+    // host Node thinks it's running on. Plain path.basename returns the whole
+    // string on POSIX (no `\` separator), which is right on Windows but wrong in
+    // the Linux batch sandbox — the mirror of the /tmp spill-path test bug.
+    summary: `file · ${path.win32.basename(filePath)}`,
   };
 
   return {

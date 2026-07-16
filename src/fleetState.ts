@@ -1,0 +1,180 @@
+import type { WatchedAgent } from "./herdr";
+
+// The pure heart of fleet awareness (PRD #44): it consumes a sequence of
+// watched-set snapshots plus an injected clock and emits the ambient posture —
+// no timers, no I/O, no Herdr. All dwell tracking, tier banding, unknown
+// detection, and longest-blocked selection live here so they can be driven by a
+// fake clock in tests, mirroring sessionIdleReturn / captureCrop.
+
+/**
+ * The ambient tier, driven by the *count* of agents blocked past the dwell
+ * threshold. `unknown` is not a count — it's the honest "I can't see the fleet"
+ * posture when a poll fails, deliberately distinct from the calm `0` (the app's
+ * "absence of signal is not all-clear" epistemics).
+ */
+export type FleetTier = "unknown" | "0" | "1" | "2-3" | "4+";
+
+export interface FleetPosture {
+  readonly tier: FleetTier;
+  /** How many agents are blocked past the dwell threshold (0 during unknown). */
+  readonly blockedCount: number;
+  /**
+   * The durable target of the oldest continuously-blocked agent — the "most
+   * needs you" jump target for the later slices (#50/#52). Null when nothing
+   * has dwelt past the threshold. Best-effort even during `unknown` so a
+   * transient poll failure doesn't strand the jump action. Always equal to
+   * `blockedTargets[0] ?? null`.
+   */
+  readonly longestBlockedTarget: string | null;
+  /**
+   * Every agent blocked past the dwell threshold, oldest continuously-blocked
+   * first (ties broken by target id for determinism). This is the jump-cycle
+   * order the hotkey (#50) walks — repeat presses step through it oldest-first.
+   * Empty when nothing has dwelt past the threshold.
+   */
+  readonly blockedTargets: readonly string[];
+  /**
+   * The one-shot "persistent block" signal (#51): agents that crossed the
+   * persistent-block duration on *this* observe — a genuinely-missed bottleneck
+   * earning a single audio nudge. Fires exactly once per continuous-block
+   * episode (re-armed only after the block clears) and only from `observe`;
+   * `posture()` always reports it empty so a passive read never re-triggers the
+   * ding. The effectful layer decides whether to actually sound it (config +
+   * verb suppression) — this module stays pure.
+   */
+  readonly newlyPersistentBlockedTargets: readonly string[];
+}
+
+/** One poll's outcome: a watched-set snapshot, or an unreachable Herdr. */
+export type FleetPoll =
+  | { readonly kind: "panes"; readonly agents: readonly WatchedAgent[] }
+  | { readonly kind: "unavailable" };
+
+export interface FleetStateOptions {
+  /**
+   * How long an agent must be *continuously* blocked before it counts. Spike
+   * calibration: real blocks hold tens of seconds to minutes and no transient
+   * flickers were seen, so a short dwell catches every real block while
+   * filtering any hypothetical blip.
+   */
+  readonly dwellMs?: number;
+  /**
+   * How long an agent must be *continuously* blocked before it earns the single
+   * persistent-block ding (#51). Spike calibration: normal blocks resolve well
+   * under a minute when watched, so this ~3–5 min mark fires only on a genuinely
+   * missed bottleneck — the feature's one and only active cue.
+   */
+  readonly persistentBlockMs?: number;
+}
+
+export interface FleetState {
+  /** Fold one poll into the tracker and return the resulting posture. */
+  observe(poll: FleetPoll, nowMs: number): FleetPosture;
+  /** The current posture without advancing the tracker. */
+  posture(): FleetPosture;
+}
+
+export const DEFAULT_DWELL_MS = 5000;
+
+// ~4 minutes: the middle of the PRD's 3–5 min persistent-block window. Long
+// enough that only a genuinely-missed bottleneck reaches it (normal blocks
+// resolve well under a minute when watched), short enough to still catch a miss.
+export const DEFAULT_PERSISTENT_BLOCK_MS = 240000;
+
+export function createFleetState(options: FleetStateOptions = {}): FleetState {
+  const dwellMs = options.dwellMs ?? DEFAULT_DWELL_MS;
+  const persistentBlockMs = options.persistentBlockMs ?? DEFAULT_PERSISTENT_BLOCK_MS;
+
+  // target → the timestamp the agent first became continuously blocked. An
+  // agent leaves this map the moment it's no longer blocked (status changed or
+  // pane vanished), which re-arms the dwell timer for any future block.
+  const blockedSince = new Map<string, number>();
+  // Targets whose persistent-block ding has already fired for their *current*
+  // block episode. Kept in lockstep with blockedSince (an entry is dropped the
+  // moment its block clears), so a fresh block re-arms the one-shot ding.
+  const dinged = new Set<string>();
+  let reachable = false;
+  let lastNowMs = 0;
+
+  function computePosture(
+    newlyPersistentBlockedTargets: readonly string[] = [],
+  ): FleetPosture {
+    // Collect every agent past the dwell threshold, then order it oldest-first
+    // (ties broken by target id) so both the count and the jump-cycle list fall
+    // out of one deterministic sort.
+    const dwelt: Array<{ readonly target: string; readonly since: number }> = [];
+    for (const [target, since] of blockedSince) {
+      if (lastNowMs - since < dwellMs) continue;
+      dwelt.push({ target, since });
+    }
+    dwelt.sort((a, b) =>
+      a.since !== b.since ? a.since - b.since : a.target < b.target ? -1 : 1,
+    );
+    const blockedTargets = dwelt.map((entry) => entry.target);
+
+    return {
+      tier: reachable ? tierForCount(blockedTargets.length) : "unknown",
+      blockedCount: blockedTargets.length,
+      longestBlockedTarget: blockedTargets[0] ?? null,
+      blockedTargets,
+      newlyPersistentBlockedTargets,
+    };
+  }
+
+  return {
+    observe(poll, nowMs) {
+      lastNowMs = nowMs;
+
+      if (poll.kind === "unavailable") {
+        // Absence of signal is not "all clear" — surface `unknown`. Preserve the
+        // dwell timers rather than resetting them, so a poll that recovers with
+        // an agent still blocked keeps its elapsed dwell instead of restarting.
+        reachable = false;
+        return computePosture();
+      }
+
+      reachable = true;
+      const stillBlocked = new Set<string>();
+      for (const agent of poll.agents) {
+        if (agent.status !== "blocked") continue;
+        stillBlocked.add(agent.target);
+        if (!blockedSince.has(agent.target)) blockedSince.set(agent.target, nowMs);
+      }
+
+      for (const target of [...blockedSince.keys()]) {
+        if (!stillBlocked.has(target)) {
+          blockedSince.delete(target);
+          // Block cleared → re-arm the ding for this target's next episode.
+          dinged.delete(target);
+        }
+      }
+
+      // The persistent-block ding is evaluated only on a confirmed snapshot: an
+      // agent we can't currently see blocked never earns a nudge. Any target
+      // past the duration that hasn't yet dinged this episode fires exactly now.
+      const newlyPersistent: Array<{ readonly target: string; readonly since: number }> = [];
+      for (const [target, since] of blockedSince) {
+        if (nowMs - since < persistentBlockMs) continue;
+        if (dinged.has(target)) continue;
+        dinged.add(target);
+        newlyPersistent.push({ target, since });
+      }
+      newlyPersistent.sort((a, b) =>
+        a.since !== b.since ? a.since - b.since : a.target < b.target ? -1 : 1,
+      );
+
+      return computePosture(newlyPersistent.map((entry) => entry.target));
+    },
+
+    posture() {
+      return computePosture();
+    },
+  };
+}
+
+function tierForCount(count: number): FleetTier {
+  if (count <= 0) return "0";
+  if (count === 1) return "1";
+  if (count <= 3) return "2-3";
+  return "4+";
+}

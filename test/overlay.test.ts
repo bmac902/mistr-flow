@@ -7,7 +7,9 @@ import {
   buildCancelledOverlaySnapshot,
   buildCaptureDeliveryFailedOverlaySnapshot,
   buildCapturePickerOverlaySnapshot,
+  buildFleetPostureOverlaySnapshot,
   buildOverlaySnapshot,
+  fleetTierToOverlayPhase,
   buildErrorOverlaySnapshot,
   buildRefusedOverlaySnapshot,
   buildRelayDeliveringOverlaySnapshot,
@@ -152,6 +154,35 @@ test("buildOverlaySnapshot pins placeholder copy for every Capture phase (issue 
   assert.equal(deliveryFailed.phase, "capture-delivery-failed");
   assert.equal(deliveryFailed.statusCopy, "That pane didn't take it.");
   assert.equal(deliveryFailed.toastCopy, "That pane has left the building.");
+});
+
+test("fleet posture: tier 0 is the calm resting idle bar, pressure/unknown get distinct postures (issue #49, PRD #44)", () => {
+  // Tier 0 — all is well — must leave the beloved idle mascot untouched.
+  assert.equal(fleetTierToOverlayPhase("0"), "idle");
+  assert.deepEqual(buildFleetPostureOverlaySnapshot("0"), buildOverlaySnapshot("idle"));
+
+  const tier1 = buildFleetPostureOverlaySnapshot("1");
+  assert.equal(tier1.phase, "fleet-1");
+  assert.equal(tier1.statusCopy, "One agent awaits you, sir.");
+  // A posture never grows the bar — it stays a resting-bar expression.
+  assert.equal(tier1.barMode, "peek");
+
+  assert.equal(buildFleetPostureOverlaySnapshot("2-3").phase, "fleet-2-3");
+  assert.equal(buildFleetPostureOverlaySnapshot("4+").phase, "fleet-4-plus");
+
+  // The unknown posture is honest — never the calm 0 bar.
+  const unknown = buildFleetPostureOverlaySnapshot("unknown");
+  assert.equal(unknown.phase, "fleet-unknown");
+  assert.equal(unknown.statusCopy, "I can't see the fleet just now, sir.");
+  assert.notDeepEqual(unknown, buildOverlaySnapshot("idle"));
+});
+
+test("overlay html carries a placeholder posture hook for each fleet tier and unknown (issue #49)", () => {
+  const html = readFileSync(path.join(rootDir, "public", "overlay.html"), "utf8");
+
+  for (const phase of ["fleet-1", "fleet-2-3", "fleet-4-plus", "fleet-unknown"]) {
+    assert.match(html, new RegExp(`mf-state-${phase}`), `missing hook for ${phase}`);
+  }
 });
 
 test("overlay html contains Mistr Flow card, mascot, state hooks, and reduced motion rules", () => {

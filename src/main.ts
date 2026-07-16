@@ -25,6 +25,7 @@ import {
   getConfigPath,
   readCopySelectionFirst,
   readFocusOnDeliver,
+  readPersistentBlockDing,
   readMuteSystemAudioWhileRecording,
   readOverlayPosition,
   readProvider,
@@ -35,7 +36,15 @@ import { resolveAiProvider, type AiProvider } from "./aiProvider";
 import { createDictationCancelledError, runDictationSession } from "./dictation";
 import { buildPolishVocabularyInstruction, buildWhisperVocabularyPrompt } from "./vocabulary";
 import { pasteText as pasteTextImpl } from "./paste";
-import { buildOverlaySnapshot, buildRefusedOverlaySnapshot, type OverlaySnapshot } from "./overlay";
+import {
+  buildFleetPostureOverlaySnapshot,
+  buildOverlaySnapshot,
+  buildRefusedOverlaySnapshot,
+  type OverlaySnapshot,
+} from "./overlay";
+import { createFleetState, type FleetPosture } from "./fleetState";
+import { createBlockedJumpCursor } from "./blockedJumpCursor";
+import { focusHerdrPane } from "./focusPane";
 import { createActiveVerbLock } from "./activeVerbLock";
 import {
   clampOverlayPosition,
@@ -68,7 +77,7 @@ import {
   type ThumbnailImagePort,
 } from "./captureThumbnail";
 import { captureArtifactToPayload, createHerdrDeliveryAdapter } from "./deliver";
-import { queryHerdr } from "./herdr";
+import { queryHerdr, queryWatchedSet } from "./herdr";
 import {
   capturePickerWindowHeight,
   relayPickerWindowHeight,
@@ -81,6 +90,9 @@ let overlayWindow: BrowserWindow | null = null;
 let aiProvider: AiProvider | null = null;
 let muteSystemAudioWhileRecording = true;
 let copySelectionFirst = false;
+// PRD #44 / #51: the persistent-block ding is on by default; config can silence
+// the sound while keeping the visual fleet awareness. Read once at startup.
+let persistentBlockDing = true;
 let whisperVocabularyPrompt: string | null = null;
 let polishVocabularyInstruction: string | null = null;
 
@@ -161,6 +173,109 @@ function refuseVerb(): void {
       sendToRenderer("overlay-state", buildOverlaySnapshot("idle"));
     }
   }, REFUSED_HOLD_MS);
+}
+
+// Fleet awareness (PRD #44, issue #49): poll the whole Watched Set on a cheap
+// timer and let the pure fleetState tracker fold each snapshot into an ambient
+// posture. Cadence ~3.5s — spike-confirmed safe, and a real block holds far
+// longer, so polling loses nothing versus the socket stream (which stays out of
+// scope per ADR 0002). Polling runs continuously, even mid-verb, so the instant
+// the bar returns to idle the posture is already current.
+const FLEET_POLL_INTERVAL_MS = 3500;
+const fleetState = createFleetState();
+let fleetPollTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * The fleet posture is an expression of the *resting* bar only. During any
+ * verb the mascot does verb things (and a refusal notice owns the bar until it
+ * self-clears), so posture is rendered solely when nothing else holds the
+ * overlay. Polling itself never pauses — this only gates the render.
+ */
+function overlayIsResting(): boolean {
+  return verbLock.activeVerb() === null && refusedReturnTimer === null;
+}
+
+function renderFleetPosture(posture: FleetPosture): void {
+  if (!overlayIsResting()) return;
+  sendToRenderer("overlay-state", buildFleetPostureOverlaySnapshot(posture.tier));
+}
+
+async function pollFleetOnce(): Promise<void> {
+  const result = await queryWatchedSet({});
+  const posture =
+    result.kind === "watched"
+      ? fleetState.observe({ kind: "panes", agents: result.agents }, Date.now())
+      : fleetState.observe({ kind: "unavailable" }, Date.now());
+  renderFleetPosture(posture);
+  maybeDingPersistentBlock(posture);
+}
+
+/**
+ * The single active cue of the whole feature (#51): one quiet ding when an agent
+ * has been continuously blocked past the persistent-block duration. fleetState
+ * fires the one-shot signal; here we decide whether to actually sound it —
+ * silenced by config, and suppressed while a verb is active (the ding only
+ * matters when you're away from the work, never mid-dictation). One ding per
+ * poll regardless of how many crossed, since it's a nudge, not a count.
+ */
+function maybeDingPersistentBlock(posture: FleetPosture): void {
+  if (posture.newlyPersistentBlockedTargets.length === 0) return;
+  if (!persistentBlockDing) return;
+  if (verbLock.activeVerb() !== null) return;
+  beep();
+}
+
+function startFleetPolling(): void {
+  if (fleetPollTimer) return;
+  void pollFleetOnce();
+  fleetPollTimer = setInterval(() => {
+    void pollFleetOnce().catch((error) => {
+      // A poll should never crash the timer — an unreachable Herdr is already
+      // modelled as the `unknown` posture, so anything reaching here is a bug
+      // we log and shrug off rather than let kill ambient awareness.
+      console.error("[mistr-flow] fleet poll failed:", error);
+    });
+  }, FLEET_POLL_INTERVAL_MS);
+}
+
+// Jump-to-blocked (issue #50, PRD #44): one keypress takes you to the agent
+// that most needs you. The cursor holds where the last press landed so repeat
+// presses cycle oldest-first through the blocked set; fleetState.posture()
+// supplies the live oldest-first list at the moment of each press.
+const jumpCursor = createBlockedJumpCursor();
+
+/**
+ * Focus the next longest-blocked agent's pane and raise Herdr's host window,
+ * reusing the proven focus/raise machinery (ADR 0002, focusHerdrPane). Repeat
+ * presses cycle oldest-first; with nothing blocked this is a truthful no-op.
+ * Focus-steal here is intentional and user-initiated — you pressed the key to
+ * go there — the same explicit exception to "never steal focus" as focusOnDeliver.
+ */
+function jumpToLongestBlocked(): void {
+  const target = jumpCursor.next(fleetState.posture().blockedTargets);
+  if (target === null) return; // Nothing blocked — nowhere to jump, so no-op.
+
+  void focusHerdrPane(target)
+    .then((outcome) => {
+      if (outcome.kind === "focus-failed") {
+        // The remembered target likely closed since the poll. The cursor
+        // re-anchors to the oldest on the next press, so a follow-up press
+        // skips the dead pane rather than stranding the user.
+        console.warn("[mistr-flow] jump-to-blocked: could not focus", target);
+        return;
+      }
+      if (outcome.raise.kind === "raised") {
+        console.log("[mistr-flow] jump-to-blocked: raised herdr window", outcome.raise.hwnd);
+      } else {
+        console.warn(
+          "[mistr-flow] jump-to-blocked: pane focused but window not raised:",
+          outcome.raise.code,
+        );
+      }
+    })
+    .catch((error) => {
+      console.error("[mistr-flow] jump-to-blocked failed:", error);
+    });
 }
 
 function applyCaptureWindowBounds(snapshot: OverlaySnapshot): void {
@@ -466,6 +581,27 @@ function registerRelayHotkey(): void {
   if (!registered) {
     throw new Error(
       `Failed to register global hotkey "${RELAY_ACCELERATOR}". It may already be in use by another app.`,
+    );
+  }
+}
+
+// Ctrl+Alt+J ("jump"), matching the Ctrl+Alt+ family (D dictate, C clipboard).
+// Chosen to avoid the three existing hotkeys (Ctrl+Alt+D, Ctrl+Shift+`,
+// Ctrl+Alt+C) and, unlike the Shift+capital-letter lesson, uses no shifted
+// letter so it can't fire on an ordinary keypress. globalShortcut.register
+// returns false on a live OS-wide collision — reported (dialog.showErrorBox in
+// whenReady), never silently swapped, so the collision surfaces for the human
+// verification slice rather than hiding.
+const JUMP_ACCELERATOR = "Control+Alt+J";
+
+function registerJumpHotkey(): void {
+  const registered = globalShortcut.register(JUMP_ACCELERATOR, () => {
+    jumpToLongestBlocked();
+  });
+
+  if (!registered) {
+    throw new Error(
+      `Failed to register global hotkey "${JUMP_ACCELERATOR}". It may already be in use by another app.`,
     );
   }
 }
@@ -816,6 +952,8 @@ app.whenReady().then(async () => {
     deliverCapture = createHerdrDeliveryAdapter({ focusOnDeliver });
     copySelectionFirst = await readCopySelectionFirst();
     console.log("[mistr-flow] config: copySelectionFirst =", copySelectionFirst);
+    persistentBlockDing = await readPersistentBlockDing();
+    console.log("[mistr-flow] config: persistentBlockDing =", persistentBlockDing);
   } catch (error) {
     dialog.showErrorBox("Mistr Flow config error", String(error));
     app.quit();
@@ -836,6 +974,11 @@ app.whenReady().then(async () => {
 
   overlayWindow = createOverlayWindow(savedOverlayPosition);
   ipcMain.on("show-context-menu", () => showContextMenu());
+  // A plain click on the bar (issue #52) jumps to the longest-blocked agent —
+  // the mouse-hand path to the same action as the Ctrl+Alt+J hotkey. The
+  // renderer only fires this when the press stayed under the drag threshold; a
+  // click with nothing blocked no-ops inside jumpToLongestBlocked.
+  ipcMain.on("bar-clicked", () => jumpToLongestBlocked());
   ipcMain.on("set-overlay-mouse-events", (_event, { ignore }: { ignore: boolean }) => {
     setOverlayMouseEvents(ignore);
   });
@@ -850,9 +993,12 @@ app.whenReady().then(async () => {
     registerHotkey();
     registerCaptureHotkey();
     registerRelayHotkey();
+    registerJumpHotkey();
   } catch (error) {
     dialog.showErrorBox("Mistr Flow hotkey error", String(error));
   }
+
+  startFleetPolling();
 });
 
 app.on("window-all-closed", () => {
@@ -870,4 +1016,8 @@ app.on("before-quit", (event) => {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  if (fleetPollTimer) {
+    clearInterval(fleetPollTimer);
+    fleetPollTimer = null;
+  }
 });
