@@ -3,6 +3,8 @@ import test from "node:test";
 
 import type { CaptureArtifact } from "../src/capture";
 import {
+  PASTE_END,
+  PASTE_START,
   captureArtifactToPayload,
   createHerdrDeliveryAdapter,
   safeMessageFor,
@@ -96,8 +98,20 @@ test("deliver: an inline text payload (no requiresFile) skips the file check and
 
   assert.deepEqual(outcome, { kind: "delivered" });
   assert.equal(pathExistsCalls, 0, "no file to verify — the check must be skipped");
+  // The body is multi-line, so it goes on the wire bracketed (see
+  // bracketMultilinePaste): unbracketed, the receiving CLI splits the stream
+  // into separate pastes and can submit the leading chunk early. The payload's
+  // text is carried through untouched inside the markers.
   assert.deepEqual(recorder.calls, [
-    { file: "herdr", args: ["agent", "send", TARGET_A.target, payload.injectText] },
+    {
+      file: "herdr",
+      args: [
+        "agent",
+        "send",
+        TARGET_A.target,
+        `${PASTE_START}${payload.injectText}${PASTE_END}`,
+      ],
+    },
   ]);
 });
 

@@ -273,13 +273,46 @@ function runHerdrAgentFocus(
   });
 }
 
+/**
+ * Wraps multi-line text in bracketed-paste markers so the receiving terminal
+ * treats it as ONE atomic paste (found live, 2026-07-15).
+ *
+ * `agent send` streams its text into the pane's PTY. For a multi-line body the
+ * stream arrives in chunks, and the receiving CLI's paste detection reads each
+ * chunk as a separate event — observed live as
+ * `[Pasted text #1 +10 lines][Pasted text #2 +9 lines]` for a single 20-line
+ * send. Worse, where a chunk boundary lands such that a newline is read as
+ * *typed* input rather than pasted, that newline is Enter: the leading chunk
+ * submits itself and only the tail survives in the input box. That is the
+ * "it only pasted the latter half" bug, and it is chunk-boundary dependent —
+ * hence intermittent.
+ *
+ * Bracketing makes it atomic (verified: the same 20-line body arrives as one
+ * `[Pasted text #3 +19 lines]`).
+ *
+ * Deliberately only when the text contains a newline: a single-line body is a
+ * PNG/spill *path*, and paths must keep arriving as plain typed text so the
+ * receiving agent's own path-detection still upgrades them into a real image
+ * attachment (CONTEXT.md, *Auto-attach requires the receiving agent to be
+ * idle*). Bracketing those risks silently breaking image delivery.
+ */
+/** ESC[200~ / ESC[201~ — written as explicit escapes: a raw ESC byte in
+ *  source is invisible and one stray editor/linter pass silently kills it. */
+export const PASTE_START = "\x1b[200~";
+export const PASTE_END = "\x1b[201~";
+
+export function bracketMultilinePaste(text: string): string {
+  if (!text.includes("\n")) return text;
+  return `${PASTE_START}${text}${PASTE_END}`;
+}
+
 function runHerdrAgentSend(
   execFile: DeliverExecFile,
   target: string,
   injectText: string,
 ): Promise<CaptureDeliverOutcome> {
   return new Promise((resolve) => {
-    execFile("herdr", ["agent", "send", target, injectText], (error) => {
+    execFile("herdr", ["agent", "send", target, bracketMultilinePaste(injectText)], (error) => {
       if (!error) {
         resolve({ kind: "delivered" });
         return;
