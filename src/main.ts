@@ -70,7 +70,10 @@ import {
   createCapturePickerHandle,
   type AgainSource,
   type CropSource,
+  type PickerRowClick,
+  type RowClickSource,
 } from "./capturePickerHandle";
+import { routeBarClick } from "./barClickRouting";
 import {
   cropCaptureImage,
   type CropImagePort,
@@ -811,6 +814,21 @@ const pickerAgainSource: AgainSource = (emit) => {
   };
 };
 
+// Row clicks from the renderer (issue #61, ADR 0005), mirroring the crop
+// source: a click on a key-cap row arrives over IPC carrying the row's
+// identity and joins the same selection stream as the digits — the handle
+// dispatches the exact event the row's key would. Non-null exactly while a
+// picker is open (the handle unsubscribes on close, on every exit path),
+// which doubles as the pure bar-click gate's "picker open" input below.
+let activeRowClickEmit: ((click: PickerRowClick) => void) | null = null;
+
+const pickerRowClickSource: RowClickSource = (emit) => {
+  activeRowClickEmit = emit;
+  return () => {
+    if (activeRowClickEmit === emit) activeRowClickEmit = null;
+  };
+};
+
 /** The hotkey text the again-row shows — Electron's "Control" reads "Ctrl" on the row. */
 function hotkeyLabelFor(accelerator: string): string {
   return accelerator.replace("Control", "Ctrl");
@@ -839,6 +857,7 @@ function openCapturePicker(): CapturePickerHandle {
     },
     cropSource: captureCropSource,
     againSource: pickerAgainSource,
+    clickSource: pickerRowClickSource,
   });
 }
 
@@ -928,6 +947,7 @@ function openRelayPicker(): CapturePickerHandle {
     },
     cropSource: captureCropSource,
     againSource: pickerAgainSource,
+    clickSource: pickerRowClickSource,
     // Slot 1 is skipped: the clipboard is Relay's source, not a destination.
     includeClipboardSlot: false,
   });
@@ -1179,8 +1199,17 @@ app.whenReady().then(async () => {
   // A plain click on the bar (issue #52) jumps to the longest-blocked agent —
   // the mouse-hand path to the same action as the Ctrl+Alt+J hotkey. The
   // renderer only fires this when the press stayed under the drag threshold; a
-  // click with nothing blocked no-ops inside jumpToLongestBlocked.
-  ipcMain.on("bar-clicked", () => jumpToLongestBlocked());
+  // click with nothing blocked no-ops inside jumpToLongestBlocked. While a
+  // picker is open the window is modal (issue #61, ADR 0005): the butler/header
+  // is purely a window handle, so the jump is suppressed — routed through the
+  // pure gate, restored the moment the picker closes (the handle's unsubscribe
+  // nulls the click emit). The Ctrl+Alt+J hotkey is deliberately NOT gated:
+  // keyboard behavior is byte-identical, the mouse is what the modal rule fixes.
+  ipcMain.on("bar-clicked", () => {
+    if (routeBarClick({ pickerOpen: activeRowClickEmit !== null }) === "jump") {
+      jumpToLongestBlocked();
+    }
+  });
   ipcMain.on("set-overlay-mouse-events", (_event, { ignore }: { ignore: boolean }) => {
     setOverlayMouseEvents(ignore);
   });
@@ -1189,6 +1218,12 @@ app.whenReady().then(async () => {
   });
   ipcMain.on("capture-crop", (_event, rect: CropRect) => {
     activeCropEmit?.(rect);
+  });
+  // A row click (issue #61, ADR 0005) — the row's identity, bound to the
+  // render that built it; the active picker handle resolves it into the same
+  // selection stream as the digits, or drops it if no picker is open.
+  ipcMain.on("picker-row-clicked", (_event, click: PickerRowClick) => {
+    activeRowClickEmit?.(click);
   });
 
   try {

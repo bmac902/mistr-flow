@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createCapturePickerHandle } from "../src/capturePickerHandle";
+import { createCapturePickerHandle, type PickerRowClick } from "../src/capturePickerHandle";
 import type { EligibleTarget } from "../src/herdr";
 
 const TARGET_A: EligibleTarget = {
@@ -239,6 +239,175 @@ test("an again press with no pending awaitSelection is a harmless no-op (e.g. mi
 });
 
 test("a picker with no againSource still works", async () => {
+  const shortcuts = makeFakeShortcuts();
+  const handle = createCapturePickerHandle({ shortcuts });
+
+  const selection = handle.awaitSelection();
+  shortcuts.press("Escape");
+
+  assert.deepEqual(await selection, { kind: "escape" });
+});
+
+// --- Clickable rows: the injected click source (issue #61, ADR 0005) -------
+// A mouse click is another way to press the row's key, never a second
+// implementation: a click resolves the EXACT selection event the key
+// produces, through the same one-selection-at-a-time channel.
+
+test("a slot-1 click resolves the identical clipboard event pressing 1 produces", async () => {
+  const shortcuts = makeFakeShortcuts();
+  let click: ((c: PickerRowClick) => void) | null = null;
+  const handle = createCapturePickerHandle({
+    shortcuts,
+    clickSource: (cb) => {
+      click = cb;
+      return () => {};
+    },
+  });
+
+  const byKey = handle.awaitSelection();
+  shortcuts.press("1");
+  const byClick = handle.awaitSelection();
+  click!({ kind: "clipboard" });
+
+  assert.deepEqual(await byClick, await byKey);
+  assert.deepEqual(await byClick, { kind: "clipboard" });
+});
+
+test("a target-row click resolves the identical selection event its digit produces", async () => {
+  const shortcuts = makeFakeShortcuts();
+  let click: ((c: PickerRowClick) => void) | null = null;
+  const handle = createCapturePickerHandle({
+    shortcuts,
+    clickSource: (cb) => {
+      click = cb;
+      return () => {};
+    },
+  });
+  handle.appendTargets([TARGET_A, TARGET_B]);
+
+  // slotIndex 1 is the second appended target — the row the digit 3 keys.
+  const byKey = handle.awaitSelection();
+  shortcuts.press("3");
+  const byClick = handle.awaitSelection();
+  click!({ kind: "target", slotIndex: 1 });
+
+  assert.deepEqual(await byClick, await byKey);
+  assert.deepEqual(await byClick, { kind: "target", target: TARGET_B });
+});
+
+test("an again-row click resolves the identical again event the verb key produces", async () => {
+  let againEmit: (() => void) | null = null;
+  let click: ((c: PickerRowClick) => void) | null = null;
+  const handle = createCapturePickerHandle({
+    shortcuts: makeFakeShortcuts(),
+    againSource: (cb) => {
+      againEmit = cb;
+      return () => {};
+    },
+    clickSource: (cb) => {
+      click = cb;
+      return () => {};
+    },
+  });
+
+  const byKey = handle.awaitSelection();
+  againEmit!();
+  const byClick = handle.awaitSelection();
+  click!({ kind: "again" });
+
+  assert.deepEqual(await byClick, await byKey);
+  assert.deepEqual(await byClick, { kind: "again" });
+});
+
+test("a click on a slot the current render never populated is dropped — never a stale or default target", async () => {
+  const shortcuts = makeFakeShortcuts();
+  let click: ((c: PickerRowClick) => void) | null = null;
+  const handle = createCapturePickerHandle({
+    shortcuts,
+    clickSource: (cb) => {
+      click = cb;
+      return () => {};
+    },
+  });
+  handle.appendTargets([TARGET_A]);
+
+  const selection = handle.awaitSelection();
+  // A click carrying a slot this render never populated (a reordered or
+  // shrunken target list) resolves nothing…
+  click!({ kind: "target", slotIndex: 5 });
+  // …so the channel is still live for the next real input.
+  shortcuts.press("2");
+
+  assert.deepEqual(await selection, { kind: "target", target: TARGET_A });
+});
+
+test("Relay picker: a clipboard click is dropped — Relay renders no slot 1", async () => {
+  const shortcuts = makeFakeShortcuts();
+  let click: ((c: PickerRowClick) => void) | null = null;
+  const handle = createCapturePickerHandle({
+    shortcuts,
+    includeClipboardSlot: false,
+    clickSource: (cb) => {
+      click = cb;
+      return () => {};
+    },
+  });
+  handle.appendTargets([TARGET_A]);
+
+  const selection = handle.awaitSelection();
+  click!({ kind: "clipboard" });
+  shortcuts.press("2");
+
+  assert.deepEqual(await selection, { kind: "target", target: TARGET_A });
+});
+
+test("the click subscription is torn down on close — a stale click never resolves a closed picker", async () => {
+  let click: ((c: PickerRowClick) => void) | null = null;
+  let unsubscribed = false;
+  const handle = createCapturePickerHandle({
+    shortcuts: makeFakeShortcuts(),
+    clickSource: (cb) => {
+      click = cb;
+      return () => {
+        unsubscribed = true;
+      };
+    },
+  });
+  handle.appendTargets([TARGET_A]);
+
+  let resolved = false;
+  void handle.awaitSelection().then(() => {
+    resolved = true;
+  });
+
+  handle.close();
+  assert.equal(unsubscribed, true, "torn down with everything else on close");
+
+  // Even a click that slips past the unsubscribe (the emit was already in
+  // hand) lands on the closed guard and resolves nothing.
+  click!({ kind: "target", slotIndex: 0 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(resolved, false, "a stale click can never resurrect a closed picker");
+});
+
+test("a click with no pending awaitSelection is a harmless no-op (e.g. mid-delivery)", () => {
+  let click: ((c: PickerRowClick) => void) | null = null;
+  const handle = createCapturePickerHandle({
+    shortcuts: makeFakeShortcuts(),
+    clickSource: (cb) => {
+      click = cb;
+      return () => {};
+    },
+  });
+  handle.appendTargets([TARGET_A]);
+
+  // No awaitSelection outstanding — exactly the delivering beat, where digit
+  // presses are already structural no-ops. The click joins that rule.
+  assert.doesNotThrow(() => click!({ kind: "target", slotIndex: 0 }));
+  handle.close();
+});
+
+test("a picker with no clickSource still works", async () => {
   const shortcuts = makeFakeShortcuts();
   const handle = createCapturePickerHandle({ shortcuts });
 

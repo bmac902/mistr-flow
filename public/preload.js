@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("mistrFlow", {
   setOverlayMouseEvents: ({ ignore }) => ipcRenderer.send("set-overlay-mouse-events", { ignore }),
   moveOverlayBy: ({ deltaX, deltaY }) => ipcRenderer.send("move-overlay-by", { deltaX, deltaY }),
   sendCaptureCrop: (rect) => ipcRenderer.send("capture-crop", rect),
+  sendPickerRowClick: (click) => ipcRenderer.send("picker-row-clicked", click),
   requestContextMenu: () => ipcRenderer.send("show-context-menu"),
   requestJumpToBlocked: () => ipcRenderer.send("bar-clicked"),
 });
