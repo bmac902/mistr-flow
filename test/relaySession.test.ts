@@ -70,7 +70,8 @@ function fakeClipboardPort(options: {
   text?: string;
   imagePng?: Buffer | null;
   filePath?: string | null;
-  dropBuffer?: Buffer | null;
+  /** The FileDropList shell-out's result (mirrors clipboardSource.test.ts). */
+  dropList?: string[] | null;
   /** When supplied, records every writeFile path — the slot-1 no-write guard. */
   writes?: string[];
 }): ClipboardSourcePort {
@@ -84,7 +85,7 @@ function fakeClipboardPort(options: {
     readText: () => options.text ?? "",
     readImage: () => image,
     readFilePath: () => options.filePath ?? null,
-    readFileDropBuffer: () => options.dropBuffer ?? null,
+    readFileDropList: async () => options.dropList ?? null,
     writeFile: async (filePath) => {
       options.writes?.push(filePath);
     },
@@ -92,17 +93,6 @@ function fakeClipboardPort(options: {
     timestampIso: () => "2026-07-16T09:00:00.000Z",
     captureDir: CAPTURE_DIR,
   };
-}
-
-/** CF_HDROP as Windows lays it out — wide list at offset 20 (mirrors clipboardSource.test.ts). */
-function hdropBuffer(paths: string[]): Buffer {
-  const header = Buffer.alloc(20);
-  header.writeUInt32LE(20, 0); // pFiles
-  header.writeUInt32LE(1, 16); // fWide
-  return Buffer.concat([
-    header,
-    Buffer.from(paths.map((p) => `${p}\0`).join("") + "\0", "utf16le"),
-  ]);
 }
 
 const MULTI_SELECT = [
@@ -663,7 +653,7 @@ test("a multi-select delivers as ONE bracketed paste of all N full paths", async
   const realDeliver = createHerdrDeliveryAdapter({ execFile, pathExists: async () => true });
 
   const h = makeHarness({
-    port: fakeClipboardPort({ dropBuffer: hdropBuffer(MULTI_SELECT) }),
+    port: fakeClipboardPort({ dropList: MULTI_SELECT }),
     deliver: (payload, target) => realDeliver(payload, target),
   });
 
@@ -687,7 +677,7 @@ test("a multi-select delivers as ONE bracketed paste of all N full paths", async
 
 test("the multi-select preview rides the existing text-preview slot: full paths, Files · N", async () => {
   const h = makeHarness({
-    port: fakeClipboardPort({ dropBuffer: hdropBuffer(MULTI_SELECT) }),
+    port: fakeClipboardPort({ dropList: MULTI_SELECT }),
   });
 
   const session = runRelaySession(h.deps);
@@ -705,7 +695,7 @@ test("the multi-select preview rides the existing text-preview slot: full paths,
 
 test("a multi-select delivers with the LEDGER prop — a path-injecting payload per #41's mapping", async () => {
   const h = makeHarness({
-    port: fakeClipboardPort({ dropBuffer: hdropBuffer(MULTI_SELECT) }),
+    port: fakeClipboardPort({ dropList: MULTI_SELECT }),
   });
 
   const session = runRelaySession(h.deps);
@@ -730,7 +720,7 @@ test("a vanished file fails the WHOLE multi-select truthfully, naming the file �
   });
 
   const h = makeHarness({
-    port: fakeClipboardPort({ dropBuffer: hdropBuffer(MULTI_SELECT) }),
+    port: fakeClipboardPort({ dropList: MULTI_SELECT }),
     deliver: (payload, target) => realDeliver(payload, target),
   });
 
@@ -752,7 +742,7 @@ test("a vanished file fails the WHOLE multi-select truthfully, naming the file �
 test("slot 1 keeps a multi-select fully intact — nothing delivered, nothing written, CF_HDROP untouched", async () => {
   const writes: string[] = [];
   const h = makeHarness({
-    port: fakeClipboardPort({ dropBuffer: hdropBuffer(MULTI_SELECT), writes }),
+    port: fakeClipboardPort({ dropList: MULTI_SELECT, writes }),
   });
 
   const session = runRelaySession(h.deps);
@@ -781,7 +771,7 @@ test("a multi-select retry after delivery-unknown reuses the same payload — on
   const realDeliver = createHerdrDeliveryAdapter({ execFile, pathExists: async () => true });
 
   const h = makeHarness({
-    port: fakeClipboardPort({ dropBuffer: hdropBuffer(MULTI_SELECT) }),
+    port: fakeClipboardPort({ dropList: MULTI_SELECT }),
     clock: fakeClock.clock,
     deliver: (payload, target) => realDeliver(payload, target),
   });

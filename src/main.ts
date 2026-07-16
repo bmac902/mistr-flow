@@ -919,19 +919,45 @@ function readClipboardFilePath(): string | null {
 }
 
 /**
- * The raw `CF_HDROP` buffer — the DROPFILES struct carrying EVERY file of an
- * Explorer multi-select, where `FileNameW` above carries only the first
- * (issue #67). Raw read only: the pure parse lives in clipboardSource.ts
- * (`parseFileDropList`), behind the port, where it's unit-tested.
+ * Every absolute path of an Explorer file copy — multi-select aware — via a
+ * `Get-Clipboard -Format FileDropList` shell-out (issue #67), the same house
+ * pattern as beep/paste/copy above.
+ *
+ * A shell-out, because Electron's clipboard API cannot read a Windows file
+ * drop (verified live 2026-07-16, Electron 42): `readBuffer("CF_HDROP")`
+ * registers a *custom* format named "CF_HDROP" — the standard format is a
+ * numeric id, not a name — so it always comes back empty; and
+ * `read`/`readBuffer("text/uri-list")` return `""` even while
+ * `availableFormats()` advertises the format. `FileNameW` (above) is the only
+ * working native read and carries just the FIRST file by design. `powershell`
+ * (5.1), not pwsh: 7 dropped `Get-Clipboard -Format`. UTF-8 is forced on
+ * stdout so non-ASCII filenames survive the pipe. Null on any failure or an
+ * empty list — the port falls back to `readFilePath`.
  */
-function readClipboardFileDropBuffer(): Buffer | null {
-  try {
-    const buffer = clipboard.readBuffer("CF_HDROP");
-    return buffer && buffer.length > 0 ? buffer : null;
-  } catch {
-    // Format absent on this clipboard — not an error, just no file drop.
-    return null;
-  }
+function readClipboardFileDropList(): Promise<string[] | null> {
+  return new Promise((resolve) => {
+    execFile(
+      "powershell",
+      [
+        "-NoProfile",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName }",
+      ],
+      (error, stdout) => {
+        if (error) {
+          resolve(null);
+          return;
+        }
+        const paths = String(stdout)
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0);
+        resolve(paths.length > 0 ? paths : null);
+      },
+    );
+  });
 }
 
 function relayClipboardPort(): ClipboardSourcePort {
@@ -942,7 +968,7 @@ function relayClipboardPort(): ClipboardSourcePort {
       return { isEmpty: () => image.isEmpty(), toPNG: () => image.toPNG() };
     },
     readFilePath: () => readClipboardFilePath(),
-    readFileDropBuffer: () => readClipboardFileDropBuffer(),
+    readFileDropList: () => readClipboardFileDropList(),
     writeFile: async (filePath, data) => {
       await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
       await fs.promises.writeFile(filePath, data);
