@@ -24,3 +24,12 @@ Default vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 ### Domain docs
 
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
+
+### Claude Design assets
+
+The butler mascot in `public/overlay.html` is designed in Claude Design and
+integrated **verbatim** — never hand-edit a keyframe (timing/behavior fixes go in
+`main.ts`). Before a design session run `npm run design:canvas` to hand Claude
+Design the *live* file as its canvas; after an export run `npm run design:check`
+to catch a stale export before it breaks anything. Full round-trip in
+`docs/agents/claude-design-handoff.md`.

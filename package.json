@@ -12,7 +12,9 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "npm run build && electron .",
     "install:shortcut": "cscript //nologo scripts/install-windows-shortcut.js",
-    "sandcastle": "npx tsx .sandcastle/main.mts"
+    "sandcastle": "npx tsx .sandcastle/main.mts",
+    "design:canvas": "node scripts/design-canvas.mjs",
+    "design:check": "node scripts/design-check.mjs"
   },
   "repository": {
     "type": "git",
