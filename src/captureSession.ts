@@ -1,4 +1,5 @@
 import type { CaptureArtifact, CaptureFailureCode } from "./capture";
+import type { CropRect } from "./captureCrop";
 import type { CapturePreview } from "./captureThumbnail";
 import type { EligibleTarget, HerdrQueryResult } from "./herdr";
 import { PANE_QUERY_TIMEOUT_MS, safeMessageFor as herdrSafeMessageFor } from "./herdr";
@@ -58,7 +59,9 @@ function isCaptureGrabFailedError(
 export type CaptureSelectionEvent =
   | { readonly kind: "clipboard" }
   | { readonly kind: "target"; readonly target: EligibleTarget }
-  | { readonly kind: "escape" };
+  | { readonly kind: "escape" }
+  /** A drag on the preview: trim the capture and keep the picker open. */
+  | { readonly kind: "crop"; readonly rect: CropRect };
 
 /**
  * The injected picker handle (concrete implementation lands in the picker UI
@@ -94,6 +97,15 @@ export interface RunCaptureSessionDependencies {
    * capture or changes a delivery outcome.
    */
   renderThumbnail?(artifact: CaptureArtifact): Promise<CapturePreview | null>;
+  /**
+   * Trims a capture to `rect`, returning a fresh artifact (new id, new file)
+   * for the cropped pixels. Best-effort: null keeps the uncropped capture, so
+   * a failed crop costs the user nothing but the drag.
+   */
+  cropCapture?(
+    artifact: CaptureArtifact,
+    rect: CropRect,
+  ): Promise<CaptureArtifact | null>;
   queryEligibleTargets(): Promise<HerdrQueryResult>;
   copyToClipboard(artifact: CaptureArtifact): void | Promise<void>;
   deliver(
@@ -146,16 +158,32 @@ export async function runCaptureSession(
     return { kind: "capture-failed", code: error.code, message: error.message };
   }
 
-  // Best-effort: a thumbnail failure must never cost the user their capture,
-  // so this swallows everything and falls back to a preview-less picker.
-  let preview: CapturePreview | null = null;
-  if (dependencies.renderThumbnail) {
+  // Best-effort throughout: a thumbnail failure must never cost the user
+  // their capture, so this swallows everything and falls back to a
+  // preview-less picker.
+  async function renderPreviewFor(
+    forArtifact: CaptureArtifact,
+  ): Promise<CapturePreview | null> {
+    if (!dependencies.renderThumbnail) return null;
     try {
-      preview = await dependencies.renderThumbnail(artifact);
+      return await dependencies.renderThumbnail(forArtifact);
     } catch {
-      preview = null;
+      return null;
     }
   }
+
+  async function cropCurrent(rect: CropRect): Promise<CaptureArtifact | null> {
+    if (!dependencies.cropCapture) return null;
+    try {
+      return await dependencies.cropCapture(artifact, rect);
+    } catch {
+      return null;
+    }
+  }
+
+  const originalArtifact = artifact;
+  let preview = await renderPreviewFor(artifact);
+  const originalPreview = preview;
 
   const picker = dependencies.openPicker();
   let pickerClosed = false;
@@ -165,7 +193,17 @@ export async function runCaptureSession(
     picker.close();
   }
 
-  void dependencies.showOverlay(buildCapturePickerOverlaySnapshot([], undefined, preview));
+  // The picker re-renders on every crop/reset, so its target list and any
+  // local-only message have to outlive the async query that produced them.
+  let currentTargets: readonly EligibleTarget[] = [];
+  let currentMessage: string | undefined;
+  function showPicker(): void {
+    void dependencies.showOverlay(
+      buildCapturePickerOverlaySnapshot(currentTargets, currentMessage, preview),
+    );
+  }
+
+  showPicker();
 
   void queryTargetsWithDeadline(
     dependencies.queryEligibleTargets,
@@ -177,21 +215,39 @@ export async function runCaptureSession(
     if (pickerClosed) return;
 
     if (result.kind === "targets") {
+      currentTargets = result.targets;
       picker.appendTargets(result.targets);
-      void dependencies.showOverlay(
-        buildCapturePickerOverlaySnapshot(result.targets, undefined, preview),
-      );
     } else {
-      void dependencies.showOverlay(
-        buildCapturePickerOverlaySnapshot([], result.message, preview),
-      );
+      currentMessage = result.message;
     }
+    showPicker();
   });
 
   for (;;) {
     const selection = await picker.awaitSelection();
 
+    if (selection.kind === "crop") {
+      // Crop keeps the picker open and re-renders the preview from the
+      // cropped pixels, so the result is seen rather than assumed.
+      const cropped = await cropCurrent(selection.rect);
+      if (cropped) {
+        artifact = cropped;
+        preview = await renderPreviewFor(cropped);
+      }
+      showPicker();
+      continue;
+    }
+
     if (selection.kind === "escape") {
+      // Esc undoes a crop before it dismisses: a mis-drag that clipped the
+      // thing you wanted must cost one keypress, not the whole capture.
+      if (artifact !== originalArtifact) {
+        artifact = originalArtifact;
+        preview = originalPreview;
+        showPicker();
+        continue;
+      }
+
       closePicker();
       void dependencies.showOverlay(buildCancelledOverlaySnapshot());
       return { kind: "cancelled" };

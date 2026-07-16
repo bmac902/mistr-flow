@@ -1,3 +1,4 @@
+import type { CropRect } from "./captureCrop";
 import type { EligibleTarget } from "./herdr";
 import type { CapturePickerHandle, CaptureSelectionEvent } from "./captureSession";
 
@@ -14,8 +15,17 @@ export interface GlobalShortcutPort {
   unregister(accelerator: string): void;
 }
 
+/**
+ * Subscribes to crop drags from the renderer, returning an unsubscribe. Crops
+ * arrive over IPC rather than as accelerators — a rectangle isn't a keypress —
+ * but they resolve the same one-selection-at-a-time channel as the digits, so
+ * the orchestrator sees a single ordered event stream either way.
+ */
+export type CropSource = (emit: (rect: CropRect) => void) => () => void;
+
 export interface CapturePickerHandleDeps {
   readonly shortcuts: GlobalShortcutPort;
+  readonly cropSource?: CropSource;
 }
 
 /**
@@ -27,10 +37,11 @@ export interface CapturePickerHandleDeps {
 export function createCapturePickerHandle(
   deps: CapturePickerHandleDeps,
 ): CapturePickerHandle {
-  const { shortcuts } = deps;
+  const { shortcuts, cropSource } = deps;
   const registeredAccelerators = new Set<string>();
   let pendingResolve: ((event: CaptureSelectionEvent) => void) | null = null;
   let closed = false;
+  let unsubscribeCrop: (() => void) | null = null;
 
   function resolveSelection(event: CaptureSelectionEvent): void {
     if (closed || !pendingResolve) return;
@@ -47,6 +58,10 @@ export function createCapturePickerHandle(
 
   registerAccelerator("1", () => resolveSelection({ kind: "clipboard" }));
   registerAccelerator("Escape", () => resolveSelection({ kind: "escape" }));
+
+  if (cropSource) {
+    unsubscribeCrop = cropSource((rect) => resolveSelection({ kind: "crop", rect }));
+  }
 
   return {
     appendTargets(targets: readonly EligibleTarget[]): void {
@@ -70,6 +85,9 @@ export function createCapturePickerHandle(
       if (closed) return;
       closed = true;
       pendingResolve = null;
+
+      unsubscribeCrop?.();
+      unsubscribeCrop = null;
 
       for (const accelerator of registeredAccelerators) {
         shortcuts.unregister(accelerator);

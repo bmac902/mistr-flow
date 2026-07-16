@@ -155,3 +155,43 @@ test("createCapturePickerHandle: appendTargets after close is a no-op", () => {
 
   assert.deepEqual(shortcuts.registeredAccelerators(), []);
 });
+
+test("crop drags from the renderer resolve the same selection channel as digits", () => {
+  let emit: ((rect: { x: number; y: number; width: number; height: number }) => void) | null = null;
+  let unsubscribed = false;
+  const handle = createCapturePickerHandle({
+    shortcuts: makeFakeShortcuts(),
+    cropSource: (cb) => {
+      emit = cb;
+      return () => {
+        unsubscribed = true;
+      };
+    },
+  });
+
+  const selection = handle.awaitSelection();
+  const rect = { x: 0.1, y: 0.2, width: 0.5, height: 0.5 };
+  emit!(rect);
+
+  return selection.then((event) => {
+    assert.deepEqual(event, { kind: "crop", rect });
+
+    // The subscription is torn down with everything else on close — a crop
+    // must never resolve a closed picker.
+    handle.close();
+    assert.equal(unsubscribed, true);
+  });
+});
+
+test("a picker with no cropSource still works", () => {
+  const shortcuts = makeFakeShortcuts();
+  const handle = createCapturePickerHandle({ shortcuts });
+
+  const selection = handle.awaitSelection();
+  shortcuts.press("1");
+
+  return selection.then((event) => {
+    assert.deepEqual(event, { kind: "clipboard" });
+    handle.close();
+  });
+});

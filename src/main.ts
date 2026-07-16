@@ -12,6 +12,7 @@ import {
   type NativeImage,
 } from "electron";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -48,7 +49,12 @@ import {
   runCaptureSession,
   type CapturePickerHandle,
 } from "./captureSession";
-import { createCapturePickerHandle } from "./capturePickerHandle";
+import { createCapturePickerHandle, type CropSource } from "./capturePickerHandle";
+import {
+  cropCaptureImage,
+  type CropImagePort,
+  type CropRect,
+} from "./captureCrop";
 import {
   renderCapturePreview,
   type CapturePreview,
@@ -362,6 +368,56 @@ async function renderCaptureThumbnail(
   );
 }
 
+/** Adapts `nativeImage` to the crop port, mirroring toThumbnailPort. */
+function toCropPort(image: NativeImage): CropImagePort {
+  return {
+    getSize: () => image.getSize(),
+    crop: (rect) => toCropPort(image.crop(rect)),
+    toPNG: () => image.toPNG(),
+    isEmpty: () => image.isEmpty(),
+  };
+}
+
+/**
+ * Writes the cropped pixels as a fresh capture — new id and new file, because
+ * a crop really is a different capture: delivery injects a path, and the
+ * delivery ledger keys idempotency on (id, path, target). Reusing the id
+ * would make a post-crop retry look like a mismatched replay of the original.
+ * The new file lands beside the original and is swept by the same TTL.
+ */
+async function cropCaptureArtifact(
+  artifact: CaptureArtifact,
+  rect: CropRect,
+): Promise<CaptureArtifact | null> {
+  const png = cropCaptureImage(
+    (pngPath) => toCropPort(nativeImage.createFromPath(pngPath)),
+    artifact.pngPath,
+    rect,
+  );
+  if (!png) return null;
+
+  try {
+    const id = randomUUID();
+    const croppedPath = path.join(path.dirname(artifact.pngPath), `${id}.png`);
+    await fs.promises.writeFile(croppedPath, png);
+    return { ...artifact, id, pngPath: croppedPath };
+  } catch (error) {
+    console.warn("[mistr-flow] capture crop: failed to write cropped png:", error);
+    return null;
+  }
+}
+
+// Crop drags arrive from the renderer over IPC; the active picker handle
+// subscribes here so they join the same selection stream as the digits.
+let activeCropEmit: ((rect: CropRect) => void) | null = null;
+
+const captureCropSource: CropSource = (emit) => {
+  activeCropEmit = emit;
+  return () => {
+    if (activeCropEmit === emit) activeCropEmit = null;
+  };
+};
+
 // One adapter instance for the app's lifetime: its delivery ledger must
 // persist across a session's unknown → retry digit presses (#32). Rebuilt
 // once at startup once config (focusOnDeliver) is known — see whenReady.
@@ -373,6 +429,7 @@ function openCapturePicker(): CapturePickerHandle {
       register: (accelerator, callback) => globalShortcut.register(accelerator, callback),
       unregister: (accelerator) => globalShortcut.unregister(accelerator),
     },
+    cropSource: captureCropSource,
   });
 }
 
@@ -386,6 +443,7 @@ function startCapture(): void {
     captureActiveWindow: () => grabActiveWindow(),
     openPicker: () => openCapturePicker(),
     renderThumbnail: (artifact) => renderCaptureThumbnail(artifact),
+    cropCapture: (artifact, rect) => cropCaptureArtifact(artifact, rect),
     queryEligibleTargets: () => queryHerdr({}),
     copyToClipboard: (artifact) => copyCaptureToClipboard(artifact),
     deliver: (capture, target) => deliverCapture(capture, target),
@@ -546,6 +604,9 @@ app.whenReady().then(async () => {
   });
   ipcMain.on("move-overlay-by", (_event, delta: { deltaX: number; deltaY: number }) => {
     moveOverlayBy(delta);
+  });
+  ipcMain.on("capture-crop", (_event, rect: CropRect) => {
+    activeCropEmit?.(rect);
   });
 
   try {

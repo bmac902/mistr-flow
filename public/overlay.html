@@ -179,6 +179,7 @@ body {
  */
 #capture-preview {
   display: none;
+  position: relative;
   box-sizing: border-box;
   flex-direction: column;
   gap: 4px;
@@ -190,10 +191,13 @@ body {
   border-radius: 8px;
   background: var(--card-cream);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  /* Interactive only once it has something to crop — see updateMousePassThrough. */
   pointer-events: none;
 }
 .mf-state-capture-picker #capture-preview.has-preview {
   display: flex;
+  pointer-events: auto;
+  cursor: crosshair;
 }
 #capture-preview-image {
   display: block;
@@ -202,6 +206,16 @@ body {
   border-radius: 4px;
   background: var(--stage);
   object-fit: contain;
+  -webkit-user-drag: none;
+}
+/* Marquee drawn while dragging a crop; positioned against #capture-preview. */
+#capture-crop-rect {
+  display: none;
+  position: absolute;
+  z-index: 1;
+  border: 1px solid var(--brass);
+  background: rgba(184, 137, 60, 0.22);
+  pointer-events: none;
 }
 #capture-preview-title {
   overflow: hidden;
@@ -971,7 +985,8 @@ body {
         </svg>
       </div>
       <figure id="capture-preview">
-        <img id="capture-preview-image" alt="" />
+        <img id="capture-preview-image" alt="" draggable="false" />
+        <div id="capture-crop-rect"></div>
         <figcaption id="capture-preview-title"></figcaption>
       </figure>
       <div id="capture-picker-entries" aria-live="polite"></div>

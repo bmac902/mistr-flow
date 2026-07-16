@@ -650,3 +650,254 @@ test("runCaptureSession: no renderThumbnail dependency at all is fine", async ()
   picker.resolveSelection({ kind: "escape" });
   await session;
 });
+
+// ---------------------------------------------------------------------------
+// Crop: trim the capture in the picker
+// ---------------------------------------------------------------------------
+
+const CROP_RECT = { x: 0, y: 0.4, width: 1, height: 0.6 };
+
+const CROPPED_ARTIFACT: CaptureArtifact = {
+  ...ARTIFACT,
+  id: "capture-uuid-cropped",
+  pngPath: "/tmp/MistrFlowCaptures/capture-uuid-cropped.png",
+};
+
+const CROPPED_PREVIEW = {
+  dataUrl: "data:image/png;base64,Y3JvcA==",
+  windowTitle: "Untitled — Notepad",
+};
+
+function cropDeps(overrides: Partial<RunCaptureSessionDependencies> = {}) {
+  return baseDeps({
+    async renderThumbnail(artifact) {
+      return artifact.id === CROPPED_ARTIFACT.id ? CROPPED_PREVIEW : PREVIEW;
+    },
+    async cropCapture() {
+      return CROPPED_ARTIFACT;
+    },
+    ...overrides,
+  });
+}
+
+test("runCaptureSession: a crop re-renders the preview from the cropped pixels", async () => {
+  const { deps, states, picker } = cropDeps();
+
+  const session = runCaptureSession(deps);
+  await flush();
+  assert.deepEqual(states.at(-1)!.capturePreview, PREVIEW);
+
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+
+  // The point of cropping in the picker: you see the result, never assume it.
+  assert.equal(states.at(-1)!.phase, "capture-picker");
+  assert.deepEqual(states.at(-1)!.capturePreview, CROPPED_PREVIEW);
+
+  // Two Escs to leave: the first undoes the crop (see the reset test below).
+  picker.resolveSelection({ kind: "escape" });
+  await flush();
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});
+
+test("runCaptureSession: a crop keeps the picker open and its targets intact", async () => {
+  const { deps, states, picker } = cropDeps({
+    async queryEligibleTargets(): Promise<HerdrQueryResult> {
+      return { kind: "targets", targets: [TARGET_A, TARGET_B] };
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  await flush();
+
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+
+  assert.equal(picker.closeCallCount(), 0, "cropping never closes the picker");
+  assert.deepEqual(
+    states.at(-1)!.captureTargets,
+    [TARGET_A, TARGET_B],
+    "targets survive the crop re-render",
+  );
+
+  picker.resolveSelection({ kind: "escape" });
+  await flush();
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});
+
+test("runCaptureSession: delivery after a crop sends the CROPPED artifact", async () => {
+  const delivered: CaptureArtifact[] = [];
+  const { deps, picker } = cropDeps({
+    async deliver(capture) {
+      delivered.push(capture);
+      return { kind: "delivered" };
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+  picker.resolveSelection({ kind: "target", target: TARGET_A });
+  const result = await session;
+
+  assert.deepEqual(result, { kind: "target-delivered", target: TARGET_A });
+  assert.deepEqual(delivered, [CROPPED_ARTIFACT]);
+});
+
+test("runCaptureSession: Clipboard after a crop copies the CROPPED artifact", async () => {
+  const { deps, calls, picker } = cropDeps();
+
+  const session = runCaptureSession(deps);
+  await flush();
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+  picker.resolveSelection({ kind: "clipboard" });
+  await session;
+
+  assert.ok(calls.includes(`clipboard:${CROPPED_ARTIFACT.id}`));
+  assert.ok(!calls.includes(`clipboard:${ARTIFACT.id}`));
+});
+
+test("runCaptureSession: Esc undoes a crop before it dismisses the picker", async () => {
+  const { deps, states, picker } = cropDeps();
+
+  const session = runCaptureSession(deps);
+  await flush();
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+  assert.deepEqual(states.at(-1)!.capturePreview, CROPPED_PREVIEW);
+
+  // First Esc: back to the full capture — a mis-drag costs one keypress.
+  picker.resolveSelection({ kind: "escape" });
+  await flush();
+  assert.equal(states.at(-1)!.phase, "capture-picker");
+  assert.deepEqual(states.at(-1)!.capturePreview, PREVIEW);
+  assert.equal(picker.closeCallCount(), 0);
+
+  // Second Esc: now it dismisses.
+  picker.resolveSelection({ kind: "escape" });
+  const result = await session;
+  assert.deepEqual(result, { kind: "cancelled" });
+  assert.equal(picker.closeCallCount(), 1);
+});
+
+test("runCaptureSession: Esc after undoing a crop delivers the ORIGINAL artifact", async () => {
+  const delivered: CaptureArtifact[] = [];
+  const { deps, picker } = cropDeps({
+    async deliver(capture) {
+      delivered.push(capture);
+      return { kind: "delivered" };
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+  picker.resolveSelection({ kind: "escape" });
+  await flush();
+  picker.resolveSelection({ kind: "target", target: TARGET_A });
+  await session;
+
+  assert.deepEqual(delivered, [ARTIFACT], "the reset really restored the original");
+});
+
+test("runCaptureSession: a failed crop keeps the uncropped capture and stays open", async () => {
+  const delivered: CaptureArtifact[] = [];
+  const { deps, states, picker } = cropDeps({
+    async cropCapture() {
+      return null;
+    },
+    async deliver(capture) {
+      delivered.push(capture);
+      return { kind: "delivered" };
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+
+  assert.equal(states.at(-1)!.phase, "capture-picker");
+  assert.deepEqual(states.at(-1)!.capturePreview, PREVIEW, "still the full capture");
+  assert.equal(picker.closeCallCount(), 0);
+
+  picker.resolveSelection({ kind: "target", target: TARGET_A });
+  await session;
+  assert.deepEqual(delivered, [ARTIFACT], "delivers the uncropped grab, not nothing");
+});
+
+test("runCaptureSession: a throwing crop never costs the user their capture", async () => {
+  const { deps, states, picker } = cropDeps({
+    async cropCapture() {
+      throw new Error("nativeImage.crop exploded");
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+
+  assert.equal(states.at(-1)!.phase, "capture-picker");
+  assert.deepEqual(states.at(-1)!.capturePreview, PREVIEW);
+
+  picker.resolveSelection({ kind: "clipboard" });
+  const result = await session;
+  assert.deepEqual(result, { kind: "clipboard-delivered" });
+});
+
+test("runCaptureSession: chained crops each build on the last", async () => {
+  const cropped: CaptureArtifact[] = [];
+  let n = 0;
+  const { deps, picker } = cropDeps({
+    async cropCapture(artifact) {
+      cropped.push(artifact);
+      n += 1;
+      return { ...ARTIFACT, id: `crop-${n}`, pngPath: `/tmp/crop-${n}.png` };
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+
+  // The second crop is applied to the first crop's output — you refine what
+  // you can see, not the original you can't.
+  assert.deepEqual(
+    cropped.map((a) => a.id),
+    [ARTIFACT.id, "crop-1"],
+  );
+
+  picker.resolveSelection({ kind: "escape" });
+  await flush();
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});
+
+test("runCaptureSession: no cropCapture dependency leaves crop events inert", async () => {
+  const { deps, states, picker } = baseDeps({
+    async renderThumbnail() {
+      return PREVIEW;
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+
+  assert.equal(states.at(-1)!.phase, "capture-picker");
+  assert.equal(picker.closeCallCount(), 0);
+
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});
