@@ -108,7 +108,7 @@ function makeFakeClock(): FakeClock {
 // Fixture-driven eligibility mapping
 // ---------------------------------------------------------------------------
 
-test("mixed pane list maps only idle/working agent panes to targets", () => {
+test("mixed pane list maps only idle/working/done agent panes to targets", () => {
   const panes = parsePaneList(fixture("pane-list-mixed.json"));
   const targets = mapPanesToTargets(panes);
 
@@ -122,6 +122,11 @@ test("mixed pane list maps only idle/working agent panes to targets", () => {
       target: "term_B1",
       label: "codex · working — herdr — pane list",
       agentStatus: "working",
+    },
+    {
+      target: "term_D1",
+      label: "codex · done — release — shipped",
+      agentStatus: "done",
     },
     {
       target: "term_F1",
@@ -151,13 +156,27 @@ test("an eligible agent pane missing agent_session still uses its terminal_id", 
   assert.equal(sessionless?.agentStatus, "idle");
 });
 
-test("dead and completed agent panes are excluded", () => {
+test("dead panes are excluded; done panes are eligible — dead ≠ done (#76)", () => {
+  // A done pane is a live session waiting at its prompt (spike-verified
+  // 2026-07-16); a dead pane has vanished from the pane list. The earlier
+  // "completed/dead" wording conflated the two — this pins them apart.
   const panes = parsePaneList(fixture("pane-list-mixed.json"));
   const targets = mapPanesToTargets(panes);
   const ids = targets.map((t) => t.target);
 
   assert.ok(!ids.includes("term_C1"), "dead excluded");
-  assert.ok(!ids.includes("term_D1"), "done excluded");
+  assert.ok(ids.includes("term_D1"), "done eligible");
+});
+
+test("a done pane's picker label carries the done state", () => {
+  // Sending to a done pane is a knowing choice — the label says so, the same
+  // contract as sending to a working pane.
+  const panes = parsePaneList(fixture("pane-list-mixed.json"));
+  const targets = mapPanesToTargets(panes);
+
+  const done = targets.find((t) => t.target === "term_D1");
+  assert.equal(done?.agentStatus, "done");
+  assert.ok(done?.label.includes("done"), "label carries the done state");
 });
 
 test("panes with no agent field are excluded", () => {
@@ -201,16 +220,20 @@ test("a pane with no durable identity at all is excluded", () => {
   assert.deepEqual(targets, []);
 });
 
-test("an agent pane with a non-actionable status is excluded", () => {
-  const targets = mapPanesToTargets([
-    {
-      agent: "claude",
-      agent_status: "starting",
-      terminal_id: "term_starting",
-      cwd: "warming up",
-    },
-  ]);
-  assert.deepEqual(targets, []);
+test("agent panes with non-actionable statuses are excluded", () => {
+  // blocked and unknown stay outside the picker even now that done is in —
+  // the eligibility widening (#76) is done-only.
+  for (const status of ["starting", "blocked", "unknown"]) {
+    const targets = mapPanesToTargets([
+      {
+        agent: "claude",
+        agent_status: status,
+        terminal_id: `term_${status}`,
+        cwd: "not actionable",
+      },
+    ]);
+    assert.deepEqual(targets, [], `${status} excluded`);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -232,17 +255,19 @@ test("watched set keeps every agent-labelled pane across the full status spectru
   ]);
 });
 
-test("watched set preserves blocked and done statuses the picker would drop", () => {
+test("watched set preserves blocked and done statuses; the picker drops only blocked", () => {
   const panes = parsePaneList(fixture("pane-list-mixed.json"));
   const watched = mapPanesToWatchedSet(panes);
   const byTarget = new Map(watched.map((w) => [w.target, w.status]));
 
   assert.equal(byTarget.get("term_H1"), "blocked");
   assert.equal(byTarget.get("term_D1"), "done");
-  // ...and the picker still drops both — proving the two mappers diverge.
+  // The picker still drops blocked — proving the two mappers diverge — but
+  // done panes sit in both views since #76: watched by the fleet, sendable
+  // from the picker.
   const pickerIds = mapPanesToTargets(panes).map((t) => t.target);
   assert.ok(!pickerIds.includes("term_H1"), "blocked not eligible");
-  assert.ok(!pickerIds.includes("term_D1"), "done not eligible");
+  assert.ok(pickerIds.includes("term_D1"), "done eligible");
 });
 
 test("watched set excludes bare shells and unlabelled panes", () => {
@@ -515,7 +540,7 @@ test("queryHerdr returns mapped targets on the happy path", async () => {
   });
 
   assert.equal(result.kind, "targets");
-  assert.equal(result.kind === "targets" ? result.targets.length : -1, 3);
+  assert.equal(result.kind === "targets" ? result.targets.length : -1, 4);
 });
 
 test("queryHerdr short-circuits to unavailable without querying panes", async () => {
@@ -595,7 +620,7 @@ test("queryWatchedSet returns the whole watched set, not just eligible targets",
   assert.equal(result.kind, "watched");
   const agents = result.kind === "watched" ? result.agents : [];
   // Every agent-labelled pane with a durable id — idle/working/dead/done/blocked
-  // alike — unlike the picker's 3 eligible (idle/working only) targets.
+  // alike — unlike the picker's 4 eligible (idle/working/done only) targets.
   assert.deepEqual(
     agents.map((a) => a.status).sort(),
     ["blocked", "done", "idle", "idle", "unknown", "working"],
