@@ -30,11 +30,14 @@ interface FakeClipboard {
   port: ClipboardSourcePort;
   writes: Map<string, Buffer | string>;
   mintCount: () => number;
+  /** How many times readFileDropList ran — a subprocess spawn in production. */
+  dropListReads: () => number;
 }
 
 function fakeClipboard(options: FakeClipboardOptions = {}): FakeClipboard {
   const writes = new Map<string, Buffer | string>();
   let minted = 0;
+  let dropListReads = 0;
   const imagePng = options.imagePng;
 
   const image: ClipboardImagePort = {
@@ -45,8 +48,16 @@ function fakeClipboard(options: FakeClipboardOptions = {}): FakeClipboard {
   const port: ClipboardSourcePort = {
     readText: () => options.text ?? "",
     readImage: () => image,
-    readFilePath: () => options.filePath ?? null,
-    readFileDropList: async () => options.dropList ?? null,
+    // FileNameW always accompanies a real file drop — Windows sets both
+    // formats on an Explorer copy — so unless a test says otherwise the
+    // FileNameW read mirrors the drop list's first entry. The
+    // production-impossible "drop list but no FileNameW" clipboard must not
+    // be expressible by accident (#72: FileNameW gates the drop-list read).
+    readFilePath: () => options.filePath ?? options.dropList?.[0] ?? null,
+    readFileDropList: async () => {
+      dropListReads += 1;
+      return options.dropList ?? null;
+    },
     writeFile: async (filePath, data) => {
       writes.set(filePath, data);
     },
@@ -55,7 +66,12 @@ function fakeClipboard(options: FakeClipboardOptions = {}): FakeClipboard {
     captureDir: CAPTURE_DIR,
   };
 
-  return { port, writes, mintCount: () => minted };
+  return {
+    port,
+    writes,
+    mintCount: () => minted,
+    dropListReads: () => dropListReads,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +365,23 @@ test("no text, no image and no file is still an empty clipboard", async () => {
   assert.equal((await readClipboardSource(port)).kind, "empty");
 });
 
+test("an empty clipboard never pays the drop-list subprocess spawn (#72)", async () => {
+  // readFileDropList is a PowerShell shell-out in production (hundreds of ms
+  // on a cold spawn). readFilePath (FileNameW) is a free in-process read that
+  // is non-null exactly when a file copy is present — so a null FileNameW must
+  // short-circuit to `empty` without ever spawning the subprocess.
+  const { port, dropListReads } = fakeClipboard({
+    text: "",
+    imagePng: null,
+    filePath: null,
+  });
+
+  const source = await readClipboardSource(port);
+
+  assert.equal(source.kind, "empty");
+  assert.equal(dropListReads(), 0, "empty clipboard must not spawn PowerShell");
+});
+
 test("a blank file path is treated as no file, never as a payload", async () => {
   const { port } = fakeClipboard({ filePath: "   " });
 
@@ -446,10 +479,17 @@ test("a null drop list (shell-out failed or format absent) falls back to the Fil
   assert.equal(source.filePath, COPIED_FILE);
 });
 
-test("a drop list of blank entries is no file at all, never a payload", async () => {
-  const { port } = fakeClipboard({ dropList: ["   ", " "] });
+test("a drop list of blank entries falls back to the FileNameW read, never a payload", async () => {
+  // A degenerate shell-out result (whitespace-only lines) filters to nothing;
+  // the in-process FileNameW path — the gate that let the shell-out run at
+  // all — remains as the single-file fallback, exactly as for a null list.
+  const { port } = fakeClipboard({ dropList: ["   ", " "], filePath: COPIED_FILE });
 
-  assert.equal((await readClipboardSource(port)).kind, "empty");
+  const source = await readClipboardSource(port);
+
+  assert.equal(source.kind, "file");
+  if (source.kind !== "file") return;
+  assert.equal(source.filePath, COPIED_FILE);
 });
 
 test("text still wins over a multi-select; an image still wins too", async () => {

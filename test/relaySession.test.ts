@@ -84,7 +84,10 @@ function fakeClipboardPort(options: {
   return {
     readText: () => options.text ?? "",
     readImage: () => image,
-    readFilePath: () => options.filePath ?? null,
+    // FileNameW always accompanies a real file drop (mirrors the invariant
+    // documented in clipboardSource.test.ts) — readFilePath gates the
+    // drop-list shell-out (#72), so a fake drop list needs it non-null.
+    readFilePath: () => options.filePath ?? options.dropList?.[0] ?? null,
     readFileDropList: async () => options.dropList ?? null,
     writeFile: async (filePath) => {
       options.writes?.push(filePath);

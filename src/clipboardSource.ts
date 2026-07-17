@@ -71,8 +71,9 @@ export interface ClipboardSourcePort {
    * `clipboard.readBuffer("FileNameW")` as UTF-16LE.
    *
    * Single file only: `FileNameW` carries just the first of a multi-select —
-   * by design. It stays as the fallback when {@link readFileDropBuffer}'s
-   * `CF_HDROP` is absent or unparseable (issue #67).
+   * by design. As the free in-process read it gates {@link readFileDropList}'s
+   * subprocess spawn (issue #72) and stays as the fallback when that list
+   * comes back null or empty (issue #67).
    */
   readFilePath(): string | null;
   /**
@@ -183,10 +184,18 @@ export async function readClipboardSource(
   }
 
   // Last, because a file copy is the only case that sets neither text nor a
-  // bitmap — so it can't collide with the branches above (which also means
-  // the drop-list subprocess only ever runs for a file copy). The drop list
-  // first: it carries EVERY file of a multi-select, where FileNameW carries
-  // only the first (issue #67). FileNameW stays as the fallback for a null
+  // bitmap — so it can't collide with the branches above. FileNameW is the
+  // gate: it's a free in-process read that is non-null exactly when an
+  // Explorer file copy is present, so a truly empty clipboard returns here
+  // without ever paying the drop-list subprocess spawn (issue #72).
+  const filePath = port.readFilePath();
+  if (!filePath || filePath.trim().length === 0) {
+    return { kind: "empty" };
+  }
+
+  // A file copy is present — now the drop-list shell-out is worth its cost:
+  // it carries EVERY file of a multi-select, where FileNameW carries only
+  // the first (issue #67). FileNameW stays as the fallback for a null/empty
   // list, so a plain single-file copy can never regress.
   const dropPaths = await port.readFileDropList();
   const filePaths = (dropPaths ?? [])
@@ -196,12 +205,7 @@ export async function readClipboardSource(
     return classifyFiles(port, filePaths);
   }
 
-  const filePath = port.readFilePath();
-  if (filePath && filePath.trim().length > 0) {
-    return classifyFile(port, filePath.trim());
-  }
-
-  return { kind: "empty" };
+  return classifyFile(port, filePath.trim());
 }
 
 /**
