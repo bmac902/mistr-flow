@@ -1,12 +1,12 @@
 # The open picker is modal — rows are buttons, the butler is the handle
 
-Status: accepted (2026-07-16)
+Status: accepted (2026-07-16); amended 2026-07-16 (Relay's slot 1 returned — #64, decision 1)
 
 The picker's numbered rows are styled like buttons, and the instinct is to click them — but they only answer to digit keys ("they come up, and they look like buttons, and you can't click them" — the #47 pain, verbatim). The original plan was to arbitrate click-vs-drag on the rows with the same threshold gesture the resting bar uses. Living with the shipped picker killed that plan: **by the time the picker is open you are in "choose a destination" mode, not "reposition the window" mode.** The right move is not to adjudicate the ambiguity but to remove it.
 
 ## Decisions
 
-1. **Full parity: every key-cap row clicks.** Digits 2–9, slot 1 where present (Capture's Clipboard, Herald's Paste-here; Relay renders none), and the ⟲ again-row (ADR 0004 deferred its clickability here). An unmarked again-row clicks as the same truthful no-op its key produces. Rejected: panes-only clickability — three row kinds styled identically as buttons where only some button doesn't fix the lie, it shrinks it.
+1. **Full parity: every key-cap row clicks.** Digits 2–9, slot 1 where present (Capture's Clipboard, Herald's Paste-here; Relay rendered none when this was accepted — **amended 2026-07-16**: #64 returned Relay's slot 1 as "1 Clipboard" = keep the copy, an ordinary clickable key-cap row like the rest; see CONTEXT.md "Slot 1 is the local outcome"), and the ⟲ again-row (ADR 0004 deferred its clickability here). An unmarked again-row clicks as the same truthful no-op its key produces. Rejected: panes-only clickability — three row kinds styled identically as buttons where only some button doesn't fix the lie, it shrinks it.
 
 2. **A mouse click is another way to press the row's key — never a second implementation.** A click dispatches the *exact same selection event* through the picker handle's one-selection-at-a-time channel and flows down the identical delivery path — ledger, idempotent unknown→retry, bracketed paste, slot-1 semantics, again-resolution all inherited, not re-implemented. Mechanically this is the established injected-source shape (crops and again-confirms already arrive this way), and a stale click after close is dropped by the same instance binding.
 
