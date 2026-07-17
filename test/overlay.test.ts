@@ -344,6 +344,11 @@ test("picker rows speak the three-channel grammar — keycap=agent, glyph=projec
   assert.match(renderer, /buildPickerEntryEl\(index \+ 2, target\.label, target\)/);
   assert.match(renderer, /target\.anchor/);
   assert.match(renderer, /entry\.title = label/);
+  // The status word wears its meaning's color — reinforcing WHAT, never a
+  // fourth competing channel. Done echoes the badge's gold.
+  assert.match(renderer, /STATUS_COLORS/);
+  assert.match(renderer, /capture-picker-entry-status/);
+  assert.match(renderer, /blocked:/);
   // The shell resolves anchors before the snapshot ships; the adapter stays
   // ignorant of projects.
   assert.match(main, /queryAnchoredTargets/);

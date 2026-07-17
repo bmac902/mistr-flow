@@ -407,8 +407,24 @@ const PROJECT_GLYPHS = {
     '<svg viewBox="0 0 16 16"><path d="M6.4 2.6h3.2M7.4 2.6v4.1l-3.7 6c-.5.9.1 1.9 1.1 1.9h6.4c1 0 1.6-1 1.1-1.9l-3.7-6V2.6" fill="none"/><path d="M5.4 10.4h5.2" fill="none"/></svg>',
 };
 
+// WHAT, reinforced — the status word wears its meaning's color (2026-07-17):
+// same channel as the text (color + word reinforce, never compete with the
+// keycap's WHO). Shades are darkened for legibility on the cream row; done
+// deliberately echoes the gold the done-badge already taught. Blocked/unknown
+// never reach a picker today (not Eligible) but the map carries no holes.
+const STATUS_COLORS = {
+  idle: "#4A729E",
+  working: "#4E7D45",
+  done: "#9C7A26",
+  blocked: "#A8452F",
+  unknown: "#8A8072",
+};
+
 const projectAnchorStyle = document.createElement("style");
 projectAnchorStyle.textContent = `
+  .capture-picker-entry-status {
+    font-weight: 600;
+  }
   .capture-picker-entry-glyph {
     flex: none;
     width: 15px;
@@ -472,7 +488,14 @@ function buildPickerEntryEl(digit, label, target) {
     const name =
       (target.anchor && target.anchor.name) || basenameOf(target.cwd) || target.agent;
     if (name && target.agentStatus) {
-      labelEl.textContent = `${name} · ${target.agentStatus}`;
+      labelEl.textContent = "";
+      labelEl.appendChild(document.createTextNode(`${name} · `));
+      const statusEl = document.createElement("span");
+      statusEl.className = "capture-picker-entry-status";
+      statusEl.textContent = target.agentStatus;
+      const statusColor = STATUS_COLORS[target.agentStatus];
+      if (statusColor) statusEl.style.color = statusColor;
+      labelEl.appendChild(statusEl);
       entry.title = label;
     }
   }
