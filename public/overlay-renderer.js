@@ -103,6 +103,12 @@ stageWidthStyle.textContent = `
   #mistr-flow-overlay { width: 350px; }
   #mistr-flow-card { width: 336px; }
   #capture-picker-entries { width: 336px; }
+  /* Preview/crop area rides along (CAPTURE_PREVIEW_BOX grew 260×146 → 318×179
+     in captureThumbnail.ts; CAPTURE_PREVIEW_BLOCK_HEIGHT 186 → 219): a wider
+     thumbnail means a finer crop gesture — the whole point of the widening. */
+  #capture-preview { width: 336px; }
+  #capture-preview-image { height: 179px; }
+  #capture-preview-text { height: 179px; }
 `;
 document.head.appendChild(stageWidthStyle);
 

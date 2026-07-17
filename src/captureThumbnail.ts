@@ -18,8 +18,14 @@ export interface ThumbnailSize {
   readonly height: number;
 }
 
-/** The box the preview is fitted into. Mirrored by the CSS frame in overlay.html. */
-export const CAPTURE_PREVIEW_BOX: ThumbnailSize = { width: 260, height: 146 };
+/**
+ * The box the preview is fitted into. Mirrored by the CSS frame — overlay.html
+ * ships the original 280px frame and the renderer's TV-scale overrides widen it
+ * to 336 (dogfood 2026-07-16: grown from 260×146, the "one constant to grow if
+ * cropping proves too coarse" moment CONTEXT.md reserved). 318 = 336 frame −
+ * 16 padding − 2 border; 179 keeps the same 16:9.
+ */
+export const CAPTURE_PREVIEW_BOX: ThumbnailSize = { width: 318, height: 179 };
 
 /** What the renderer needs to draw the preview: the image, and what it is. */
 export interface CapturePreview {

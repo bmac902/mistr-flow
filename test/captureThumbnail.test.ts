@@ -54,7 +54,7 @@ function loaderFor(options: FakeImageOptions = {}) {
 test("fitWithin scales a landscape source down into the box, preserving aspect", () => {
   const fitted = fitWithin({ width: 1920, height: 1080 }, CAPTURE_PREVIEW_BOX);
 
-  assert.deepEqual(fitted, { width: 260, height: 146 });
+  assert.deepEqual(fitted, { width: 318, height: 179 });
   assert.ok(fitted.width <= CAPTURE_PREVIEW_BOX.width);
   assert.ok(fitted.height <= CAPTURE_PREVIEW_BOX.height);
 });
@@ -62,15 +62,15 @@ test("fitWithin scales a landscape source down into the box, preserving aspect",
 test("fitWithin scales a portrait source to the box height, not its width", () => {
   const fitted = fitWithin({ width: 900, height: 1400 }, CAPTURE_PREVIEW_BOX);
 
-  // Height-bound: 146/1400 scales width to ~94 — letterboxed, never stretched.
-  assert.deepEqual(fitted, { width: 94, height: 146 });
+  // Height-bound: 179/1400 scales width to ~115 — letterboxed, never stretched.
+  assert.deepEqual(fitted, { width: 115, height: 179 });
   assert.ok(fitted.width <= CAPTURE_PREVIEW_BOX.width);
 });
 
 test("fitWithin fits a square source inside the shorter box dimension", () => {
   const fitted = fitWithin({ width: 1000, height: 1000 }, CAPTURE_PREVIEW_BOX);
 
-  assert.deepEqual(fitted, { width: 146, height: 146 });
+  assert.deepEqual(fitted, { width: 179, height: 179 });
 });
 
 test("fitWithin never upscales a source already smaller than the box", () => {
@@ -113,7 +113,7 @@ test("renderCapturePreview resizes to the fitted size before encoding", () => {
   );
 
   // Resized once, to the contain-fit — not the full-resolution grab.
-  assert.deepEqual(resizes, [{ width: 260, height: 146 }]);
+  assert.deepEqual(resizes, [{ width: 318, height: 179 }]);
 });
 
 test("renderCapturePreview returns null for an empty image — createFromPath's miss signal", () => {
