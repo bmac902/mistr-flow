@@ -76,6 +76,23 @@ const doneBadgeEl = document.createElement("div");
 doneBadgeEl.id = "mf-done-badge";
 cardEl.appendChild(doneBadgeEl);
 
+// TV-scale nudge (dogfood 2026-07-16): on the 42" 4K the butler reads tiny, so
+// the mascot ensemble — butler + mic, the whole #mascot SVG — gets an 18% lift.
+// Renderer-owned override, same discipline as the chip above: overlay.html is a
+// Claude Design asset and stays byte-identical. The stage and its floor shadow
+// keep their designed size ("the whole thing, not the stage"): the scale
+// anchors at his feet (origin bottom-center), so he grows up and out, planted
+// on the same mark, and the chained translateX preserves the asset's own
+// centering.
+const mascotScaleStyle = document.createElement("style");
+mascotScaleStyle.textContent = `
+  #mascot {
+    transform: translateX(-50%) scale(1.25);
+    transform-origin: 50% 100%;
+  }
+`;
+document.head.appendChild(mascotScaleStyle);
+
 // Reflect the current done count onto the chip. Idle-only falls out for free:
 // only the fleet-posture snapshots carry doneCount, and those are the resting
 // bar; verb snapshots omit it, so the chip clears the moment a verb takes over.
