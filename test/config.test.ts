@@ -11,6 +11,7 @@ import {
   readMuteSystemAudioWhileRecording,
   readDoneChime,
   readPersistentBlockDing,
+  readAppTargets,
   readOpenAiApiKey,
   readOverlayPosition,
   readProjectAnchors,
@@ -54,6 +55,43 @@ test("readProjectAnchors is empty — never fatal — when the key or the file i
 
   const emptyRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
   assert.deepEqual(await readProjectAnchors({ APPDATA: emptyRoot }, fs), []);
+});
+
+test("readAppTargets returns validated app targets from config", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      openaiApiKey: "test-api-key",
+      appTargets: [
+        { id: "chatgpt", label: "ChatGPT", process: "ChatGPT", glyph: "chatgpt" },
+        { id: "no-matcher", label: "junk" },
+      ],
+    }),
+  );
+
+  const targets = await readAppTargets({ APPDATA: tempRoot }, fs);
+
+  assert.deepEqual(targets, [
+    { id: "chatgpt", label: "ChatGPT", process: "ChatGPT", glyph: "chatgpt" },
+  ]);
+});
+
+test("readAppTargets is empty — never fatal — when the key or the file is missing", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key" }),
+  );
+
+  assert.deepEqual(await readAppTargets({ APPDATA: tempRoot }, fs), []);
+
+  const emptyRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  assert.deepEqual(await readAppTargets({ APPDATA: emptyRoot }, fs), []);
 });
 
 test("getConfigPath resolves the Windows config location from APPDATA", () => {

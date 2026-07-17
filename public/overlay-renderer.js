@@ -382,6 +382,10 @@ const AGENT_CAP_COLORS = {
   copilot: { background: "#4C8DF6", ink: "" },
   hermes: { background: "#F2C14E", ink: "#2b2416" },
   codex: { background: "#8E97A3", ink: "" },
+  // Not an agent species — the ChatGPT app target's keycap. Near-black to read
+  // as ChatGPT's own mark and to separate it from claude's terracotta; the cream
+  // digit keeps its contrast.
+  chatgpt: { background: "#111111", ink: "" },
 };
 
 // WHERE — the glyph library. Hand-drawn for Mistr Flow (deliberately NOT
@@ -406,6 +410,10 @@ const PROJECT_GLYPHS = {
   // An erlenmeyer flask for scratch/experiment folders.
   flask:
     '<svg viewBox="0 0 16 16"><path d="M6.4 2.6h3.2M7.4 2.6v4.1l-3.7 6c-.5.9.1 1.9 1.1 1.9h6.4c1 0 1.6-1 1.1-1.9l-3.7-6V2.6" fill="none"/><path d="M5.4 10.4h5.2" fill="none"/></svg>',
+  // A speech bubble with two text lines — for app relay targets like ChatGPT.
+  // A visual anchor for "a chat you paste into", deliberately NOT a product logo.
+  chatgpt:
+    '<svg viewBox="0 0 16 16"><path d="M3 3.4h10c.6 0 1 .5 1 1v5.4c0 .6-.4 1-1 1H7l-3 2.4v-2.4H3c-.6 0-1-.4-1-1V4.4c0-.5.4-1 1-1Z" fill="none"/><path d="M5.4 7.4h5.2M5.4 9.2h3.2" fill="none"/></svg>',
 };
 
 // WHAT, reinforced — the status word wears its meaning's color (2026-07-17):
@@ -474,8 +482,11 @@ function buildPickerEntryEl(digit, label, target) {
       if (cap.ink) digitEl.style.color = cap.ink;
     }
 
-    // WHERE — the project glyph, when this cwd is anchored in config.
-    const glyphSvg = target.anchor && PROJECT_GLYPHS[target.anchor.glyph];
+    // WHERE — the glyph. A pane resolves it from its Project Anchor; an app
+    // target (kind:"app") carries its own glyph on target.app.
+    const glyphId =
+      (target.anchor && target.anchor.glyph) || (target.app && target.app.glyph);
+    const glyphSvg = glyphId && PROJECT_GLYPHS[glyphId];
     if (glyphSvg) {
       const glyphEl = document.createElement("span");
       glyphEl.className = "capture-picker-entry-glyph";
@@ -483,21 +494,27 @@ function buildPickerEntryEl(digit, label, target) {
       entry.appendChild(glyphEl);
     }
 
-    // WHAT — friendly name · status; unanchored panes fall back to the cwd
-    // basename, and a cwd-less pane to the agent's name. The raw label stays
-    // reachable as the hover title, so no information is ever lost.
-    const name =
-      (target.anchor && target.anchor.name) || basenameOf(target.cwd) || target.agent;
-    if (name && target.agentStatus) {
-      labelEl.textContent = "";
-      labelEl.appendChild(document.createTextNode(`${name} · `));
-      const statusEl = document.createElement("span");
-      statusEl.className = "capture-picker-entry-status";
-      statusEl.textContent = target.agentStatus;
-      const statusColor = STATUS_COLORS[target.agentStatus];
-      if (statusColor) statusEl.style.color = statusColor;
-      labelEl.appendChild(statusEl);
+    if (target.kind === "app") {
+      // An app target has no agent status — its label ("ChatGPT") is the whole
+      // WHAT. Leave the label as passed; keep it reachable as the hover title.
       entry.title = label;
+    } else {
+      // WHAT — friendly name · status; unanchored panes fall back to the cwd
+      // basename, and a cwd-less pane to the agent's name. The raw label stays
+      // reachable as the hover title, so no information is ever lost.
+      const name =
+        (target.anchor && target.anchor.name) || basenameOf(target.cwd) || target.agent;
+      if (name && target.agentStatus) {
+        labelEl.textContent = "";
+        labelEl.appendChild(document.createTextNode(`${name} · `));
+        const statusEl = document.createElement("span");
+        statusEl.className = "capture-picker-entry-status";
+        statusEl.textContent = target.agentStatus;
+        const statusColor = STATUS_COLORS[target.agentStatus];
+        if (statusColor) statusEl.style.color = statusColor;
+        labelEl.appendChild(statusEl);
+        entry.title = label;
+      }
     }
   }
 

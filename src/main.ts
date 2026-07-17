@@ -25,6 +25,7 @@ import {
   getConfigPath,
   readCopySelectionFirst,
   readDoneChime,
+  readAppTargets,
   readFocusOnDeliver,
   readPersistentBlockDing,
   readMuteSystemAudioWhileRecording,
@@ -97,6 +98,16 @@ import {
   type ThumbnailImagePort,
 } from "./captureThumbnail";
 import { captureArtifactToPayload, createHerdrDeliveryAdapter } from "./deliver";
+import {
+  appTargetToEligibleTarget,
+  type AppTarget,
+} from "./appTargets";
+import {
+  createAppDeliveryAdapter,
+  createRoutingDeliveryAdapter,
+  type AppDeliveryDeps,
+} from "./appDeliver";
+import { composePickerTargets } from "./pickerTargets";
 import { createLastTargetMemory, withLastTargetRecording } from "./lastTarget";
 import { queryHerdr, queryWatchedSet, readHerdrSocketPath } from "./herdr";
 import {
@@ -115,6 +126,11 @@ let muteSystemAudioWhileRecording = true;
 // back to raw labels. Deliberately config, never source — two machines, two
 // project sets, and MF learns no project semantics.
 let projectAnchors: ProjectAnchor[] = [];
+// App Targets (ChatGPT-as-target, 2026-07-17): per-machine config-driven relay
+// destinations that are NOT Herdr panes — focus the app's window and paste.
+// Read once at startup; empty means the picker offers no app targets. Same
+// "config, never source; MF learns no app semantics" posture as projectAnchors.
+let appTargets: AppTarget[] = [];
 let copySelectionFirst = false;
 // PRD #44 / #51: the persistent-block ding is on by default; config can silence
 // the sound while keeping the visual fleet awareness. Read once at startup.
@@ -456,6 +472,29 @@ function simulateCopyKeystroke(): Promise<void> {
         "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^c')",
       ],
       () => resolve(),
+    );
+  });
+}
+
+/**
+ * Sends an arbitrary SendKeys string to the foreground window — the composer-
+ * focus keystroke for an app target (`pasteFocusKeys`). Generalizes the copy/
+ * paste keystroke helpers above. Single quotes are doubled so a stray quote in
+ * config can't break the single-quoted PowerShell string (per-machine config is
+ * trusted, so this is robustness, not a security boundary).
+ */
+function sendKeysRaw(keys: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "powershell",
+      [
+        "-NoProfile",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${keys.replace(/'/g, "''")}')`,
+      ],
+      (error) => (error ? reject(error) : resolve()),
     );
   });
 }
@@ -839,14 +878,17 @@ function registerJumpHotkey(): void {
  * and a miss changes nothing (the row falls back to its raw label).
  */
 function queryAnchoredTargets(): ReturnType<typeof queryHerdr> {
-  return queryHerdr({}).then((result) => {
-    if (result.kind !== "targets") return result;
-    const targets: AnchoredTarget[] = result.targets.map((target) => {
+  const apps = appTargets.map(appTargetToEligibleTarget);
+  return queryHerdr({}).then((result) =>
+    // The pure composer (src/pickerTargets.ts) merges the live panes with the
+    // config app targets: panes keep the low digits (anchored here), apps append
+    // after, and — crucially — the apps survive a Herdr-down poll so they (and an
+    // app Last Target's again-row) never vanish just because Herdr is unreachable.
+    composePickerTargets(result, apps, (target): AnchoredTarget => {
       const anchor = resolveProjectAnchor(target.cwd, projectAnchors);
       return anchor ? { ...target, anchor } : target;
-    });
-    return { ...result, targets };
-  });
+    }),
+  );
 }
 
 function grabActiveWindow(): Promise<CaptureArtifact> {
@@ -1049,13 +1091,35 @@ function hotkeyLabelFor(accelerator: string): string {
 // never reach it (they don't go through deliver at all).
 const lastTargetMemory = createLastTargetMemory();
 
-// One adapter instance for the app's lifetime: its delivery ledger must
-// persist across a session's unknown → retry digit presses (#32). Rebuilt
-// once at startup once config (focusOnDeliver) is known — see whenReady.
-let deliverCapture = withLastTargetRecording(
-  createHerdrDeliveryAdapter(),
-  lastTargetMemory,
-);
+// Electron-backed ports for app-target delivery (ChatGPT-as-target, 2026-07-17):
+// clipboard write (image|text) + Ctrl+V, with an optional composer-focus
+// keystroke. The window-focus port defaults to the real focusAppWindow inside
+// the adapter, so it isn't wired here; pathExists/readTextFile default to fs.
+const appDeliveryPorts: AppDeliveryDeps = {
+  writeImageToClipboard: (pngPath) =>
+    clipboard.writeImage(nativeImage.createFromPath(pngPath)),
+  writeTextToClipboard: (text) => clipboard.writeText(text),
+  simulatePaste: () => simulatePasteKeystroke(),
+  sendKeys: (keys) => sendKeysRaw(keys),
+};
+
+// One adapter instance for the app's lifetime: the Herdr AND app delivery
+// ledgers must persist across a session's unknown → retry digit presses (#32),
+// so the router that owns both is built once and rebuilt once at startup when
+// config (focusOnDeliver) is known — see whenReady. withLastTargetRecording
+// wraps the ROUTER, so a delivered ChatGPT paste records ChatGPT as the shared
+// Last Target and "again" repeats to it, for free.
+function buildDeliverCapture(focusOnDeliver: boolean) {
+  return withLastTargetRecording(
+    createRoutingDeliveryAdapter({
+      herdr: createHerdrDeliveryAdapter({ focusOnDeliver }),
+      app: createAppDeliveryAdapter(appDeliveryPorts),
+    }),
+    lastTargetMemory,
+  );
+}
+
+let deliverCapture = buildDeliverCapture(false);
 
 function openCapturePicker(): CapturePickerHandle {
   return createCapturePickerHandle({
@@ -1426,10 +1490,7 @@ app.whenReady().then(async () => {
     muteSystemAudioWhileRecording = await readMuteSystemAudioWhileRecording();
     const focusOnDeliver = await readFocusOnDeliver();
     console.log("[mistr-flow] config: focusOnDeliver =", focusOnDeliver);
-    deliverCapture = withLastTargetRecording(
-      createHerdrDeliveryAdapter({ focusOnDeliver }),
-      lastTargetMemory,
-    );
+    deliverCapture = buildDeliverCapture(focusOnDeliver);
     copySelectionFirst = await readCopySelectionFirst();
     console.log("[mistr-flow] config: copySelectionFirst =", copySelectionFirst);
     persistentBlockDing = await readPersistentBlockDing();
@@ -1438,6 +1499,8 @@ app.whenReady().then(async () => {
     console.log("[mistr-flow] config: doneChime =", doneChime);
     projectAnchors = await readProjectAnchors();
     console.log("[mistr-flow] config: projectAnchors =", projectAnchors.length);
+    appTargets = await readAppTargets();
+    console.log("[mistr-flow] config: appTargets =", appTargets.length);
   } catch (error) {
     dialog.showErrorBox("Mistr Flow config error", String(error));
     app.quit();

@@ -1,5 +1,7 @@
 import { execFile as nodeExecFile } from "node:child_process";
 
+import type { AppTargetView } from "./appTargets";
+
 // Mistr Flow talks to Herdr through the supported `herdr` CLI (ADR 0001). The
 // single exception is `client.window_title.*`, which has no CLI equivalent and
 // is the only way to identify Herdr's host terminal window — that one call goes
@@ -112,6 +114,21 @@ export interface EligibleTarget {
   readonly agent: string;
   /** The pane's working directory when Herdr reports one — the WHERE channel. */
   readonly cwd: string | null;
+  /**
+   * The target kind. Absent or "herdr" ⇒ a live Herdr pane (this module's
+   * {@link mapPane} mints only these). "app" ⇒ a config-driven app relay target
+   * (src/appTargets.ts): NOT a pane — delivered by focus+paste (src/appDeliver.ts),
+   * independent of Herdr availability, and never entered into the Watched Set
+   * (that comes from a different query, {@link mapPanesToWatchedSet}).
+   */
+  readonly kind?: "herdr" | "app";
+  /**
+   * Present iff `kind === "app"`: the app window matcher + row presentation
+   * (src/appTargets.ts). The pane fields above (`agentStatus`/`agent`/`cwd`) are
+   * inert placeholders for an app target and are never read on the app path —
+   * the renderer and the deliver router both branch on `kind` first.
+   */
+  readonly app?: AppTargetView;
 }
 
 /**

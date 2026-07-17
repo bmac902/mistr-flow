@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+import { normalizeAppTargets, type AppTarget } from "./appTargets";
 import { isFiniteOverlayPosition, type OverlayPosition } from "./overlayPosition";
 import { normalizeProjectAnchors, type ProjectAnchor } from "./projectAnchors";
 
@@ -17,6 +18,7 @@ export interface AppConfig {
   doneChime?: unknown;
   provider?: unknown;
   projectAnchors?: unknown;
+  appTargets?: unknown;
 }
 
 export interface VocabularyReplacement {
@@ -234,6 +236,32 @@ export async function readProjectAnchors(
 
   const parsed = JSON.parse(rawConfig) as AppConfig;
   return normalizeProjectAnchors(parsed.projectAnchors);
+}
+
+/**
+ * Per-machine, deliberately never source (app-targets design, 2026-07-17):
+ * Mistr Flow runs on machines with different apps installed, and MF learns no
+ * app semantics — each machine's config names its own relay targets (e.g.
+ * ChatGPT). Missing file or key is an empty list, never fatal: the picker
+ * simply offers no app targets until they're configured. Mirrors
+ * {@link readProjectAnchors}.
+ */
+export async function readAppTargets(
+  env: NodeJS.ProcessEnv = process.env,
+  fileSystem = fs,
+): Promise<AppTarget[]> {
+  const configPath = getConfigPath(env);
+
+  let rawConfig: string;
+  try {
+    rawConfig = await fileSystem.readFile(configPath, "utf8");
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return [];
+    throw error;
+  }
+
+  const parsed = JSON.parse(rawConfig) as AppConfig;
+  return normalizeAppTargets(parsed.appTargets);
 }
 
 export async function writeOverlayPosition(

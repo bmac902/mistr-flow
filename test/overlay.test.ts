@@ -344,6 +344,11 @@ test("picker rows speak the three-channel grammar — keycap=agent, glyph=projec
   assert.match(renderer, /buildPickerEntryEl\(index \+ 2, target\.label, target\)/);
   assert.match(renderer, /target\.anchor/);
   assert.match(renderer, /entry\.title = label/);
+  // App targets (ChatGPT-as-target): the glyph reads from target.app, and the
+  // status suffix is suppressed — an app row's label is the whole WHAT.
+  assert.match(renderer, /target\.app/);
+  assert.match(renderer, /kind === "app"/);
+  assert.match(renderer, /chatgpt:/);
   // The status word wears its meaning's color — reinforcing WHAT, never a
   // fourth competing channel. Done echoes the badge's gold.
   assert.match(renderer, /STATUS_COLORS/);
