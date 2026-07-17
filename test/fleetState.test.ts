@@ -250,6 +250,125 @@ test("a persistent block that vanishes before its ding never fires it", () => {
   assert.deepEqual(posture.newlyPersistentBlockedTargets, []);
 });
 
+test("a watched agent reporting done appears in the done count/targets on that same observe — no dwell", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  // Reported done at t=0: it counts immediately, unlike blocked which must dwell.
+  const posture = fleet.observe(panes(agent("term_A", "done")), 0);
+  assert.equal(posture.doneCount, 1);
+  assert.deepEqual(posture.doneTargets, ["term_A"]);
+  // Done never touches the bottleneck tier.
+  assert.equal(posture.tier, "0");
+  assert.equal(posture.blockedCount, 0);
+});
+
+test("done targets order oldest-episode-first, ties broken by target id", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  fleet.observe(panes(agent("older", "done")), 0);
+  fleet.observe(panes(agent("older", "done"), agent("newer", "done")), 2000);
+  // Two more done at the same poll — ordered between themselves by target id.
+  const posture = fleet.observe(
+    panes(
+      agent("older", "done"),
+      agent("newer", "done"),
+      agent("zeta", "done"),
+      agent("alpha", "done"),
+    ),
+    4000,
+  );
+
+  assert.deepEqual(posture.doneTargets, ["older", "newer", "alpha", "zeta"]);
+  assert.equal(posture.doneCount, 4);
+});
+
+test("the newly-done signal fires exactly once per episode, only from an observe", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  let posture = fleet.observe(panes(agent("a", "done")), 0);
+  assert.deepEqual(posture.newlyDoneTargets, ["a"]);
+
+  // Still done on the next poll — the one-shot must not re-fire.
+  posture = fleet.observe(panes(agent("a", "done")), 3000);
+  assert.deepEqual(posture.newlyDoneTargets, []);
+
+  // A passive posture read never surfaces it either.
+  assert.deepEqual(fleet.posture().newlyDoneTargets, []);
+});
+
+test("a cleared done episode re-arms the newly-done one-shot", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  let posture = fleet.observe(panes(agent("a", "done")), 0);
+  assert.deepEqual(posture.newlyDoneTargets, ["a"]);
+
+  // Engaged — the agent is working again; the episode ends.
+  posture = fleet.observe(panes(agent("a", "working")), 1000);
+  assert.deepEqual(posture.doneTargets, []);
+  assert.deepEqual(posture.newlyDoneTargets, []);
+
+  // Done again — a fresh episode, so the one-shot fires anew.
+  posture = fleet.observe(panes(agent("a", "done")), 2000);
+  assert.deepEqual(posture.newlyDoneTargets, ["a"]);
+});
+
+test("a done episode ends when the pane vanishes", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  fleet.observe(panes(agent("a", "done"), agent("b", "done")), 0);
+  // 'b' closed its pane — gone from the snapshot entirely.
+  const posture = fleet.observe(panes(agent("a", "done")), 1000);
+  assert.deepEqual(posture.doneTargets, ["a"]);
+  assert.equal(posture.doneCount, 1);
+});
+
+test("blocked and done are tracked independently on the same snapshots", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  fleet.observe(panes(agent("blk", "blocked"), agent("dn", "done")), 0);
+  const posture = fleet.observe(
+    panes(agent("blk", "blocked"), agent("dn", "done")),
+    5000,
+  );
+
+  assert.equal(posture.blockedCount, 1);
+  assert.deepEqual(posture.blockedTargets, ["blk"]);
+  assert.equal(posture.doneCount, 1);
+  assert.deepEqual(posture.doneTargets, ["dn"]);
+  // Posture tier is a pure function of Blocked — the done pane leaves it alone.
+  assert.equal(posture.tier, "1");
+});
+
+test("an unavailable poll preserves done episode state and invents nothing", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  fleet.observe(panes(agent("a", "done")), 0);
+  const dropped = fleet.observe(UNAVAILABLE, 1000);
+
+  // Blind: the tier is unknown, but the known done episode is preserved…
+  assert.equal(dropped.tier, "unknown");
+  assert.deepEqual(dropped.doneTargets, ["a"]);
+  // …and no newly-done is invented while blind.
+  assert.deepEqual(dropped.newlyDoneTargets, []);
+});
+
+test("the posture tier is a pure function of Blocked — done panes never move it", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  const manyDone = panes(
+    agent("a", "done"),
+    agent("b", "done"),
+    agent("c", "done"),
+    agent("d", "done"),
+  );
+  fleet.observe(manyDone, 0);
+  const posture = fleet.observe(manyDone, 10000);
+
+  assert.equal(posture.doneCount, 4);
+  assert.equal(posture.tier, "0");
+  assert.equal(posture.blockedCount, 0);
+});
+
 test("a vanished blocked agent drops out of the count", () => {
   const fleet = createFleetState({ dwellMs: 5000 });
 

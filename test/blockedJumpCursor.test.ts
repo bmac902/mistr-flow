@@ -1,7 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createBlockedJumpCursor } from "../src/blockedJumpCursor";
+import { attentionCycle, createBlockedJumpCursor } from "../src/blockedJumpCursor";
+import type { FleetPosture } from "../src/fleetState";
+
+function posture(
+  blockedTargets: readonly string[],
+  doneTargets: readonly string[] = [],
+): FleetPosture {
+  return {
+    tier: blockedTargets.length === 0 ? "0" : "1",
+    blockedCount: blockedTargets.length,
+    longestBlockedTarget: blockedTargets[0] ?? null,
+    blockedTargets,
+    newlyPersistentBlockedTargets: [],
+    doneCount: doneTargets.length,
+    doneTargets,
+    newlyDoneTargets: [],
+  };
+}
 
 test("no blocked agents is a truthful no-op — null, and the cursor is unmoved", () => {
   const cursor = createBlockedJumpCursor();
@@ -53,4 +70,50 @@ test("the set emptying then repopulating restarts at the oldest", () => {
   assert.equal(cursor.next(["a", "b"]), "a");
   assert.equal(cursor.next([]), null); // everything cleared
   assert.equal(cursor.next(["x", "y"]), "x"); // fresh episode, oldest first
+});
+
+test("attentionCycle: with anything blocked, the order is byte-identical to the blocked list", () => {
+  // A bottleneck always outranks a harvest — blocked come first, unchanged.
+  assert.deepEqual(attentionCycle(posture([])), []);
+  assert.deepEqual(attentionCycle(posture(["a", "b"])), ["a", "b"]);
+});
+
+test("attentionCycle: blocked-first-then-done as one unified cycle", () => {
+  assert.deepEqual(
+    attentionCycle(posture(["blk1", "blk2"], ["dn1", "dn2"])),
+    ["blk1", "blk2", "dn1", "dn2"],
+  );
+});
+
+test("attentionCycle: with zero blocked, the cycle is the done list", () => {
+  assert.deepEqual(attentionCycle(posture([], ["dn1", "dn2"])), ["dn1", "dn2"]);
+});
+
+test("gesture with zero blocked lands on the oldest done, repeats cycle the rest, wrapping", () => {
+  const cursor = createBlockedJumpCursor();
+  const cycle = attentionCycle(posture([], ["dn1", "dn2", "dn3"]));
+
+  assert.equal(cursor.next(cycle), "dn1");
+  assert.equal(cursor.next(cycle), "dn2");
+  assert.equal(cursor.next(cycle), "dn3");
+  assert.equal(cursor.next(cycle), "dn1"); // wrap
+});
+
+test("mixed fleet walks blocked oldest-first then done, as one gesture cycle", () => {
+  const cursor = createBlockedJumpCursor();
+  const cycle = attentionCycle(posture(["blk"], ["dn1", "dn2"]));
+
+  assert.equal(cursor.next(cycle), "blk");
+  assert.equal(cursor.next(cycle), "dn1");
+  assert.equal(cursor.next(cycle), "dn2");
+  assert.equal(cursor.next(cycle), "blk"); // wrap to the top of the unified cycle
+});
+
+test("a done target that vanished since the last poll is skipped, never jumped to", () => {
+  const cursor = createBlockedJumpCursor();
+
+  assert.equal(cursor.next(attentionCycle(posture([], ["dn1", "dn2"]))), "dn1");
+  assert.equal(cursor.next(attentionCycle(posture([], ["dn1", "dn2"]))), "dn2");
+  // 'dn2' was harvested (engaged) and left the done set — re-anchor to oldest.
+  assert.equal(cursor.next(attentionCycle(posture([], ["dn1"]))), "dn1");
 });

@@ -40,6 +40,53 @@ pickerRowStyle.textContent = `
 `;
 document.head.appendChild(pickerRowStyle);
 
+// Done-awareness ambient badge (ADR 0006 §5, PRD #77 / #81): a small count of
+// current *done* panes — "what have you finished?" — sitting on the idle bar
+// beside the butler's "who needs you?" posture. Renderer-owned entirely, same
+// discipline as the picker-row affordances above: overlay.html is a Claude
+// Design asset and carries no knowledge of this chip. The look is a deliberate
+// placeholder — a later design round-trip blesses the real thing. The chip only
+// mounts on the resting bar and only when the count is ≥ 1 (see below); zero or
+// a verb state renders nothing.
+const doneBadgeStyle = document.createElement("style");
+doneBadgeStyle.textContent = `
+  #mf-done-badge {
+    display: none;
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    min-width: 16px;
+    padding: 1px 6px;
+    border: 1px solid var(--brass, #b8964a);
+    border-radius: 9px;
+    font-size: 11px;
+    line-height: 15px;
+    text-align: center;
+    color: var(--brass, #b8964a);
+    pointer-events: none;
+  }
+  #mf-done-badge.mf-has-done { display: block; }
+`;
+document.head.appendChild(doneBadgeStyle);
+
+const doneBadgeEl = document.createElement("div");
+doneBadgeEl.id = "mf-done-badge";
+cardEl.appendChild(doneBadgeEl);
+
+// Reflect the current done count onto the chip. Idle-only falls out for free:
+// only the fleet-posture snapshots carry doneCount, and those are the resting
+// bar; verb snapshots omit it, so the chip clears the moment a verb takes over.
+function renderDoneBadge(snapshot) {
+  const count = Number(snapshot.doneCount) || 0;
+  if (count >= 1) {
+    doneBadgeEl.textContent = String(count);
+    doneBadgeEl.classList.add("mf-has-done");
+  } else {
+    doneBadgeEl.textContent = "";
+    doneBadgeEl.classList.remove("mf-has-done");
+  }
+}
+
 // The click-vs-drag threshold (issue #52). A press that travels more than this
 // many pixels repositions the overlay; a press that stays under it is a plain
 // click that jumps to the longest-blocked agent. Mirrors DRAG_THRESHOLD_PX in
@@ -417,6 +464,7 @@ window.mistrFlow.onOverlayState((snapshot) => {
   toastEl.textContent = snapshot.toastCopy || "";
   renderCapturePreview(snapshot);
   renderCapturePickerEntries(snapshot);
+  renderDoneBadge(snapshot);
 });
 
 window.addEventListener("mousemove", updateMousePassThrough);

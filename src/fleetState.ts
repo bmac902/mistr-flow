@@ -43,6 +43,31 @@ export interface FleetPosture {
    * verb suppression) — this module stays pure.
    */
   readonly newlyPersistentBlockedTargets: readonly string[];
+  /**
+   * How many watched panes are currently `done` — finished and unattended
+   * (glossary *Done*; ADR 0006 §1). Unlike {@link blockedCount} there is **no
+   * dwell**: a done appears the same observe it's reported (see the asymmetry
+   * note on the done-episode tracking below). Preserved (not invented) during
+   * `unknown`, exactly like the blocked best-effort selection.
+   */
+  readonly doneCount: number;
+  /**
+   * Every currently-done target, oldest-episode-first (ties broken by target id
+   * for determinism — mirrors the blocked ordering rule). This is the done half
+   * of the unified attention cycle the jump gesture walks (#79). Empty when
+   * nothing is done.
+   */
+  readonly doneTargets: readonly string[];
+  /**
+   * The one-shot "newly done" signal: targets that began a done episode on
+   * *this* observe — the moment a completion is worth announcing (#80's chime).
+   * Fires exactly once per done-episode (re-armed only after the episode clears)
+   * and only from `observe`; `posture()` always reports it empty so a passive
+   * read never re-triggers the chime. Mirrors
+   * {@link newlyPersistentBlockedTargets}; the effectful layer decides what to
+   * do with it — this module stays pure.
+   */
+  readonly newlyDoneTargets: readonly string[];
 }
 
 /** One poll's outcome: a watched-set snapshot, or an unreachable Herdr. */
@@ -93,11 +118,24 @@ export function createFleetState(options: FleetStateOptions = {}): FleetState {
   // block episode. Kept in lockstep with blockedSince (an entry is dropped the
   // moment its block clears), so a fresh block re-arms the one-shot ding.
   const dinged = new Set<string>();
+  // target → the timestamp a watched agent's *current* done episode began. An
+  // agent leaves this map the moment it's no longer done (status changed or pane
+  // vanished — Herdr owns the lifecycle), which re-arms the episode. Deliberately
+  // **no dwell** here, a principled asymmetry with Blocked (ADR 0006 §5): the
+  // dwell filters transient self-blocks, but an unattended done cannot self-clear
+  // so there is no transient class to filter — a dwell would only add latency.
+  const doneSince = new Map<string, number>();
+  // Done targets whose one-shot newly-done emission has already fired for their
+  // *current* episode. Kept in lockstep with doneSince (dropped when the episode
+  // clears), so a fresh done episode re-arms the one-shot — same class of
+  // episode-scoped presentation memory as `dinged` beside `blockedSince`.
+  const doneAnnounced = new Set<string>();
   let reachable = false;
   let lastNowMs = 0;
 
   function computePosture(
     newlyPersistentBlockedTargets: readonly string[] = [],
+    newlyDoneTargets: readonly string[] = [],
   ): FleetPosture {
     // Collect every agent past the dwell threshold, then order it oldest-first
     // (ties broken by target id) so both the count and the jump-cycle list fall
@@ -112,12 +150,26 @@ export function createFleetState(options: FleetStateOptions = {}): FleetState {
     );
     const blockedTargets = dwelt.map((entry) => entry.target);
 
+    // Done needs no dwell filter — every current done episode counts, ordered
+    // oldest-episode-first (ties by target id) by the same deterministic rule.
+    const doneEpisodes = [...doneSince.entries()].map(([target, since]) => ({
+      target,
+      since,
+    }));
+    doneEpisodes.sort((a, b) =>
+      a.since !== b.since ? a.since - b.since : a.target < b.target ? -1 : 1,
+    );
+    const doneTargets = doneEpisodes.map((entry) => entry.target);
+
     return {
       tier: reachable ? tierForCount(blockedTargets.length) : "unknown",
       blockedCount: blockedTargets.length,
       longestBlockedTarget: blockedTargets[0] ?? null,
       blockedTargets,
       newlyPersistentBlockedTargets,
+      doneCount: doneTargets.length,
+      doneTargets,
+      newlyDoneTargets,
     };
   }
 
@@ -135,10 +187,15 @@ export function createFleetState(options: FleetStateOptions = {}): FleetState {
 
       reachable = true;
       const stillBlocked = new Set<string>();
+      const stillDone = new Set<string>();
       for (const agent of poll.agents) {
-        if (agent.status !== "blocked") continue;
-        stillBlocked.add(agent.target);
-        if (!blockedSince.has(agent.target)) blockedSince.set(agent.target, nowMs);
+        if (agent.status === "blocked") {
+          stillBlocked.add(agent.target);
+          if (!blockedSince.has(agent.target)) blockedSince.set(agent.target, nowMs);
+        } else if (agent.status === "done") {
+          stillDone.add(agent.target);
+          if (!doneSince.has(agent.target)) doneSince.set(agent.target, nowMs);
+        }
       }
 
       for (const target of [...blockedSince.keys()]) {
@@ -148,6 +205,28 @@ export function createFleetState(options: FleetStateOptions = {}): FleetState {
           dinged.delete(target);
         }
       }
+
+      // Done episodes end independently of blocked ones on the same snapshot.
+      for (const target of [...doneSince.keys()]) {
+        if (!stillDone.has(target)) {
+          doneSince.delete(target);
+          // Episode cleared → re-arm the newly-done one-shot for the next one.
+          doneAnnounced.delete(target);
+        }
+      }
+
+      // The newly-done one-shot: any done target whose episode we haven't yet
+      // announced fires exactly now. Only reached from a confirmed snapshot, so
+      // nothing is invented while blind.
+      const newlyDone: Array<{ readonly target: string; readonly since: number }> = [];
+      for (const [target, since] of doneSince) {
+        if (doneAnnounced.has(target)) continue;
+        doneAnnounced.add(target);
+        newlyDone.push({ target, since });
+      }
+      newlyDone.sort((a, b) =>
+        a.since !== b.since ? a.since - b.since : a.target < b.target ? -1 : 1,
+      );
 
       // The persistent-block ding is evaluated only on a confirmed snapshot: an
       // agent we can't currently see blocked never earns a nudge. Any target
@@ -163,7 +242,10 @@ export function createFleetState(options: FleetStateOptions = {}): FleetState {
         a.since !== b.since ? a.since - b.since : a.target < b.target ? -1 : 1,
       );
 
-      return computePosture(newlyPersistent.map((entry) => entry.target));
+      return computePosture(
+        newlyPersistent.map((entry) => entry.target),
+        newlyDone.map((entry) => entry.target),
+      );
     },
 
     posture() {

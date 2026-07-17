@@ -183,6 +183,42 @@ test("fleet posture: every tier maps to its own butler posture, unknown stays ho
   assert.notDeepEqual(unknown, tier0);
 });
 
+test("fleet posture carries the done count beside the tier, never folded into it (PRD #77, #81)", () => {
+  // The done count rides the snapshot; the tier-driven phase is untouched by it.
+  const withDone = buildFleetPostureOverlaySnapshot("0", 3);
+  assert.equal(withDone.doneCount, 3);
+  assert.equal(withDone.phase, "fleet-0-blocked");
+
+  // Many done panes never move the bottleneck posture off its Blocked-driven tier.
+  const blockedWithDone = buildFleetPostureOverlaySnapshot("1", 5);
+  assert.equal(blockedWithDone.doneCount, 5);
+  assert.equal(blockedWithDone.phase, "fleet-1-blocked");
+  assert.equal(
+    blockedWithDone.phase,
+    buildFleetPostureOverlaySnapshot("1", 0).phase,
+    "done count does not change the phase",
+  );
+
+  // Absent count defaults to a calm 0 — the renderer draws no chip.
+  assert.equal(buildFleetPostureOverlaySnapshot("0").doneCount, 0);
+});
+
+test("the done-count badge is renderer-owned — created in JS, absent from the Claude Design asset (PRD #81)", () => {
+  const html = readFileSync(path.join(rootDir, "public", "overlay.html"), "utf8");
+  const renderer = readFileSync(
+    path.join(rootDir, "public", "overlay-renderer.js"),
+    "utf8",
+  );
+
+  // The Claude Design overlay asset carries no knowledge of the badge…
+  assert.doesNotMatch(html, /mf-done-badge/, "badge must not live in the design asset");
+  // …the renderer mints it (element + style) and gates it on the done count.
+  assert.match(renderer, /createElement\("div"\)[\s\S]*mf-done-badge/);
+  assert.match(renderer, /doneCount/);
+  assert.match(renderer, /mf-has-done/);
+  assert.match(renderer, /renderDoneBadge/);
+});
+
 test("overlay html carries a butler posture hook for each fleet tier and unknown (issue #49, #53)", () => {
   const html = readFileSync(path.join(rootDir, "public", "overlay.html"), "utf8");
 

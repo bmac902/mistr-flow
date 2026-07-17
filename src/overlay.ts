@@ -105,6 +105,16 @@ export interface OverlaySnapshot {
    * then there is no row and the verb-key confirm is a truthful no-op.
    */
   againRow?: PickerAgainRow;
+  /**
+   * Done-awareness ambient half (ADR 0006 §5, PRD #77 / #81): how many watched
+   * panes are currently *done* — the badge that answers "what have you finished?"
+   * while the butler's posture keeps answering "who needs you?". Rides only the
+   * idle fleet-posture snapshots, so the badge is idle-only by construction; the
+   * renderer draws a plain count chip when this is ≥ 1 and nothing when 0 or
+   * absent. Structurally independent of {@link phase} — done never moves the
+   * bottleneck tier.
+   */
+  doneCount?: number;
 }
 
 const STATUS_COPY: Record<OverlayPhase, string> = {
@@ -316,9 +326,17 @@ export function fleetTierToOverlayPhase(tier: FleetTier): OverlayPhase {
   }
 }
 
-/** The idle-time overlay snapshot for a given fleet tier. */
-export function buildFleetPostureOverlaySnapshot(tier: FleetTier): OverlaySnapshot {
-  return buildOverlaySnapshot(fleetTierToOverlayPhase(tier));
+/**
+ * The idle-time overlay snapshot for a given fleet tier, carrying the current
+ * done-pane count for the ambient badge (ADR 0006 §5). `doneCount` is attached
+ * *beside* the tier-driven phase, never folded into it — the butler's posture
+ * stays a pure function of Blocked. Zero renders no chip (the renderer's job).
+ */
+export function buildFleetPostureOverlaySnapshot(
+  tier: FleetTier,
+  doneCount = 0,
+): OverlaySnapshot {
+  return { ...buildOverlaySnapshot(fleetTierToOverlayPhase(tier)), doneCount };
 }
 
 /**

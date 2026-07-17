@@ -24,6 +24,7 @@ import {
 import {
   getConfigPath,
   readCopySelectionFirst,
+  readDoneChime,
   readFocusOnDeliver,
   readPersistentBlockDing,
   readMuteSystemAudioWhileRecording,
@@ -43,7 +44,13 @@ import {
   type OverlaySnapshot,
 } from "./overlay";
 import { createFleetState, type FleetPosture } from "./fleetState";
-import { createBlockedJumpCursor } from "./blockedJumpCursor";
+import { attentionCycle, createBlockedJumpCursor } from "./blockedJumpCursor";
+import {
+  createHerdrForegroundCheck,
+  playDoneChime,
+  shouldChimeDone,
+  type IsHerdrForeground,
+} from "./doneChime";
 import { focusHerdrPane } from "./focusPane";
 import { createActiveVerbLock } from "./activeVerbLock";
 import {
@@ -86,7 +93,7 @@ import {
 } from "./captureThumbnail";
 import { captureArtifactToPayload, createHerdrDeliveryAdapter } from "./deliver";
 import { createLastTargetMemory, withLastTargetRecording } from "./lastTarget";
-import { queryHerdr, queryWatchedSet } from "./herdr";
+import { queryHerdr, queryWatchedSet, readHerdrSocketPath } from "./herdr";
 import {
   capturePickerWindowHeight,
   resolveGrownWindowBounds,
@@ -101,6 +108,9 @@ let copySelectionFirst = false;
 // PRD #44 / #51: the persistent-block ding is on by default; config can silence
 // the sound while keeping the visual fleet awareness. Read once at startup.
 let persistentBlockDing = true;
+// PRD #77 / #80: the one soft done chime is on by default; config can silence the
+// sound while keeping the done badge and jump gesture. Read once at startup.
+let doneChime = true;
 let whisperVocabularyPrompt: string | null = null;
 let polishVocabularyInstruction: string | null = null;
 
@@ -219,7 +229,10 @@ function overlayIsResting(): boolean {
 
 function renderFleetPosture(posture: FleetPosture): void {
   if (!overlayIsResting()) return;
-  sendToRenderer("overlay-state", buildFleetPostureOverlaySnapshot(posture.tier));
+  sendToRenderer(
+    "overlay-state",
+    buildFleetPostureOverlaySnapshot(posture.tier, posture.doneCount),
+  );
 }
 
 async function pollFleetOnce(): Promise<void> {
@@ -230,6 +243,7 @@ async function pollFleetOnce(): Promise<void> {
       : fleetState.observe({ kind: "unavailable" }, Date.now());
   renderFleetPosture(posture);
   maybeDingPersistentBlock(posture);
+  await maybeChimeDone(posture);
 }
 
 /**
@@ -247,6 +261,43 @@ function maybeDingPersistentBlock(posture: FleetPosture): void {
   beep();
 }
 
+// The done-awareness foreground seam (ADR 0006 §3): "is Herdr's host window the
+// OS foreground window right now?" Created lazily so a missing socket at startup
+// doesn't matter — identification re-reads the socket path per attempt.
+let herdrForegroundCheck: IsHerdrForeground | null = null;
+function isHerdrForeground(): Promise<boolean> {
+  if (herdrForegroundCheck === null) {
+    herdrForegroundCheck = createHerdrForegroundCheck({
+      readSocketPath: () => readHerdrSocketPath(),
+    });
+  }
+  return herdrForegroundCheck();
+}
+
+/**
+ * The one soft chime of done-awareness (ADR 0006 §§2–3, #80): when a done episode
+ * begins and Herdr's host window is not the OS foreground window at that poll,
+ * sound a single gentle chime — distinct from and softer than the block ding.
+ * The foreground gate is evaluated exactly once, at the transition poll: Herdr
+ * being foreground *consumes* the chime for that episode (fleetState's one-shot is
+ * already spent), never deferring it to a later alt-tab. Config- and verb-gated
+ * exactly like the ding; suppression silences the sound only, never the state.
+ */
+async function maybeChimeDone(posture: FleetPosture): Promise<void> {
+  if (posture.newlyDoneTargets.length === 0) return;
+  const herdrForeground = await isHerdrForeground();
+  if (
+    shouldChimeDone({
+      newlyDoneTargets: posture.newlyDoneTargets,
+      chimeEnabled: doneChime,
+      verbActive: verbLock.activeVerb() !== null,
+      herdrForeground,
+    })
+  ) {
+    playDoneChime();
+  }
+}
+
 function startFleetPolling(): void {
   if (fleetPollTimer) return;
   void pollFleetOnce();
@@ -260,22 +311,24 @@ function startFleetPolling(): void {
   }, FLEET_POLL_INTERVAL_MS);
 }
 
-// Jump-to-blocked (issue #50, PRD #44): one keypress takes you to the agent
-// that most needs you. The cursor holds where the last press landed so repeat
-// presses cycle oldest-first through the blocked set; fleetState.posture()
-// supplies the live oldest-first list at the moment of each press.
+// The jump gesture (issue #50, PRD #44; redefined by #79 / ADR 0006 §4): one
+// keypress takes you to what most needs you next. The cursor holds where the
+// last press landed so repeat presses cycle through the unified attention cycle
+// — blocked oldest-first, then done oldest-first; attentionCycle(posture())
+// supplies that live order at the moment of each press.
 const jumpCursor = createBlockedJumpCursor();
 
 /**
- * Focus the next longest-blocked agent's pane and raise Herdr's host window,
- * reusing the proven focus/raise machinery (ADR 0002, focusHerdrPane). Repeat
- * presses cycle oldest-first; with nothing blocked this is a truthful no-op.
- * Focus-steal here is intentional and user-initiated — you pressed the key to
- * go there — the same explicit exception to "never steal focus" as focusOnDeliver.
+ * Focus the next attention target's pane and raise Herdr's host window, reusing
+ * the proven focus/raise machinery (ADR 0002, focusHerdrPane). Repeat presses
+ * walk the unified cycle (blocked oldest-first, then done oldest-first); with an
+ * empty fleet this is a truthful no-op. Focus-steal here is intentional and
+ * user-initiated — you pressed the key to go there — the same explicit exception
+ * to "never steal focus" as focusOnDeliver.
  */
 function jumpToLongestBlocked(): void {
-  const target = jumpCursor.next(fleetState.posture().blockedTargets);
-  if (target === null) return; // Nothing blocked — nowhere to jump, so no-op.
+  const target = jumpCursor.next(attentionCycle(fleetState.posture()));
+  if (target === null) return; // Nothing needs you — nowhere to jump, so no-op.
 
   void focusHerdrPane(target)
     .then((outcome) => {
@@ -1218,6 +1271,8 @@ app.whenReady().then(async () => {
     console.log("[mistr-flow] config: copySelectionFirst =", copySelectionFirst);
     persistentBlockDing = await readPersistentBlockDing();
     console.log("[mistr-flow] config: persistentBlockDing =", persistentBlockDing);
+    doneChime = await readDoneChime();
+    console.log("[mistr-flow] config: doneChime =", doneChime);
   } catch (error) {
     dialog.showErrorBox("Mistr Flow config error", String(error));
     app.quit();
