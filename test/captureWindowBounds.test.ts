@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   CAPTURE_PICKER_ENTRY_HEIGHT,
   CAPTURE_PICKER_LIST_PADDING,
+  CAPTURE_PICKER_MASCOT_HEADROOM,
   CAPTURE_PREVIEW_BLOCK_HEIGHT,
   capturePickerEntryCount,
   capturePickerWindowHeight,
@@ -28,11 +29,17 @@ test("capturePickerEntryCount caps at 8 Herdr targets (digit slots 2-9)", () => 
 test("capturePickerWindowHeight grows with entry count off the resting height", () => {
   assert.equal(
     capturePickerWindowHeight(0),
-    OVERLAY_WINDOW_HEIGHT + CAPTURE_PICKER_LIST_PADDING + CAPTURE_PICKER_ENTRY_HEIGHT,
+    OVERLAY_WINDOW_HEIGHT +
+      CAPTURE_PICKER_MASCOT_HEADROOM +
+      CAPTURE_PICKER_LIST_PADDING +
+      CAPTURE_PICKER_ENTRY_HEIGHT,
   );
   assert.equal(
     capturePickerWindowHeight(2),
-    OVERLAY_WINDOW_HEIGHT + CAPTURE_PICKER_LIST_PADDING + 3 * CAPTURE_PICKER_ENTRY_HEIGHT,
+    OVERLAY_WINDOW_HEIGHT +
+      CAPTURE_PICKER_MASCOT_HEADROOM +
+      CAPTURE_PICKER_LIST_PADDING +
+      3 * CAPTURE_PICKER_ENTRY_HEIGHT,
   );
 });
 

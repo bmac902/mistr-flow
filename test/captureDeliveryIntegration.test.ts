@@ -35,6 +35,8 @@ const TARGET: EligibleTarget = {
   target: "trm_01HZY8AK4M0000000000000009",
   label: "claude · idle — pane",
   agentStatus: "idle",
+  agent: "claude",
+  cwd: null,
 };
 
 interface FakePicker {

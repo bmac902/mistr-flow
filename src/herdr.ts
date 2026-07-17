@@ -103,6 +103,15 @@ export interface EligibleTarget {
   readonly target: string;
   readonly label: string;
   readonly agentStatus: AgentStatus;
+  /**
+   * The pane's agent name as Herdr reports it (e.g. "claude", "codex") — the
+   * picker row's WHO channel: the renderer colors the digit keycap by agent
+   * species (project-anchors design, 2026-07-17). Raw adapter fact, no
+   * presentation here.
+   */
+  readonly agent: string;
+  /** The pane's working directory when Herdr reports one — the WHERE channel. */
+  readonly cwd: string | null;
 }
 
 /**
@@ -407,6 +416,8 @@ function mapPane(pane: RawPane): EligibleTarget | null {
     target,
     label: buildTargetLabel(pane, agentStatus),
     agentStatus,
+    agent: typeof pane.agent === "string" ? pane.agent : "agent",
+    cwd: typeof pane.cwd === "string" && pane.cwd.length > 0 ? pane.cwd : null,
   };
 }
 

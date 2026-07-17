@@ -30,6 +30,8 @@ const TARGET: EligibleTarget = {
   target: "herdr-session-a",
   label: "claude · idle — pane a",
   agentStatus: "idle",
+  agent: "claude",
+  cwd: null,
 };
 
 function flush(): Promise<void> {

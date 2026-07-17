@@ -13,10 +13,48 @@ import {
   readPersistentBlockDing,
   readOpenAiApiKey,
   readOverlayPosition,
+  readProjectAnchors,
   readProvider,
   readVocabularyConfig,
   writeOverlayPosition,
 } from "../src/config";
+
+test("readProjectAnchors returns validated anchors from config", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      openaiApiKey: "test-api-key",
+      projectAnchors: [
+        { prefix: "C:\\dev\\mistr-flow", name: "Mistr Flow", glyph: "tophat" },
+        { prefix: "", name: "junk", glyph: "note" },
+      ],
+    }),
+  );
+
+  const anchors = await readProjectAnchors({ APPDATA: tempRoot }, fs);
+
+  assert.deepEqual(anchors, [
+    { prefix: "C:\\dev\\mistr-flow", name: "Mistr Flow", glyph: "tophat" },
+  ]);
+});
+
+test("readProjectAnchors is empty — never fatal — when the key or the file is missing", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key" }),
+  );
+
+  assert.deepEqual(await readProjectAnchors({ APPDATA: tempRoot }, fs), []);
+
+  const emptyRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  assert.deepEqual(await readProjectAnchors({ APPDATA: emptyRoot }, fs), []);
+});
 
 test("getConfigPath resolves the Windows config location from APPDATA", () => {
   const configPath = getConfigPath({ APPDATA: "C:\\Users\\alice\\AppData\\Roaming" });

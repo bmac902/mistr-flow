@@ -35,12 +35,16 @@ const TARGET_A: EligibleTarget = {
   target: "trm_0000000000000000000000000A",
   label: "claude · idle — pane a",
   agentStatus: "idle",
+  agent: "claude",
+  cwd: null,
 };
 
 const TARGET_B: EligibleTarget = {
   target: "trm_0000000000000000000000000B",
   label: "claude · working — pane b",
   agentStatus: "working",
+  agent: "claude",
+  cwd: null,
 };
 
 function flush(): Promise<void> {

@@ -117,21 +117,29 @@ test("mixed pane list maps only idle/working/done agent panes to targets", () =>
       target: "term_A1",
       label: "claude · idle — mistr-flow — capture adapter",
       agentStatus: "idle",
+      agent: "claude",
+      cwd: "mistr-flow — capture adapter",
     },
     {
       target: "term_B1",
       label: "codex · working — herdr — pane list",
       agentStatus: "working",
+      agent: "codex",
+      cwd: "herdr — pane list",
     },
     {
       target: "term_D1",
       label: "codex · done — release — shipped",
       agentStatus: "done",
+      agent: "codex",
+      cwd: "release — shipped",
     },
     {
       target: "term_F1",
       label: "claude · idle — docs — no session metadata yet",
       agentStatus: "idle",
+      agent: "claude",
+      cwd: "docs — no session metadata yet",
     },
   ]);
 });

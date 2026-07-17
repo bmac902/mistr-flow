@@ -29,15 +29,18 @@ import {
   readPersistentBlockDing,
   readMuteSystemAudioWhileRecording,
   readOverlayPosition,
+  readProjectAnchors,
   readProvider,
   readVocabularyConfig,
   writeOverlayPosition,
 } from "./config";
+import { resolveProjectAnchor, type ProjectAnchor } from "./projectAnchors";
 import { resolveAiProvider, type AiProvider } from "./aiProvider";
 import { createDictationCancelledError, runDictationSession } from "./dictation";
 import { buildPolishVocabularyInstruction, buildWhisperVocabularyPrompt } from "./vocabulary";
 import { pasteText as pasteTextImpl } from "./paste";
 import {
+  type AnchoredTarget,
   buildFleetPostureOverlaySnapshot,
   buildOverlaySnapshot,
   buildRefusedOverlaySnapshot,
@@ -104,6 +107,12 @@ import { nativeWindowHandleToHwnd } from "./nativeWindowHandle";
 let overlayWindow: BrowserWindow | null = null;
 let aiProvider: AiProvider | null = null;
 let muteSystemAudioWhileRecording = true;
+
+// Project Anchors (2026-07-17): per-machine cwd → {name, glyph} mapping for
+// the picker rows' WHERE channel. Read once at startup; empty means rows fall
+// back to raw labels. Deliberately config, never source — two machines, two
+// project sets, and MF learns no project semantics.
+let projectAnchors: ProjectAnchor[] = [];
 let copySelectionFirst = false;
 // PRD #44 / #51: the persistent-block ding is on by default; config can silence
 // the sound while keeping the visual fleet awareness. Read once at startup.
@@ -760,6 +769,24 @@ function registerJumpHotkey(): void {
   }
 }
 
+/**
+ * The picker's target query, dressed with Project Anchors (2026-07-17): each
+ * pane's cwd resolves against the per-machine `projectAnchors` config so the
+ * renderer can draw the WHERE glyph + friendly name without owning path
+ * logic. Presentation only — the herdr adapter stays ignorant of projects,
+ * and a miss changes nothing (the row falls back to its raw label).
+ */
+function queryAnchoredTargets(): ReturnType<typeof queryHerdr> {
+  return queryHerdr({}).then((result) => {
+    if (result.kind !== "targets") return result;
+    const targets: AnchoredTarget[] = result.targets.map((target) => {
+      const anchor = resolveProjectAnchor(target.cwd, projectAnchors);
+      return anchor ? { ...target, anchor } : target;
+    });
+    return { ...result, targets };
+  });
+}
+
 function grabActiveWindow(): Promise<CaptureArtifact> {
   const excludeHwnd = overlayWindow
     ? nativeWindowHandleToHwnd(overlayWindow.getNativeWindowHandle())
@@ -922,7 +949,7 @@ function startCapture(): void {
     openPicker: () => openCapturePicker(),
     renderThumbnail: (artifact) => renderCaptureThumbnail(artifact),
     cropCapture: (artifact, rect) => cropCaptureArtifact(artifact, rect),
-    queryEligibleTargets: () => queryHerdr({}),
+    queryEligibleTargets: () => queryAnchoredTargets(),
     copyToClipboard: (artifact) => copyCaptureToClipboard(artifact),
     deliver: (capture, target) =>
       deliverCapture(captureArtifactToPayload(capture), target),
@@ -1065,7 +1092,7 @@ function startRelay(): void {
     openPicker: () => openRelayPicker(),
     renderImageThumbnail: (artifact) => renderCaptureThumbnail(artifact),
     cropImage: (artifact, rect) => cropCaptureArtifact(artifact, rect),
-    queryEligibleTargets: () => queryHerdr({}),
+    queryEligibleTargets: () => queryAnchoredTargets(),
     // Same adapter, same ledger, same ack/unknown-retry semantics, same
     // focusOnDeliver as Capture — Relay's payload just isn't always a PNG.
     deliver: (payload, target) => deliverCapture(payload, target),
@@ -1113,7 +1140,7 @@ function startHerald(): void {
     // Capture's picker exactly: slot 1 registered (Herald relabels it "Paste
     // here" via the snapshot), panes on 2–9 — same digits, same panes.
     openPicker: () => openCapturePicker(),
-    queryEligibleTargets: () => queryHerdr({}),
+    queryEligibleTargets: () => queryAnchoredTargets(),
     // Same adapter, same ledger, same ack/unknown-retry semantics, same
     // focusOnDeliver as Capture and Relay — Herald's payload is inline text.
     deliver: (payload, target) => deliverCapture(payload, target),
@@ -1276,6 +1303,8 @@ app.whenReady().then(async () => {
     console.log("[mistr-flow] config: persistentBlockDing =", persistentBlockDing);
     doneChime = await readDoneChime();
     console.log("[mistr-flow] config: doneChime =", doneChime);
+    projectAnchors = await readProjectAnchors();
+    console.log("[mistr-flow] config: projectAnchors =", projectAnchors.length);
   } catch (error) {
     dialog.showErrorBox("Mistr Flow config error", String(error));
     app.quit();

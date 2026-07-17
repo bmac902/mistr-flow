@@ -36,6 +36,8 @@ const TARGET_A: EligibleTarget = {
   target: "trm_01HZY8AK4M0000000000000001",
   label: "claude · idle — pane a",
   agentStatus: "idle",
+  agent: "claude",
+  cwd: null,
 };
 
 function recordingExecFile(): {

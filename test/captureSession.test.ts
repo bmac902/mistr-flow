@@ -42,12 +42,16 @@ const TARGET_A: EligibleTarget = {
   target: "herdr-session-a",
   label: "claude · idle — pane a",
   agentStatus: "idle",
+  agent: "claude",
+  cwd: null,
 };
 
 const TARGET_B: EligibleTarget = {
   target: "herdr-session-b",
   label: "claude · working — pane b",
   agentStatus: "working",
+  agent: "claude",
+  cwd: null,
 };
 
 interface FakePicker {

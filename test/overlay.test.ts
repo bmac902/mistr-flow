@@ -116,6 +116,8 @@ test("buildOverlaySnapshot pins placeholder copy for every Capture phase (issue 
     target: "herdr-session-a",
     label: "claude · idle — pane a",
     agentStatus: "idle",
+    agent: "claude",
+    cwd: null,
   };
 
   const summoning = buildCapturePickerOverlaySnapshot([]);
@@ -325,6 +327,29 @@ test("preload and main expose mouse pass-through and overlay movement IPC", () =
   assert.match(main, /quitAfterSessionCleanup/);
 });
 
+test("picker rows speak the three-channel grammar — keycap=agent, glyph=project, text=what", () => {
+  // Project Anchors (2026-07-17): the renderer colors the digit keycap by
+  // agent species, draws a hand-drawn project glyph resolved from per-machine
+  // config, and shows "Name · status" with the raw label preserved as the
+  // hover title. All renderer-owned; overlay.html stays byte-identical.
+  const renderer = readFileSync(path.join(rootDir, "public", "overlay-renderer.js"), "utf8");
+  const main = readFileSync(path.join(rootDir, "src", "main.ts"), "utf8");
+
+  assert.match(renderer, /AGENT_CAP_COLORS/);
+  assert.match(renderer, /claude:/);
+  assert.match(renderer, /codex:/);
+  assert.match(renderer, /PROJECT_GLYPHS/);
+  assert.match(renderer, /tophat:/);
+  assert.match(renderer, /wing:/);
+  assert.match(renderer, /buildPickerEntryEl\(index \+ 2, target\.label, target\)/);
+  assert.match(renderer, /target\.anchor/);
+  assert.match(renderer, /entry\.title = label/);
+  // The shell resolves anchors before the snapshot ships; the adapter stays
+  // ignorant of projects.
+  assert.match(main, /queryAnchoredTargets/);
+  assert.match(main, /resolveProjectAnchor\(target\.cwd, projectAnchors\)/);
+});
+
 test("main consults the authoritative active-verb lock before starting dictation and releases it on cleanup", () => {
   const main = readFileSync(path.join(rootDir, "src", "main.ts"), "utf8");
 
@@ -438,6 +463,8 @@ test("buildCapturePickerOverlaySnapshot carries the capture preview when one exi
     target: "herdr-session-a",
     label: "claude · idle — pane a",
     agentStatus: "idle" as const,
+    agent: "claude",
+    cwd: null,
   };
 
   // Present on every picker call site: summoning, populated, and local-only.
@@ -497,6 +524,8 @@ test("buildCapturePickerOverlaySnapshot carries the again-row on every picker fr
     target: "herdr-session-a",
     label: "claude · idle — pane a",
     agentStatus: "idle",
+    agent: "claude",
+    cwd: null,
   };
 
   // The FIRST frame: no targets resolved yet (summoning), the row is already

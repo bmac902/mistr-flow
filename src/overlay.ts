@@ -1,6 +1,19 @@
 import type { PickerPreview } from "./captureThumbnail";
 import type { EligibleTarget } from "./herdr";
 import type { FleetTier } from "./fleetState";
+import type { ProjectAnchor } from "./projectAnchors";
+
+/**
+ * An eligible target dressed for the picker (project-anchors design,
+ * 2026-07-17): the shell (main.ts) resolves the pane's cwd against the
+ * per-machine `projectAnchors` config before the snapshot ships, so the
+ * renderer can draw the WHERE channel — the project's glyph + friendly name —
+ * without owning any path logic. Plain EligibleTargets remain assignable:
+ * an unresolved anchor simply renders the raw-label fallback.
+ */
+export interface AnchoredTarget extends EligibleTarget {
+  readonly anchor?: ProjectAnchor;
+}
 
 export type OverlayPhase =
   | "idle"
@@ -66,7 +79,7 @@ export interface OverlaySnapshot {
   statusCopy: string;
   toastCopy?: string;
   /** Eligible-target entries for the picker; panes always sit on digits 2–9. */
-  captureTargets?: readonly EligibleTarget[];
+  captureTargets?: readonly AnchoredTarget[];
   /** True only during the brief pre-target "summoning" sub-beat of the picker. */
   pickerSummoning?: boolean;
   /**

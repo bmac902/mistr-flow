@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { isFiniteOverlayPosition, type OverlayPosition } from "./overlayPosition";
+import { normalizeProjectAnchors, type ProjectAnchor } from "./projectAnchors";
 
 export interface AppConfig {
   openaiApiKey?: unknown;
@@ -15,6 +16,7 @@ export interface AppConfig {
   persistentBlockDing?: unknown;
   doneChime?: unknown;
   provider?: unknown;
+  projectAnchors?: unknown;
 }
 
 export interface VocabularyReplacement {
@@ -207,6 +209,31 @@ export async function readProvider(
   return typeof parsed.provider === "string" && parsed.provider.trim()
     ? parsed.provider.trim()
     : "openai";
+}
+
+/**
+ * Per-machine, deliberately never source (project-anchors design, 2026-07-17):
+ * Mistr Flow runs on two machines with different project sets, and MF learns
+ * no project semantics — each machine's config names its own projects. Missing
+ * file or key is an empty list, never fatal: rows simply fall back to the raw
+ * cwd basename until anchors are configured.
+ */
+export async function readProjectAnchors(
+  env: NodeJS.ProcessEnv = process.env,
+  fileSystem = fs,
+): Promise<ProjectAnchor[]> {
+  const configPath = getConfigPath(env);
+
+  let rawConfig: string;
+  try {
+    rawConfig = await fileSystem.readFile(configPath, "utf8");
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return [];
+    throw error;
+  }
+
+  const parsed = JSON.parse(rawConfig) as AppConfig;
+  return normalizeProjectAnchors(parsed.projectAnchors);
 }
 
 export async function writeOverlayPosition(

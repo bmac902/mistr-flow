@@ -367,7 +367,74 @@ function cancelCropDrag(event) {
   setFraming(false);
 }
 
-function buildPickerEntryEl(digit, label) {
+// --- Project Anchors + agent keycaps (grilled 2026-07-17) -------------------
+// Three orthogonal row channels: the digit KEYCAP's color says WHO (agent
+// species), the GLYPH says WHERE (project), the text says WHAT (name · status).
+// Renderer-owned throughout — overlay.html stays byte-identical.
+//
+// WHO — keycap background by agent. Known species get filled color; an
+// unknown agent keeps the asset's brass cap (something new is in the fleet,
+// and brass is the honest "unclaimed" state). Hermes gold is bright, so its
+// cap flips to dark ink text for contrast; the rest keep the cream.
+const AGENT_CAP_COLORS = {
+  claude: { background: "#D97757", ink: "" },
+  copilot: { background: "#4C8DF6", ink: "" },
+  hermes: { background: "#F2C14E", ink: "#2b2416" },
+  codex: { background: "#8E97A3", ink: "" },
+};
+
+// WHERE — the glyph library. Hand-drawn for Mistr Flow (deliberately NOT
+// stock emoji and NOT product logos — "visual anchors, not branding"): warm
+// ink strokes in the card's design language, sized for a 13px slot. Config
+// (`projectAnchors`) references these by id; new projects on another machine
+// reuse the library or earn a new drawing here. The library ships in source
+// so a `git pull` carries it to every machine.
+const PROJECT_GLYPHS = {
+  // A top hat with a band — the butler's own, for Mistr Flow itself.
+  tophat:
+    '<svg viewBox="0 0 16 16"><path d="M2.6 12h10.8M5 12V5.6c0-.5.4-.9.9-.9h4.2c.5 0 .9.4.9.9V12" fill="none"/><path d="M5 9.4h6" fill="none"/></svg>',
+  // An eighth note for the SoundCloud work.
+  note:
+    '<svg viewBox="0 0 16 16"><ellipse cx="5.6" cy="11.8" rx="2" ry="1.6" fill="currentColor" stroke="none"/><path d="M7.6 11.8V3.4" fill="none"/><path d="M7.6 3.4c2.4.5 3.8 1.7 4 3.8" fill="none"/></svg>',
+  // A terminal prompt for Coding Agent Observer / Control Room.
+  terminal:
+    '<svg viewBox="0 0 16 16"><rect x="1.6" y="3" width="12.8" height="10" rx="1.6" fill="none"/><path d="M4.2 6.2l2.4 1.9-2.4 1.9M8.4 10.4h3.2" fill="none"/></svg>',
+  // Hermes' wing — three feather strokes.
+  wing:
+    '<svg viewBox="0 0 16 16"><path d="M2.4 10.6c4.2.6 8.2-1 10.9-5.3M4.4 12.4c3.2.4 6.2-.7 8.3-3.3M7 13.8c2 .2 3.9-.4 5.2-1.9" fill="none"/></svg>',
+  // An erlenmeyer flask for scratch/experiment folders.
+  flask:
+    '<svg viewBox="0 0 16 16"><path d="M6.4 2.6h3.2M7.4 2.6v4.1l-3.7 6c-.5.9.1 1.9 1.1 1.9h6.4c1 0 1.6-1 1.1-1.9l-3.7-6V2.6" fill="none"/><path d="M5.4 10.4h5.2" fill="none"/></svg>',
+};
+
+const projectAnchorStyle = document.createElement("style");
+projectAnchorStyle.textContent = `
+  .capture-picker-entry-glyph {
+    flex: none;
+    width: 15px;
+    height: 15px;
+    display: flex;
+    align-items: center;
+    color: var(--ink, #3d3428);
+  }
+  .capture-picker-entry-glyph svg {
+    width: 15px;
+    height: 15px;
+    stroke: currentColor;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+`;
+document.head.appendChild(projectAnchorStyle);
+
+function basenameOf(cwd) {
+  if (typeof cwd !== "string") return null;
+  const parts = cwd.split(/[\\/]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : null;
+}
+
+function buildPickerEntryEl(digit, label, target) {
   const entry = document.createElement("div");
   entry.className = "capture-picker-entry";
   entry.dataset.digit = String(digit);
@@ -381,6 +448,35 @@ function buildPickerEntryEl(digit, label) {
   labelEl.textContent = label;
 
   entry.appendChild(digitEl);
+
+  if (target && typeof target === "object") {
+    // WHO — color the keycap by agent species.
+    const cap = AGENT_CAP_COLORS[target.agent];
+    if (cap) {
+      digitEl.style.background = cap.background;
+      if (cap.ink) digitEl.style.color = cap.ink;
+    }
+
+    // WHERE — the project glyph, when this cwd is anchored in config.
+    const glyphSvg = target.anchor && PROJECT_GLYPHS[target.anchor.glyph];
+    if (glyphSvg) {
+      const glyphEl = document.createElement("span");
+      glyphEl.className = "capture-picker-entry-glyph";
+      glyphEl.innerHTML = glyphSvg;
+      entry.appendChild(glyphEl);
+    }
+
+    // WHAT — friendly name · status; unanchored panes fall back to the cwd
+    // basename, and a cwd-less pane to the agent's name. The raw label stays
+    // reachable as the hover title, so no information is ever lost.
+    const name =
+      (target.anchor && target.anchor.name) || basenameOf(target.cwd) || target.agent;
+    if (name && target.agentStatus) {
+      labelEl.textContent = `${name} · ${target.agentStatus}`;
+      entry.title = label;
+    }
+  }
+
   entry.appendChild(labelEl);
   return entry;
 }
@@ -445,7 +541,7 @@ function renderCapturePickerEntries(snapshot) {
     pickerEntriesEl.appendChild(slotOneEl);
   }
   for (const [index, target] of (snapshot.captureTargets || []).entries()) {
-    const entryEl = buildPickerEntryEl(index + 2, target.label);
+    const entryEl = buildPickerEntryEl(index + 2, target.label, target);
     makeRowClickable(entryEl, { kind: "target", slotIndex: index });
     pickerEntriesEl.appendChild(entryEl);
   }

@@ -30,6 +30,15 @@ export const CAPTURE_PICKER_LIST_PADDING = 8;
  */
 export const CAPTURE_PREVIEW_BLOCK_HEIGHT = 219;
 
+/**
+ * Headroom for the butler's hat (dogfood 2026-07-17): the renderer's TV-scale
+ * override grows the mascot 25% about his feet, so his top extends ~28px above
+ * the stage budget the asset shipped with. At rest the resting bounds absorb
+ * it; in a *grown* picker the stage is pushed against the window's top edge
+ * and the head clips without this. Must cover 0.25 × the asset's 111px mascot.
+ */
+export const CAPTURE_PICKER_MASCOT_HEADROOM = 32;
+
 /** Digit slot 1 (Clipboard) is always rendered, plus up to 8 Herdr targets. */
 export function capturePickerEntryCount(targetCount: number): number {
   return 1 + Math.min(targetCount, CAPTURE_PICKER_MAX_TARGETS);
@@ -45,6 +54,7 @@ export function capturePickerWindowHeight(
   // picker never clips its last row.
   return (
     OVERLAY_WINDOW_HEIGHT +
+    CAPTURE_PICKER_MASCOT_HEADROOM +
     CAPTURE_PICKER_LIST_PADDING +
     (capturePickerEntryCount(targetCount) + (hasAgainRow ? 1 : 0)) *
       CAPTURE_PICKER_ENTRY_HEIGHT +

@@ -51,12 +51,16 @@ const TARGET_A: EligibleTarget = {
   target: "trm_0000000000000000000000000A",
   label: "claude · idle — pane a",
   agentStatus: "idle",
+  agent: "claude",
+  cwd: null,
 };
 
 const TARGET_B: EligibleTarget = {
   target: "trm_0000000000000000000000000B",
   label: "claude · working — pane b",
   agentStatus: "working",
+  agent: "claude",
+  cwd: null,
 };
 
 function deferred<T>() {
@@ -244,6 +248,8 @@ test("reconcile, present: the row refreshes from the fresh entry and the confirm
     target: TARGET_A.target,
     label: "claude · working — pane a",
     agentStatus: "working",
+    agent: "claude",
+    cwd: null,
   };
   const { deps, states, delivered, picker } = baseDeps({
     queryEligibleTargets: async () => ({ kind: "targets", targets: [freshA, TARGET_B] }),

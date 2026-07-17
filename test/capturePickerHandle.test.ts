@@ -8,12 +8,16 @@ const TARGET_A: EligibleTarget = {
   target: "herdr-session-a",
   label: "claude · idle — pane a",
   agentStatus: "idle",
+  agent: "claude",
+  cwd: null,
 };
 
 const TARGET_B: EligibleTarget = {
   target: "herdr-session-b",
   label: "claude · working — pane b",
   agentStatus: "working",
+  agent: "claude",
+  cwd: null,
 };
 
 interface FakeShortcuts {
@@ -73,6 +77,8 @@ test("createCapturePickerHandle: appendTargets caps at 8 target slots (digits 2-
     target: `herdr-session-${i}`,
     label: `agent ${i}`,
     agentStatus: "idle" as const,
+    agent: "claude",
+    cwd: null,
   }));
   handle.appendTargets(nineTargets);
 
