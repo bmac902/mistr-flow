@@ -56,13 +56,16 @@ doneBadgeStyle.textContent = `
     top: 6px;
     right: 8px;
     min-width: 16px;
-    padding: 1px 6px;
-    border: 1px solid var(--brass, #b8964a);
-    border-radius: 9px;
+    padding: 2px 7px;
+    background: #d4af5e;
+    border: none;
+    border-radius: 10px;
     font-size: 11px;
+    font-weight: 600;
     line-height: 15px;
     text-align: center;
-    color: var(--brass, #b8964a);
+    color: #16100a;
+    box-shadow: 0 0 6px rgba(212, 175, 94, 0.45);
     pointer-events: none;
   }
   #mf-done-badge.mf-has-done { display: block; }
