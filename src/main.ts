@@ -229,7 +229,10 @@ function overlayIsResting(): boolean {
 
 function renderFleetPosture(posture: FleetPosture): void {
   if (!overlayIsResting()) return;
-  sendToRenderer("overlay-state", buildFleetPostureOverlaySnapshot(posture.tier));
+  sendToRenderer(
+    "overlay-state",
+    buildFleetPostureOverlaySnapshot(posture.tier, posture.doneCount),
+  );
 }
 
 async function pollFleetOnce(): Promise<void> {
