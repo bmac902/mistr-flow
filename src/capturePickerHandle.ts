@@ -55,11 +55,22 @@ export type PickerRowClick =
  */
 export type RowClickSource = (emit: (click: PickerRowClick) => void) => () => void;
 
+/**
+ * Subscribes an external cancel (verb-switch, 2026-07-17), returning an
+ * unsubscribe. When a *different* verb's hotkey lands while this picker is
+ * open, main.ts cancels the picker through this source and starts the
+ * intended verb — the emit dispatches the EXACT escape event the Esc key
+ * produces, through the same one-selection-at-a-time channel: one ordered
+ * event stream, whatever the input (the crop/again/click pattern).
+ */
+export type CancelSource = (emit: () => void) => () => void;
+
 export interface CapturePickerHandleDeps {
   readonly shortcuts: GlobalShortcutPort;
   readonly cropSource?: CropSource;
   readonly againSource?: AgainSource;
   readonly clickSource?: RowClickSource;
+  readonly cancelSource?: CancelSource;
   /**
    * Whether digit `1` resolves to the pinned local-outcome slot. True for
    * every verb since #64 (slot 1 is always "end this locally, no pane" —
@@ -80,7 +91,7 @@ export interface CapturePickerHandleDeps {
 export function createCapturePickerHandle(
   deps: CapturePickerHandleDeps,
 ): CapturePickerHandle {
-  const { shortcuts, cropSource, againSource, clickSource } = deps;
+  const { shortcuts, cropSource, againSource, clickSource, cancelSource } = deps;
   const includeClipboardSlot = deps.includeClipboardSlot ?? true;
   const registeredAccelerators = new Set<string>();
   // The targets THIS instance put on digit slots, in append order — the sole
@@ -92,6 +103,7 @@ export function createCapturePickerHandle(
   let unsubscribeCrop: (() => void) | null = null;
   let unsubscribeAgain: (() => void) | null = null;
   let unsubscribeClick: (() => void) | null = null;
+  let unsubscribeCancel: (() => void) | null = null;
 
   function resolveSelection(event: CaptureSelectionEvent): void {
     if (closed || !pendingResolve) return;
@@ -144,6 +156,10 @@ export function createCapturePickerHandle(
     unsubscribeClick = clickSource((click) => resolveRowClick(click));
   }
 
+  if (cancelSource) {
+    unsubscribeCancel = cancelSource(() => resolveSelection({ kind: "escape" }));
+  }
+
   return {
     appendTargets(targets: readonly EligibleTarget[]): void {
       if (closed) return;
@@ -176,6 +192,9 @@ export function createCapturePickerHandle(
 
       unsubscribeClick?.();
       unsubscribeClick = null;
+
+      unsubscribeCancel?.();
+      unsubscribeCancel = null;
 
       for (const accelerator of registeredAccelerators) {
         shortcuts.unregister(accelerator);

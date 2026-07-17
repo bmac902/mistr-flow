@@ -254,6 +254,31 @@ test("a picker with no againSource still works", async () => {
   assert.deepEqual(await selection, { kind: "escape" });
 });
 
+test("an external cancel (verb switch, 2026-07-17) dispatches the exact escape event Esc produces", async () => {
+  let emit: (() => void) | null = null;
+  let unsubscribed = false;
+  const handle = createCapturePickerHandle({
+    shortcuts: makeFakeShortcuts(),
+    cancelSource: (cb) => {
+      emit = cb;
+      return () => {
+        unsubscribed = true;
+      };
+    },
+  });
+
+  const selection = handle.awaitSelection();
+  emit!();
+
+  // Identical to a real Esc — one selection channel, whatever the input.
+  assert.deepEqual(await selection, { kind: "escape" });
+
+  // Torn down with everything else on close — a switch aimed at a dead
+  // picker must never resolve it.
+  handle.close();
+  assert.equal(unsubscribed, true);
+});
+
 // --- Clickable rows: the injected click source (issue #61, ADR 0005) -------
 // A mouse click is another way to press the row's key, never a second
 // implementation: a click resolves the EXACT selection event the key

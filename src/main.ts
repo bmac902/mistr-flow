@@ -79,10 +79,12 @@ import {
 import {
   createCapturePickerHandle,
   type AgainSource,
+  type CancelSource,
   type CropSource,
   type PickerRowClick,
   type RowClickSource,
 } from "./capturePickerHandle";
+import { decideVerbStart, type Verb } from "./verbArbiter";
 import { routeBarClick } from "./barClickRouting";
 import {
   cropCaptureImage,
@@ -626,8 +628,20 @@ function registerHotkey(): void {
       return;
     }
 
+    // A different verb's OPEN PICKER yields to this key (verb switch,
+    // 2026-07-17): a picker is a menu, not work. Busy states still refuse.
+    if (
+      decideVerbStart(
+        { activeVerb: verbLock.activeVerb(), pickerOpen: activeAgainEmit !== null },
+        "dictation",
+      ) === "switch"
+    ) {
+      requestVerbSwitch("dictation", startSession);
+      return;
+    }
+
     if (!verbLock.tryStart("dictation")) {
-      refuseVerb();
+      refuseOrForceSwitch("dictation", startSession);
       return;
     }
 
@@ -661,8 +675,20 @@ function registerCaptureHotkey(): void {
       return;
     }
 
+    // A different verb's OPEN PICKER yields to this key (verb switch,
+    // 2026-07-17): a picker is a menu, not work. Busy states still refuse.
+    if (
+      decideVerbStart(
+        { activeVerb: verbLock.activeVerb(), pickerOpen: activeAgainEmit !== null },
+        "capture",
+      ) === "switch"
+    ) {
+      requestVerbSwitch("capture", startCapture);
+      return;
+    }
+
     if (!verbLock.tryStart("capture")) {
-      refuseVerb();
+      refuseOrForceSwitch("capture", startCapture);
       return;
     }
 
@@ -693,8 +719,20 @@ function registerRelayHotkey(): void {
       return;
     }
 
+    // A different verb's OPEN PICKER yields to this key (verb switch,
+    // 2026-07-17): a picker is a menu, not work. Busy states still refuse.
+    if (
+      decideVerbStart(
+        { activeVerb: verbLock.activeVerb(), pickerOpen: activeAgainEmit !== null },
+        "relay",
+      ) === "switch"
+    ) {
+      requestVerbSwitch("relay", startRelay);
+      return;
+    }
+
     if (!verbLock.tryStart("relay")) {
-      refuseVerb();
+      refuseOrForceSwitch("relay", startRelay);
       return;
     }
 
@@ -736,8 +774,20 @@ function registerHeraldHotkey(): void {
       return;
     }
 
+    // A different verb's OPEN PICKER yields to this key (verb switch,
+    // 2026-07-17): a picker is a menu, not work. Busy states still refuse.
+    if (
+      decideVerbStart(
+        { activeVerb: verbLock.activeVerb(), pickerOpen: activeAgainEmit !== null },
+        "herald",
+      ) === "switch"
+    ) {
+      requestVerbSwitch("herald", startHerald);
+      return;
+    }
+
     if (!verbLock.tryStart("herald")) {
-      refuseVerb();
+      refuseOrForceSwitch("herald", startHerald);
       return;
     }
 
@@ -895,6 +945,75 @@ const pickerAgainSource: AgainSource = (emit) => {
   };
 };
 
+// External picker cancel for the verb switch (2026-07-17), mirroring the
+// again hook: non-null exactly while a picker is open, so a different verb's
+// hotkey can dismiss it through the picker's own escape channel instead of
+// trapping the user behind a manual Esc (which, mis-aimed, lands in the
+// focused pane and kills real coding sessions).
+let activeCancelEmit: (() => void) | null = null;
+
+const pickerCancelSource: CancelSource = (emit) => {
+  activeCancelEmit = emit;
+  return () => {
+    if (activeCancelEmit === emit) activeCancelEmit = null;
+  };
+};
+
+/**
+ * The verb switch (2026-07-17): cancel the open picker, then start the
+ * intended verb the moment the lock frees — one press, no Esc, no trap. The
+ * cancelled session unwinds asynchronously (its finally releases the lock),
+ * so this retries briefly; if the lock somehow never frees, the switch
+ * dissolves rather than queueing stale intent.
+ */
+function requestVerbSwitch(verb: Verb, start: () => void): void {
+  const deadline = Date.now() + 4000;
+  const attempt = (): void => {
+    if (verbLock.tryStart(verb)) {
+      cancelRefusedReturn();
+      start();
+      return;
+    }
+    // Cancel whatever is cancellable *right now*, then keep trying: an open
+    // picker (its escape channel), or a mistaken recording (the exact path
+    // Esc takes — endSession no-ops when there's nothing to cancel).
+    // Un-cancellable phases (delivering, mid-polish) simply run out on their
+    // own and the switch lands when the lock frees — spoken words in flight
+    // are pasted first, never lost. Past the deadline the switch dissolves
+    // rather than queueing stale intent.
+    activeCancelEmit?.();
+    endSession("escape");
+    if (Date.now() > deadline) return;
+    setTimeout(attempt, 50);
+  };
+  attempt();
+}
+
+/**
+ * The double-press escape hatch (2026-07-17): a busy state's first foreign
+ * press wags — protecting a real recording from an accidental brush — but the
+ * SAME intended key again inside this window means "I mean it": switch, using
+ * every cancel requestVerbSwitch knows. This is the fix for "stuck until Esc,
+ * and Esc kills coding sessions" — the intended key itself becomes the exit.
+ */
+const REPEAT_SWITCH_WINDOW_MS = 3000;
+let lastRefusedVerb: { verb: Verb; atMs: number } | null = null;
+
+function refuseOrForceSwitch(verb: Verb, start: () => void): void {
+  const now = Date.now();
+  if (
+    lastRefusedVerb &&
+    lastRefusedVerb.verb === verb &&
+    now - lastRefusedVerb.atMs < REPEAT_SWITCH_WINDOW_MS
+  ) {
+    lastRefusedVerb = null;
+    requestVerbSwitch(verb, start);
+    return;
+  }
+  lastRefusedVerb = { verb, atMs: now };
+  refuseVerb();
+}
+
 // Row clicks from the renderer (issue #61, ADR 0005), mirroring the crop
 // source: a click on a key-cap row arrives over IPC carrying the row's
 // identity and joins the same selection stream as the digits — the handle
@@ -939,6 +1058,7 @@ function openCapturePicker(): CapturePickerHandle {
     cropSource: captureCropSource,
     againSource: pickerAgainSource,
     clickSource: pickerRowClickSource,
+    cancelSource: pickerCancelSource,
   });
 }
 
@@ -1072,6 +1192,7 @@ function openRelayPicker(): CapturePickerHandle {
     cropSource: captureCropSource,
     againSource: pickerAgainSource,
     clickSource: pickerRowClickSource,
+    cancelSource: pickerCancelSource,
     // Slot 1 returned (#64): "1 Clipboard" = keep the copy, stop here — the
     // affirmative local ending now that Ctrl+Alt+C (with copySelectionFirst)
     // is itself the copy. Same digit, same "Clipboard" label as Capture's.

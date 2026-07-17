@@ -11,7 +11,9 @@ export function createActiveVerbLock(): ActiveVerbLock {
 
   return {
     tryStart(verb: Verb): boolean {
-      if (decideVerbStart({ activeVerb }, verb) === "refuse") return false;
+      // Strictly "start" — the lock never knows pickerOpen, so it can never
+      // see "switch"; the guard is exact so it never could start on one.
+      if (decideVerbStart({ activeVerb }, verb) !== "start") return false;
 
       activeVerb = verb;
       return true;

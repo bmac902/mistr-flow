@@ -37,6 +37,40 @@ test("starts herald from idle", () => {
   assert.equal(decideVerbStart({ activeVerb: null }, "herald"), "start");
 });
 
+test("a different verb's key while a picker is open decides 'switch' — the picker is a menu, not work (2026-07-17)", () => {
+  assert.equal(
+    decideVerbStart({ activeVerb: "relay", pickerOpen: true }, "capture"),
+    "switch",
+  );
+  assert.equal(
+    decideVerbStart({ activeVerb: "capture", pickerOpen: true }, "herald"),
+    "switch",
+  );
+  assert.equal(
+    decideVerbStart({ activeVerb: "herald", pickerOpen: true }, "dictation"),
+    "switch",
+  );
+});
+
+test("busy states (no picker) still refuse — recording and delivering are never preempted", () => {
+  assert.equal(decideVerbStart({ activeVerb: "dictation" }, "capture"), "refuse");
+  assert.equal(
+    decideVerbStart({ activeVerb: "relay", pickerOpen: false }, "capture"),
+    "refuse",
+  );
+});
+
+test("a same-verb press reaching the arbiter refuses even with a picker open — the again-confirm is routed upstream", () => {
+  assert.equal(
+    decideVerbStart({ activeVerb: "capture", pickerOpen: true }, "capture"),
+    "refuse",
+  );
+});
+
+test("pickerOpen never affects an idle start", () => {
+  assert.equal(decideVerbStart({ activeVerb: null, pickerOpen: true }, "relay"), "start");
+});
+
 test("refuses herald while any verb is mid-flight, and vice versa (issue #55)", () => {
   // Active dictation is never interrupted by a Herald press…
   assert.equal(decideVerbStart({ activeVerb: "dictation" }, "herald"), "refuse");

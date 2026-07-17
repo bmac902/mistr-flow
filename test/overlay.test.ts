@@ -355,6 +355,32 @@ test("picker rows speak the three-channel grammar — keycap=agent, glyph=projec
   assert.match(main, /resolveProjectAnchor\(target\.cwd, projectAnchors\)/);
 });
 
+test("a different verb's key while a picker is open switches verbs instead of scolding (2026-07-17)", () => {
+  // The verb switch: cancel the open picker through its own escape channel,
+  // start the intended verb when the lock frees — one press, no Esc, no trap.
+  // All four hotkey handlers route through the arbiter's "switch" decision.
+  const main = readFileSync(path.join(rootDir, "src", "main.ts"), "utf8");
+  const handle = readFileSync(path.join(rootDir, "src", "capturePickerHandle.ts"), "utf8");
+
+  assert.match(main, /requestVerbSwitch\("dictation", startSession\)/);
+  assert.match(main, /requestVerbSwitch\("capture", startCapture\)/);
+  assert.match(main, /requestVerbSwitch\("relay", startRelay\)/);
+  assert.match(main, /requestVerbSwitch\("herald", startHerald\)/);
+  assert.match(main, /pickerOpen: activeAgainEmit !== null/);
+  assert.match(main, /cancelSource: pickerCancelSource/);
+  assert.match(handle, /cancelSource\(\(\) => resolveSelection\(\{ kind: "escape" \}\)\)/);
+  // The double-press escape hatch: the same intended key twice inside the
+  // window forces the switch from busy states too — a mistaken recording is
+  // cancelled via the exact path Esc takes; un-cancellable phases run out and
+  // the switch lands when the lock frees.
+  assert.match(main, /REPEAT_SWITCH_WINDOW_MS/);
+  assert.match(main, /refuseOrForceSwitch\("capture", startCapture\)/);
+  assert.match(main, /refuseOrForceSwitch\("dictation", startSession\)/);
+  assert.match(main, /refuseOrForceSwitch\("relay", startRelay\)/);
+  assert.match(main, /refuseOrForceSwitch\("herald", startHerald\)/);
+  assert.match(main, /endSession\("escape"\);\s*\n\s*if \(Date\.now\(\) > deadline\)/);
+});
+
 test("main consults the authoritative active-verb lock before starting dictation and releases it on cleanup", () => {
   const main = readFileSync(path.join(rootDir, "src", "main.ts"), "utf8");
 
