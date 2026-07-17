@@ -77,7 +77,8 @@ doneBadgeEl.id = "mf-done-badge";
 cardEl.appendChild(doneBadgeEl);
 
 // TV-scale nudge (dogfood 2026-07-16): on the 42" 4K the butler reads tiny, so
-// the mascot ensemble — butler + mic, the whole #mascot SVG — gets an 18% lift.
+// the mascot ensemble — butler + mic, the whole #mascot SVG — gets a 25% lift
+// (18% first, bumped on sight).
 // Renderer-owned override, same discipline as the chip above: overlay.html is a
 // Claude Design asset and stays byte-identical. The stage and its floor shadow
 // keep their designed size ("the whole thing, not the stage"): the scale

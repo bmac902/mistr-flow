@@ -26,7 +26,7 @@ The need surfaced as a workaround caught in the act: telling a monitoring agent 
 ## Consequences
 
 - **Mostly a fleetState extension.** The pure module grows done-episode tracking beside its blocked tracking; the chime decision is emitted like the ding decision (one-shot, effects decided in the wiring). One new seam: an injected "is Herdr's host window foreground" check, faked in tests.
-- **One new sound asset** — softer and distinct from the persistent-block ding. Config: `doneChime` (default on), riding the existing fleet-awareness master switch, mirroring the ding's flag shape.
+- **One new sound** — softer and distinct from the persistent-block ding. As shipped this is a lower, gentler `[console]::beep` (587 Hz vs the ding's 900 Hz — the distinct-and-softer invariant, asserted at the seam), not a bundled audio file; the house PowerShell-beep pattern the ding already uses. Config: `doneChime` (default on, `!== false`), its own flag mirroring `persistentBlockDing`'s shape — there is no single combined fleet-awareness master switch; each cue reads its own flag.
 - **OS toasts are deferred, not rejected** — added on *observed* need (completions missed while Herdr hidden), never anticipated need.
 - **"Why it's done" enrichment is out on a standing boundary**: MF learns no git/session/issue semantics. The knowledge lives in Control Room; if enriched completions ever happen, CR pushes text down to a dumb MF display. See the PRD #44 vision arc.
 - **Done panes as *delivery targets* is deliberately separate** (#76): a picker/delivery concern with its own live verification (auto-attach on a done prompt), not part of the notification work.

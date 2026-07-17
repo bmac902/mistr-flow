@@ -24,16 +24,17 @@ export interface BlockedJumpCursor {
   /**
    * Pick the next target to jump to for one hotkey press, advancing the cursor.
    *
-   * `orderedBlocked` is the live longest-blocked-first list (fleetState's
-   * `blockedTargets`) at the moment of the press. Returns:
-   * - the oldest-blocked target on the first press (or after the set emptied),
+   * `orderedCycle` is the live {@link attentionCycle} — blocked oldest-first,
+   * then done oldest-first — at the moment of the press (ADR 0006 §4; the
+   * pre-#79 caller passed the blocked list alone). Returns:
+   * - the cycle's first target on the first press (or after the set emptied),
    * - the target *after* the last one visited on a repeat press (wrapping to
-   *   the oldest at the end),
-   * - the oldest-blocked target when the last-visited target has since vanished
+   *   the front at the end),
+   * - the first target when the last-visited target has since vanished
    *   — a dead pane is never returned,
-   * - `null` when nothing is blocked, so the caller can no-op truthfully.
+   * - `null` when nothing needs attention, so the caller can no-op truthfully.
    */
-  next(orderedBlocked: readonly string[]): string | null;
+  next(orderedCycle: readonly string[]): string | null;
 }
 
 export function createBlockedJumpCursor(): BlockedJumpCursor {

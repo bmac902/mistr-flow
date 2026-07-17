@@ -1,7 +1,7 @@
 // Project Anchors (idea grilled 2026-07-17): the picker rows' WHERE channel.
 // A pane's cwd resolves to a small named glyph — "you stop thinking in paths,
-// you think in projects" — while the agent-color dot is the WHO channel and
-// the status text stays the WHAT. Three channels, none competing.
+// you think in projects" — while the agent-colored digit keycap is the WHO
+// channel and the status text stays the WHAT. Three channels, none competing.
 //
 // The mapping is deliberately per-machine CONFIG, never source: Mistr Flow
 // runs on two machines with different project sets (and MF learns no project

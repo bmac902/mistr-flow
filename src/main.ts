@@ -295,7 +295,15 @@ function isHerdrForeground(): Promise<boolean> {
  * exactly like the ding; suppression silences the sound only, never the state.
  */
 async function maybeChimeDone(posture: FleetPosture): Promise<void> {
+  // Cheap gates first: nothing newly done, chime disabled, or a verb active
+  // all short-circuit before the foreground probe — which shells out to
+  // PowerShell (the same spawn class #72 fixed), so it must never run for a
+  // chime we'd have suppressed anyway (e.g. every done episode under
+  // `doneChime: false`).
   if (posture.newlyDoneTargets.length === 0) return;
+  if (!doneChime) return;
+  if (verbLock.activeVerb() !== null) return;
+
   const herdrForeground = await isHerdrForeground();
   if (
     shouldChimeDone({
@@ -337,7 +345,7 @@ const jumpCursor = createBlockedJumpCursor();
  * user-initiated — you pressed the key to go there — the same explicit exception
  * to "never steal focus" as focusOnDeliver.
  */
-function jumpToLongestBlocked(): void {
+function jumpToNextAttentionTarget(): void {
   const target = jumpCursor.next(attentionCycle(fleetState.posture()));
   if (target === null) return; // Nothing needs you — nowhere to jump, so no-op.
 
@@ -813,7 +821,7 @@ const JUMP_ACCELERATOR = "Control+Alt+J";
 
 function registerJumpHotkey(): void {
   const registered = globalShortcut.register(JUMP_ACCELERATOR, () => {
-    jumpToLongestBlocked();
+    jumpToNextAttentionTarget();
   });
 
   if (!registered) {
@@ -1453,7 +1461,7 @@ app.whenReady().then(async () => {
   // A plain click on the bar (issue #52) jumps to the longest-blocked agent —
   // the mouse-hand path to the same action as the Ctrl+Alt+J hotkey. The
   // renderer only fires this when the press stayed under the drag threshold; a
-  // click with nothing blocked no-ops inside jumpToLongestBlocked. While a
+  // click with nothing blocked no-ops inside jumpToNextAttentionTarget. While a
   // picker is open the window is modal (issue #61, ADR 0005): the butler/header
   // is purely a window handle, so the jump is suppressed — routed through the
   // pure gate, restored the moment the picker closes (the handle's unsubscribe
@@ -1461,7 +1469,7 @@ app.whenReady().then(async () => {
   // keyboard behavior is byte-identical, the mouse is what the modal rule fixes.
   ipcMain.on("bar-clicked", () => {
     if (routeBarClick({ pickerOpen: activeRowClickEmit !== null }) === "jump") {
-      jumpToLongestBlocked();
+      jumpToNextAttentionTarget();
     }
   });
   ipcMain.on("set-overlay-mouse-events", (_event, { ignore }: { ignore: boolean }) => {
