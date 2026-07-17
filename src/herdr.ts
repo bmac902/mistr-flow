@@ -22,16 +22,28 @@ export const PANE_QUERY_TIMEOUT_MS = 2000;
  */
 const SUPPORTED_PROTOCOLS: ReadonlySet<number> = new Set([16]);
 
-/** Actionable agent statuses — the only ones that make a pane an Eligible Target. */
-const ACTIONABLE_STATUSES: ReadonlySet<string> = new Set(["idle", "working"]);
+/**
+ * Actionable agent statuses — the only ones that make a pane an Eligible
+ * Target. `done` is actionable (#76): a done pane is a live session waiting at
+ * its prompt (spike-verified receivable), not a dead one — dead panes vanish
+ * from the pane list and stay excluded. Consistency payoff, deliberate:
+ * delivering into a done pane *is engagement*, so Herdr clears its `done`
+ * status the same way typing does — following up on a finished agent retires
+ * its fleet Done signal by itself. No special case for that here or anywhere.
+ */
+const ACTIONABLE_STATUSES: ReadonlySet<string> = new Set([
+  "idle",
+  "working",
+  "done",
+]);
 
-export type AgentStatus = "idle" | "working";
+export type AgentStatus = "idle" | "working" | "done";
 
 /**
  * The full set of agent statuses Herdr reports — verified live against the
  * real CLI schema, which enumerates exactly these five. The picker only acts
- * on the actionable subset (idle/working); fleet awareness watches the whole
- * fleet, including the blocked/done/unknown end. Any status outside this set
+ * on the actionable subset (idle/working/done); fleet awareness watches the
+ * whole fleet, including the blocked/unknown end. Any status outside this set
  * (or an absent status) normalises to `unknown` — never a calm posture,
  * consistent with the app's "absence of signal is not all-clear" epistemics.
  */
@@ -346,13 +358,14 @@ export function parsePaneList(stdout: string): RawPane[] {
 
 /**
  * Eligibility (glossary *Eligible Target*): the pane must carry Herdr's
- * `agent` field AND an actionable agent status (idle/working). Presence of
- * the optional `agent_session` metadata is NOT the test — recognised agent
+ * `agent` field AND an actionable agent status (idle/working/done). Presence
+ * of the optional `agent_session` metadata is NOT the test — recognised agent
  * panes (confirmed live, e.g. Hermes) can lack it. A durable identity is
  * required (never the positional pane id): `terminal_id` — present on every
  * pane and the only field confirmed to work as a real delivery target.
- * Bare shells, unlabelled panes, and completed/dead panes are excluded.
- * Capped at {@link MAX_ELIGIBLE_TARGETS}.
+ * Bare shells, unlabelled panes, and dead panes (vanished from the pane list)
+ * are excluded — dead and done are different concepts (#76): a done pane is a
+ * live session waiting at its prompt. Capped at {@link MAX_ELIGIBLE_TARGETS}.
  */
 export function mapPanesToTargets(
   panes: ReadonlyArray<RawPane>,
@@ -402,7 +415,7 @@ function mapPane(pane: RawPane): EligibleTarget | null {
  * label and a durable {@link durableTargetId}, with its status preserved across
  * the full spectrum — the seam the rest of fleet awareness reads from. This is
  * deliberately *not* the picker's eligibility rule: no actionable-status filter
- * (blocked/done/unknown panes are kept) and no {@link MAX_ELIGIBLE_TARGETS}
+ * (blocked/unknown panes are kept) and no {@link MAX_ELIGIBLE_TARGETS}
  * cap. Bare shells (no `agent` field) and panes with no durable identity are
  * still excluded — the same two exclusions the picker makes. A status outside
  * Herdr's known set normalises to `unknown`.
