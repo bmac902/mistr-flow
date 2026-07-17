@@ -24,6 +24,7 @@ import {
 import {
   getConfigPath,
   readCopySelectionFirst,
+  readDoneChime,
   readFocusOnDeliver,
   readPersistentBlockDing,
   readMuteSystemAudioWhileRecording,
@@ -44,6 +45,12 @@ import {
 } from "./overlay";
 import { createFleetState, type FleetPosture } from "./fleetState";
 import { attentionCycle, createBlockedJumpCursor } from "./blockedJumpCursor";
+import {
+  createHerdrForegroundCheck,
+  playDoneChime,
+  shouldChimeDone,
+  type IsHerdrForeground,
+} from "./doneChime";
 import { focusHerdrPane } from "./focusPane";
 import { createActiveVerbLock } from "./activeVerbLock";
 import {
@@ -86,7 +93,7 @@ import {
 } from "./captureThumbnail";
 import { captureArtifactToPayload, createHerdrDeliveryAdapter } from "./deliver";
 import { createLastTargetMemory, withLastTargetRecording } from "./lastTarget";
-import { queryHerdr, queryWatchedSet } from "./herdr";
+import { queryHerdr, queryWatchedSet, readHerdrSocketPath } from "./herdr";
 import {
   capturePickerWindowHeight,
   resolveGrownWindowBounds,
@@ -101,6 +108,9 @@ let copySelectionFirst = false;
 // PRD #44 / #51: the persistent-block ding is on by default; config can silence
 // the sound while keeping the visual fleet awareness. Read once at startup.
 let persistentBlockDing = true;
+// PRD #77 / #80: the one soft done chime is on by default; config can silence the
+// sound while keeping the done badge and jump gesture. Read once at startup.
+let doneChime = true;
 let whisperVocabularyPrompt: string | null = null;
 let polishVocabularyInstruction: string | null = null;
 
@@ -230,6 +240,7 @@ async function pollFleetOnce(): Promise<void> {
       : fleetState.observe({ kind: "unavailable" }, Date.now());
   renderFleetPosture(posture);
   maybeDingPersistentBlock(posture);
+  await maybeChimeDone(posture);
 }
 
 /**
@@ -245,6 +256,43 @@ function maybeDingPersistentBlock(posture: FleetPosture): void {
   if (!persistentBlockDing) return;
   if (verbLock.activeVerb() !== null) return;
   beep();
+}
+
+// The done-awareness foreground seam (ADR 0006 §3): "is Herdr's host window the
+// OS foreground window right now?" Created lazily so a missing socket at startup
+// doesn't matter — identification re-reads the socket path per attempt.
+let herdrForegroundCheck: IsHerdrForeground | null = null;
+function isHerdrForeground(): Promise<boolean> {
+  if (herdrForegroundCheck === null) {
+    herdrForegroundCheck = createHerdrForegroundCheck({
+      readSocketPath: () => readHerdrSocketPath(),
+    });
+  }
+  return herdrForegroundCheck();
+}
+
+/**
+ * The one soft chime of done-awareness (ADR 0006 §§2–3, #80): when a done episode
+ * begins and Herdr's host window is not the OS foreground window at that poll,
+ * sound a single gentle chime — distinct from and softer than the block ding.
+ * The foreground gate is evaluated exactly once, at the transition poll: Herdr
+ * being foreground *consumes* the chime for that episode (fleetState's one-shot is
+ * already spent), never deferring it to a later alt-tab. Config- and verb-gated
+ * exactly like the ding; suppression silences the sound only, never the state.
+ */
+async function maybeChimeDone(posture: FleetPosture): Promise<void> {
+  if (posture.newlyDoneTargets.length === 0) return;
+  const herdrForeground = await isHerdrForeground();
+  if (
+    shouldChimeDone({
+      newlyDoneTargets: posture.newlyDoneTargets,
+      chimeEnabled: doneChime,
+      verbActive: verbLock.activeVerb() !== null,
+      herdrForeground,
+    })
+  ) {
+    playDoneChime();
+  }
 }
 
 function startFleetPolling(): void {
@@ -1220,6 +1268,8 @@ app.whenReady().then(async () => {
     console.log("[mistr-flow] config: copySelectionFirst =", copySelectionFirst);
     persistentBlockDing = await readPersistentBlockDing();
     console.log("[mistr-flow] config: persistentBlockDing =", persistentBlockDing);
+    doneChime = await readDoneChime();
+    console.log("[mistr-flow] config: doneChime =", doneChime);
   } catch (error) {
     dialog.showErrorBox("Mistr Flow config error", String(error));
     app.quit();

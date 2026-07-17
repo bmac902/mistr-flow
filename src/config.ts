@@ -13,6 +13,7 @@ export interface AppConfig {
   focusOnDeliver?: unknown;
   copySelectionFirst?: unknown;
   persistentBlockDing?: unknown;
+  doneChime?: unknown;
   provider?: unknown;
 }
 
@@ -170,6 +171,23 @@ export async function readPersistentBlockDing(
   const rawConfig = await fileSystem.readFile(configPath, "utf8");
   const parsed = JSON.parse(rawConfig) as AppConfig;
   return parsed.persistentBlockDing !== false;
+}
+
+/**
+ * Default ON, silenceable — mirrors readPersistentBlockDing's `!== false` shape
+ * (ADR 0006 §2). The one soft done chime rides the same fleet-awareness master
+ * behavior as the ding; `doneChime: false` keeps the ambient done badge and the
+ * jump gesture while killing only the sound. On by default so the value isn't
+ * hidden behind a flag nobody discovers.
+ */
+export async function readDoneChime(
+  env: NodeJS.ProcessEnv = process.env,
+  fileSystem = fs,
+): Promise<boolean> {
+  const configPath = getConfigPath(env);
+  const rawConfig = await fileSystem.readFile(configPath, "utf8");
+  const parsed = JSON.parse(rawConfig) as AppConfig;
+  return parsed.doneChime !== false;
 }
 
 /**

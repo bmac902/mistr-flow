@@ -9,6 +9,7 @@ import {
   readFocusOnDeliver,
   readCopySelectionFirst,
   readMuteSystemAudioWhileRecording,
+  readDoneChime,
   readPersistentBlockDing,
   readOpenAiApiKey,
   readOverlayPosition,
@@ -99,6 +100,36 @@ test("readPersistentBlockDing allows config opt-out — keep the visual, kill th
   const shouldDing = await readPersistentBlockDing({ APPDATA: tempRoot }, fs);
 
   assert.equal(shouldDing, false);
+});
+
+test("readDoneChime defaults to enabled — the soft chime is on unless silenced", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key" }),
+    "utf8",
+  );
+
+  const shouldChime = await readDoneChime({ APPDATA: tempRoot }, fs);
+
+  assert.equal(shouldChime, true);
+});
+
+test("readDoneChime allows config opt-out — keep the badge and jump, kill the sound", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
+  const configDir = path.join(tempRoot, "MistrFlow");
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, "config.json"),
+    JSON.stringify({ openaiApiKey: "test-api-key", doneChime: false }),
+    "utf8",
+  );
+
+  const shouldChime = await readDoneChime({ APPDATA: tempRoot }, fs);
+
+  assert.equal(shouldChime, false);
 });
 
 test("readFocusOnDeliver defaults to disabled — never steal focus unless opted in", async () => {
