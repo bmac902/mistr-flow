@@ -1,8 +1,24 @@
-// The pure cycle logic behind the jump-to-blocked hotkey (issue #50, PRD #44):
-// given the current oldest-first list of blocked targets from fleetState, pick
-// the next pane to jump to. All the "repeat presses cycle, oldest first" and
-// "a died target is skipped, never landed on" behaviour lives here so it can be
-// driven directly in tests — no Herdr, no globalShortcut, no clock.
+// The pure cycle logic behind the jump gesture (issue #50, PRD #44; redefined
+// one level up by #79 / ADR 0006 §4): given an ordered list of targets from
+// fleetState, pick the next pane to jump to. All the "repeat presses cycle,
+// oldest first" and "a died target is skipped, never landed on" behaviour lives
+// here so it can be driven directly in tests — no Herdr, no globalShortcut, no
+// clock. The gesture now means "take me to what most needs my attention next":
+// {@link attentionCycle} composes the one unified order the cursor walks.
+
+import type { FleetPosture } from "./fleetState";
+
+/**
+ * The one unified attention cycle the jump gesture walks (ADR 0006 §4): every
+ * blocked target oldest-first, then every done target oldest-first. A bottleneck
+ * always outranks a harvest. With anything blocked this is a strict extension of
+ * the shipped blocked-only cycle (#50/#52) — the blocked prefix is byte-identical,
+ * so muscle memory survives; with nothing blocked it is exactly the done list, so
+ * the harvest path falls out of the same gesture instead of a new chord.
+ */
+export function attentionCycle(posture: FleetPosture): readonly string[] {
+  return [...posture.blockedTargets, ...posture.doneTargets];
+}
 
 export interface BlockedJumpCursor {
   /**

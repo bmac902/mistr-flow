@@ -43,7 +43,7 @@ import {
   type OverlaySnapshot,
 } from "./overlay";
 import { createFleetState, type FleetPosture } from "./fleetState";
-import { createBlockedJumpCursor } from "./blockedJumpCursor";
+import { attentionCycle, createBlockedJumpCursor } from "./blockedJumpCursor";
 import { focusHerdrPane } from "./focusPane";
 import { createActiveVerbLock } from "./activeVerbLock";
 import {
@@ -260,22 +260,24 @@ function startFleetPolling(): void {
   }, FLEET_POLL_INTERVAL_MS);
 }
 
-// Jump-to-blocked (issue #50, PRD #44): one keypress takes you to the agent
-// that most needs you. The cursor holds where the last press landed so repeat
-// presses cycle oldest-first through the blocked set; fleetState.posture()
-// supplies the live oldest-first list at the moment of each press.
+// The jump gesture (issue #50, PRD #44; redefined by #79 / ADR 0006 §4): one
+// keypress takes you to what most needs you next. The cursor holds where the
+// last press landed so repeat presses cycle through the unified attention cycle
+// — blocked oldest-first, then done oldest-first; attentionCycle(posture())
+// supplies that live order at the moment of each press.
 const jumpCursor = createBlockedJumpCursor();
 
 /**
- * Focus the next longest-blocked agent's pane and raise Herdr's host window,
- * reusing the proven focus/raise machinery (ADR 0002, focusHerdrPane). Repeat
- * presses cycle oldest-first; with nothing blocked this is a truthful no-op.
- * Focus-steal here is intentional and user-initiated — you pressed the key to
- * go there — the same explicit exception to "never steal focus" as focusOnDeliver.
+ * Focus the next attention target's pane and raise Herdr's host window, reusing
+ * the proven focus/raise machinery (ADR 0002, focusHerdrPane). Repeat presses
+ * walk the unified cycle (blocked oldest-first, then done oldest-first); with an
+ * empty fleet this is a truthful no-op. Focus-steal here is intentional and
+ * user-initiated — you pressed the key to go there — the same explicit exception
+ * to "never steal focus" as focusOnDeliver.
  */
 function jumpToLongestBlocked(): void {
-  const target = jumpCursor.next(fleetState.posture().blockedTargets);
-  if (target === null) return; // Nothing blocked — nowhere to jump, so no-op.
+  const target = jumpCursor.next(attentionCycle(fleetState.posture()));
+  if (target === null) return; // Nothing needs you — nowhere to jump, so no-op.
 
   void focusHerdrPane(target)
     .then((outcome) => {
