@@ -53,8 +53,14 @@ doneBadgeStyle.textContent = `
   #mf-done-badge {
     display: none;
     position: absolute;
-    top: 6px;
-    right: 8px;
+    /* Anchored to the butler, not the canvas: floating centered just above the
+       microphone (dogfood 2026-07-17 — the top-corner placeholder floated in
+       dead space once the fleet grew). The mascot is bottom-anchored, so a
+       bottom offset tracks his height whatever the canvas height. Centered on
+       the mic via translateX(-50%). Tunable trio: */
+    bottom: 150px;
+    left: 62%;
+    transform: translateX(-50%);
     min-width: 16px;
     padding: 2px 7px;
     background: #d4af5e;
@@ -414,6 +420,9 @@ const PROJECT_GLYPHS = {
   // A visual anchor for "a chat you paste into", deliberately NOT a product logo.
   chatgpt:
     '<svg viewBox="0 0 16 16"><path d="M3 3.4h10c.6 0 1 .5 1 1v5.4c0 .6-.4 1-1 1H7l-3 2.4v-2.4H3c-.6 0-1-.4-1-1V4.4c0-.5.4-1 1-1Z" fill="none"/><path d="M5.4 7.4h5.2M5.4 9.2h3.2" fill="none"/></svg>',
+  // A coin with a dollar mark — cloud spend, for the FinOps work.
+  coin:
+    '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none"/><path d="M10 6.4c-.5-.9-1.7-1.3-2.8-1-.9.3-1.2 1.3-.4 1.9.6.4 1.7.5 2.4.9.9.5.6 1.6-.4 1.9-1.1.3-2.3-.1-2.8-1" fill="none"/><path d="M8 4.6v6.8" fill="none"/></svg>',
 };
 
 // WHAT, reinforced — the status word wears its meaning's color (2026-07-17):
