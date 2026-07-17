@@ -642,7 +642,11 @@ function registerHotkey(): void {
   }
 }
 
-const CAPTURE_ACCELERATOR = "Control+Shift+`";
+// Control+Alt+S ("S for screenshot", 2026-07-17) — joining the Ctrl+Alt
+// family the other verbs live in (D dictate, C relay, H herald, J jump); the
+// original Control+Shift+` predated the family. Same loud-collision contract
+// as the rest: registration failure surfaces in a dialog, never a silent swap.
+const CAPTURE_ACCELERATOR = "Control+Alt+S";
 
 function registerCaptureHotkey(): void {
   const registered = globalShortcut.register(CAPTURE_ACCELERATOR, () => {
