@@ -93,6 +93,19 @@ mascotScaleStyle.textContent = `
 `;
 document.head.appendChild(mascotScaleStyle);
 
+// Stage widening (dogfood 2026-07-16, same TV): long status lines ellipsized
+// in the 280px card. The window grew 292 → 350 in main.ts (the wiring half of
+// this change); these overrides bring the asset's fixed widths along — overlay
+// matches the window, card and picker rows widen in step so they stay aligned.
+// overlay.html itself stays byte-identical, same discipline as above.
+const stageWidthStyle = document.createElement("style");
+stageWidthStyle.textContent = `
+  #mistr-flow-overlay { width: 350px; }
+  #mistr-flow-card { width: 336px; }
+  #capture-picker-entries { width: 336px; }
+`;
+document.head.appendChild(stageWidthStyle);
+
 // Reflect the current done count onto the chip. Idle-only falls out for free:
 // only the fleet-posture snapshots carry doneCount, and those are the resting
 // bar; verb snapshots omit it, so the chip clears the moment a verb takes over.

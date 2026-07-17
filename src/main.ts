@@ -1141,7 +1141,10 @@ function startHerald(): void {
 
 function createOverlayWindow(savedPosition: OverlayPosition | null = null): BrowserWindow {
   const display = screen.getPrimaryDisplay();
-  const winWidth = 292;
+  // 350, not the original 292: +20% for the 42" 4K (dogfood 2026-07-16) — long
+  // status lines were ellipsizing in the 280px card. The renderer widens the
+  // overlay/card/picker CSS to match (its TV-scale style block).
+  const winWidth = 350;
   const winHeight = 178;
   const position = resolveOverlayPosition({ workArea: display.workArea, savedPosition });
 

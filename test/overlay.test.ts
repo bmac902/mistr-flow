@@ -313,7 +313,7 @@ test("preload and main expose mouse pass-through and overlay movement IPC", () =
   assert.match(main, /ipcMain\.on\("set-overlay-mouse-events"/);
   assert.match(main, /ipcMain\.on\("move-overlay-by"/);
   assert.match(main, /setIgnoreMouseEvents\(ignore, \{ forward: true \}\)/);
-  assert.match(main, /const winWidth = 292/);
+  assert.match(main, /const winWidth = 350/);
   assert.match(main, /const winHeight = 178/);
   assert.match(main, /resolveOverlayPosition/);
   assert.match(main, /writeOverlayPosition/);
