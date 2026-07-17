@@ -139,8 +139,16 @@ export function createCapturePickerHandle(
     }
   }
 
+  // Electron treats the numpad as its own key space (`num1`…`num9`), so every
+  // digit slot registers both forms — the top row and the keypad are the same
+  // key to a human hand (dogfood 2026-07-17).
+  function registerDigit(digit: number, onPress: () => void): void {
+    registerAccelerator(String(digit), onPress);
+    registerAccelerator(`num${digit}`, onPress);
+  }
+
   if (includeClipboardSlot) {
-    registerAccelerator("1", () => resolveSelection({ kind: "clipboard" }));
+    registerDigit(1, () => resolveSelection({ kind: "clipboard" }));
   }
   registerAccelerator("Escape", () => resolveSelection({ kind: "escape" }));
 
@@ -167,9 +175,7 @@ export function createCapturePickerHandle(
       for (const [index, target] of targets.slice(0, MAX_TARGET_SLOTS).entries()) {
         const digit = index + 2;
         slotTargets[index] = target;
-        registerAccelerator(String(digit), () =>
-          resolveSelection({ kind: "target", target }),
-        );
+        registerDigit(digit, () => resolveSelection({ kind: "target", target }));
       }
     },
 

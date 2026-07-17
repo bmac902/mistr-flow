@@ -52,7 +52,7 @@ test("createCapturePickerHandle: opening registers slot 1 + Esc atomically", () 
   const shortcuts = makeFakeShortcuts();
   createCapturePickerHandle({ shortcuts });
 
-  assert.deepEqual(shortcuts.registeredAccelerators().sort(), ["1", "Escape"]);
+  assert.deepEqual(shortcuts.registeredAccelerators().sort(), ["1", "Escape", "num1"]);
 });
 
 test("createCapturePickerHandle: appendTargets registers slots 2-9 atomically", () => {
@@ -66,6 +66,9 @@ test("createCapturePickerHandle: appendTargets registers slots 2-9 atomically", 
     "2",
     "3",
     "Escape",
+    "num1",
+    "num2",
+    "num3",
   ]);
 });
 
@@ -84,7 +87,10 @@ test("createCapturePickerHandle: appendTargets caps at 8 target slots (digits 2-
 
   assert.deepEqual(
     shortcuts.registeredAccelerators().sort(),
-    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "Escape"],
+    [
+      "1", "2", "3", "4", "5", "6", "7", "8", "9", "Escape",
+      "num1", "num2", "num3", "num4", "num5", "num6", "num7", "num8", "num9",
+    ],
   );
 });
 
@@ -493,7 +499,21 @@ test("includeClipboardSlot: false still puts panes on digits 2-9 — slot 1 is r
   // No "1": pane A on digit 2, pane B on digit 3 — panes are NOT pulled down
   // to slot 1, so "2 is always the same pane" would hold even for a picker
   // built without the slot.
-  assert.deepEqual(shortcuts.registeredAccelerators().sort(), ["2", "3", "Escape"]);
+  assert.deepEqual(
+    shortcuts.registeredAccelerators().sort(),
+    ["2", "3", "Escape", "num2", "num3"],
+  );
+});
+
+test("a numpad digit resolves the exact selection its top-row twin does (2026-07-17)", async () => {
+  const shortcuts = makeFakeShortcuts();
+  const handle = createCapturePickerHandle({ shortcuts });
+  handle.appendTargets([TARGET_A, TARGET_B]);
+
+  const selection = handle.awaitSelection();
+  shortcuts.press("num3");
+
+  assert.deepEqual(await selection, { kind: "target", target: TARGET_B });
 });
 
 test("the same pane sits on the same digit in the Capture and Relay pickers", () => {
