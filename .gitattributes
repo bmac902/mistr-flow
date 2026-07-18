@@ -1,0 +1,8 @@
+# Force LF in the repo AND the working tree for all detected-text files.
+#
+# Why this exists: Sandcastle batches use `branchStrategy: head`, which bind-mounts
+# this working tree straight into a Linux container. On Windows (core.autocrlf=true)
+# the working tree is CRLF; without this file the container's git (autocrlf=false,
+# no attributes) commits those CRLF bytes verbatim, flipping every edited file
+# LF->CRLF. `eol=lf` keeps the mounted tree LF, so no batch can reintroduce CRLF.
+* text=auto eol=lf
