@@ -1236,6 +1236,19 @@ function readClipboardFileDropList(): Promise<string[] | null> {
   });
 }
 
+/**
+ * Cheap, in-process file-drop presence check (issue #90) — gates the
+ * `readClipboardFileDropList` shell-out without relying on the legacy
+ * `FileNameW` format, which only Explorer is guaranteed to set alongside a
+ * file drop. `availableFormats()` advertises `"text/uri-list"` for ANY
+ * standard `CF_HDROP` file drop, Explorer-authored or not, even though
+ * actually reading that format returns `""` (verified live 2026-07-15,
+ * Electron 42 — see `readClipboardFileDropList`'s note on the format).
+ */
+function clipboardHasFileDrop(): boolean {
+  return clipboard.availableFormats().includes("text/uri-list");
+}
+
 function relayClipboardPort(): ClipboardSourcePort {
   return {
     readText: () => clipboard.readText(),
@@ -1244,6 +1257,7 @@ function relayClipboardPort(): ClipboardSourcePort {
       return { isEmpty: () => image.isEmpty(), toPNG: () => image.toPNG() };
     },
     readFilePath: () => readClipboardFilePath(),
+    hasFileDrop: () => clipboardHasFileDrop(),
     readFileDropList: () => readClipboardFileDropList(),
     writeFile: async (filePath, data) => {
       await fs.promises.mkdir(path.dirname(filePath), { recursive: true });

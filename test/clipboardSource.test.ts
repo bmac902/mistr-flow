@@ -25,6 +25,14 @@ interface FakeClipboardOptions {
   imagePng?: Buffer | null;
   filePath?: string | null;
   dropList?: string[] | null;
+  /**
+   * The cheap in-process file-drop-presence probe (issue #90) — independent
+   * of `filePath`/`dropList`, so "a drop is present but FileNameW is absent"
+   * (a non-Explorer CF_HDROP writer) is expressible. Defaults to true
+   * whenever either file signal was given, mirroring the Explorer-copy
+   * invariant that a real test doesn't otherwise need to think about.
+   */
+  hasFileDrop?: boolean;
 }
 
 interface FakeClipboard {
@@ -49,12 +57,13 @@ function fakeClipboard(options: FakeClipboardOptions = {}): FakeClipboard {
   const port: ClipboardSourcePort = {
     readText: () => options.text ?? "",
     readImage: () => image,
-    // FileNameW always accompanies a real file drop — Windows sets both
-    // formats on an Explorer copy — so unless a test says otherwise the
-    // FileNameW read mirrors the drop list's first entry. The
-    // production-impossible "drop list but no FileNameW" clipboard must not
-    // be expressible by accident (#72: FileNameW gates the drop-list read).
-    readFilePath: () => options.filePath ?? options.dropList?.[0] ?? null,
+    // No coalescing with dropList (issue #90): FileNameW is now only the
+    // single-file FALLBACK, read after the drop-list comes back empty, so a
+    // test can freely express "drop list present, FileNameW absent" without
+    // it being silently overridden.
+    readFilePath: () => options.filePath ?? null,
+    hasFileDrop: () =>
+      options.hasFileDrop ?? (options.dropList != null || options.filePath != null),
     readFileDropList: async () => {
       dropListReads += 1;
       return options.dropList ?? null;
@@ -368,9 +377,9 @@ test("no text, no image and no file is still an empty clipboard", async () => {
 
 test("an empty clipboard never pays the drop-list subprocess spawn (#72)", async () => {
   // readFileDropList is a PowerShell shell-out in production (hundreds of ms
-  // on a cold spawn). readFilePath (FileNameW) is a free in-process read that
-  // is non-null exactly when a file copy is present — so a null FileNameW must
-  // short-circuit to `empty` without ever spawning the subprocess.
+  // on a cold spawn). hasFileDrop is a free in-process check that is true
+  // exactly when a file drop is present (issue #90) — so a false hasFileDrop
+  // must short-circuit to `empty` without ever spawning the subprocess.
   const { port, dropListReads } = fakeClipboard({
     text: "",
     imagePng: null,
@@ -482,8 +491,7 @@ test("a null drop list (shell-out failed or format absent) falls back to the Fil
 
 test("a drop list of blank entries falls back to the FileNameW read, never a payload", async () => {
   // A degenerate shell-out result (whitespace-only lines) filters to nothing;
-  // the in-process FileNameW path — the gate that let the shell-out run at
-  // all — remains as the single-file fallback, exactly as for a null list.
+  // FileNameW remains as the single-file fallback, exactly as for a null list.
   const { port } = fakeClipboard({ dropList: ["   ", " "], filePath: COPIED_FILE });
 
   const source = await readClipboardSource(port);
@@ -491,6 +499,42 @@ test("a drop list of blank entries falls back to the FileNameW read, never a pay
   assert.equal(source.kind, "file");
   if (source.kind !== "file") return;
   assert.equal(source.filePath, COPIED_FILE);
+});
+
+// ---------------------------------------------------------------------------
+// The presence gate is hasFileDrop, not FileNameW (issue #90)
+// ---------------------------------------------------------------------------
+
+test("a file drop with NO FileNameW still classifies as files — a non-Explorer CF_HDROP writer is no longer dropped silently", async () => {
+  const { port } = fakeClipboard({ filePath: null, dropList: MULTI_SELECT, hasFileDrop: true });
+
+  const source = await readClipboardSource(port);
+
+  assert.equal(source.kind, "files");
+  if (source.kind !== "files") return;
+  assert.deepEqual(source.filePaths, MULTI_SELECT);
+});
+
+test("a SINGLE-file drop with no FileNameW still classifies as a file, not empty", async () => {
+  const { port } = fakeClipboard({ filePath: null, dropList: [COPIED_FILE], hasFileDrop: true });
+
+  const source = await readClipboardSource(port);
+
+  assert.equal(source.kind, "file");
+  if (source.kind !== "file") return;
+  assert.equal(source.filePath, COPIED_FILE);
+});
+
+test("hasFileDrop=false short-circuits to empty and never spawns the drop-list subprocess, even with a stray dropList set", async () => {
+  const { port, dropListReads } = fakeClipboard({
+    dropList: MULTI_SELECT,
+    hasFileDrop: false,
+  });
+
+  const source = await readClipboardSource(port);
+
+  assert.equal(source.kind, "empty");
+  assert.equal(dropListReads(), 0, "no file drop present — the subprocess must not run");
 });
 
 test("text still wins over a multi-select; an image still wins too", async () => {

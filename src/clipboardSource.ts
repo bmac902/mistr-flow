@@ -64,18 +64,27 @@ export interface ClipboardSourcePort {
   readImage(): ClipboardImagePort;
   /**
    * The absolute path of a file copied in Explorer, or null when the clipboard
-   * holds no file. Copying a file sets NEITHER text nor a bitmap — Windows puts
-   * a file-drop list on the clipboard instead, so `readText()` is `""` and
-   * `readImage()` is empty, and without this a copied file reads as "nothing to
-   * relay" (confirmed live 2026-07-15). Electron surfaces the path via
-   * `clipboard.readBuffer("FileNameW")` as UTF-16LE.
+   * holds no file. Electron surfaces it via `clipboard.readBuffer("FileNameW")`
+   * as UTF-16LE — carrying just the FIRST file of a multi-select, by design.
    *
-   * Single file only: `FileNameW` carries just the first of a multi-select —
-   * by design. As the free in-process read it gates {@link readFileDropList}'s
-   * subprocess spawn (issue #72) and stays as the fallback when that list
-   * comes back null or empty (issue #67).
+   * No longer the file-copy presence gate (issue #90: a third-party app can set
+   * the standard `CF_HDROP` format without also setting the legacy `FileNameW`
+   * one, so gating on this dropped such a copy silently). {@link hasFileDrop}
+   * is the gate now; this stays as the single-file fallback for when
+   * {@link readFileDropList} comes back null or empty.
    */
   readFilePath(): string | null;
+  /**
+   * A cheap, in-process, NO-subprocess check for whether the clipboard
+   * currently carries a file drop (issue #90) — gates the expensive
+   * {@link readFileDropList} shell-out so a truly empty clipboard never pays
+   * for it (issue #72), without relying on the legacy `FileNameW` format
+   * ({@link readFilePath}) being set, which only Explorer guarantees.
+   * `clipboard.availableFormats().includes("text/uri-list")` in production —
+   * verified live (2026-07-15) to be exactly the set a file copy advertises,
+   * even though actually reading that format returns "".
+   */
+  hasFileDrop(): boolean;
   /**
    * Every absolute path of an Explorer file copy — multi-select aware — or
    * null when the clipboard holds no file drop (issue #67). Production shells
@@ -200,25 +209,33 @@ export async function readClipboardSource(
   }
 
   // Last, because a file copy is the only case that sets neither text nor a
-  // bitmap — so it can't collide with the branches above. FileNameW is the
-  // gate: it's a free in-process read that is non-null exactly when an
-  // Explorer file copy is present, so a truly empty clipboard returns here
-  // without ever paying the drop-list subprocess spawn (issue #72).
-  const filePath = port.readFilePath();
-  if (!filePath || filePath.trim().length === 0) {
+  // bitmap — so it can't collide with the branches above. hasFileDrop is the
+  // gate (issue #90): a free in-process check that is true exactly when the
+  // clipboard advertises a file drop, so a truly empty clipboard returns here
+  // without ever paying the drop-list subprocess spawn (issue #72) — and,
+  // unlike the legacy FileNameW-based gate, one that a third-party CF_HDROP
+  // writer satisfies too, not only Explorer.
+  if (!port.hasFileDrop()) {
     return { kind: "empty" };
   }
 
-  // A file copy is present — now the drop-list shell-out is worth its cost:
+  // A file drop is present — now the drop-list shell-out is worth its cost:
   // it carries EVERY file of a multi-select, where FileNameW carries only
-  // the first (issue #67). FileNameW stays as the fallback for a null/empty
-  // list, so a plain single-file copy can never regress.
+  // the first (issue #67).
   const dropPaths = await port.readFileDropList();
   const filePaths = (dropPaths ?? [])
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
   if (filePaths.length > 0) {
     return classifyFiles(port, filePaths);
+  }
+
+  // The drop-list read came back empty (shell-out failed, or the format was
+  // present but unreadable) — FileNameW is the single-file fallback, exactly
+  // as before (issue #67), so a plain single-file copy can never regress.
+  const filePath = port.readFilePath();
+  if (!filePath || filePath.trim().length === 0) {
+    return { kind: "empty" };
   }
 
   return classifyFile(port, filePath.trim());
