@@ -100,6 +100,22 @@ export interface ClipboardSourcePort {
 /** Preview data for a relayed image — the label the existing thumbnail treatment renders. */
 export const CLIPBOARD_IMAGE_LABEL = "Clipboard image";
 
+/**
+ * Parses the raw stdout of the FileDropList PowerShell shell-out (issue #67)
+ * into the ordered path list — one path per line, `\r\n`- or `\n`-terminated,
+ * with any trailing blank lines dropped. The pure half of
+ * `readClipboardFileDropList` (main.ts), which owns only the `execFile` spawn,
+ * so this parse is unit-testable without Electron/child_process (issue #88).
+ * Null when nothing survives — the caller falls back to the single-file
+ * `FileNameW` read.
+ */
+export function parseFileDropListOutput(stdout: string): string[] | null {
+  const paths = stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return paths.length > 0 ? paths : null;
+}
 
 /**
  * The typed outcome of reading the clipboard. Distinct cases so the caller (the

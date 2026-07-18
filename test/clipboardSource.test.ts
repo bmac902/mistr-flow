@@ -8,6 +8,7 @@ import {
   CLIPBOARD_IMAGE_LABEL,
   CLIPBOARD_PREVIEW_LINES,
   CLIPBOARD_SPILL_THRESHOLD,
+  parseFileDropListOutput,
   readClipboardSource,
   type ClipboardImagePort,
   type ClipboardSourcePort,
@@ -534,4 +535,43 @@ test("an absurd list over the spill threshold rides the existing spill machinery
   assert.equal(writes.get(spillPath as string), joined, "the whole list reached disk");
   assert.equal(source.preview.spilled, true);
   assert.equal(source.preview.summary, `Files · ${absurd.length} · spilled to file`);
+});
+
+// ---------------------------------------------------------------------------
+// parseFileDropListOutput — the pure parse of the FileDropList shell-out's
+// raw stdout (issue #88). Previously untested: every test above drives the
+// port with a pre-parsed dropList array, so the real split/trim/filter/
+// null-on-empty logic had zero coverage.
+// ---------------------------------------------------------------------------
+
+test("parseFileDropListOutput: multi-line output with a trailing blank line", () => {
+  assert.deepEqual(parseFileDropListOutput("p1\r\np2\r\n\r\n"), ["p1", "p2"]);
+});
+
+test("parseFileDropListOutput: a single path", () => {
+  assert.deepEqual(parseFileDropListOutput("p1\r\n"), ["p1"]);
+});
+
+test("parseFileDropListOutput: empty output is null, not an empty array", () => {
+  assert.equal(parseFileDropListOutput(""), null);
+});
+
+test("parseFileDropListOutput: whitespace-only output is null", () => {
+  assert.equal(parseFileDropListOutput("\r\n\r\n   \r\n"), null);
+});
+
+test("parseFileDropListOutput: paths containing spaces survive intact", () => {
+  const withSpaces = String.raw`C:\Users\me\My Documents\a.txt`;
+  assert.deepEqual(parseFileDropListOutput(`${withSpaces}\r\n`), [withSpaces]);
+});
+
+test("parseFileDropListOutput: bare \\n line endings parse identically to \\r\\n", () => {
+  assert.deepEqual(parseFileDropListOutput("p1\np2\n"), ["p1", "p2"]);
+});
+
+test("parseFileDropListOutput: only non-null when at least one path survives filtering", () => {
+  // A list that's ALL blank lines after trim/filter must still resolve to
+  // null, matching the "empty list" contract — not an empty array.
+  assert.equal(parseFileDropListOutput("   \r\n\t\r\n"), null);
+  assert.deepEqual(parseFileDropListOutput("   \r\np1\r\n\t\r\n"), ["p1"]);
 });

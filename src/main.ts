@@ -69,7 +69,11 @@ import {
   defaultCaptureDir,
   type CaptureArtifact,
 } from "./capture";
-import { readClipboardSource, type ClipboardSourcePort } from "./clipboardSource";
+import {
+  parseFileDropListOutput,
+  readClipboardSource,
+  type ClipboardSourcePort,
+} from "./clipboardSource";
 import { runRelaySession } from "./relaySession";
 import { runHeraldSession } from "./heraldSession";
 import {
@@ -1226,11 +1230,7 @@ function readClipboardFileDropList(): Promise<string[] | null> {
           resolve(null);
           return;
         }
-        const paths = String(stdout)
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0);
-        resolve(paths.length > 0 ? paths : null);
+        resolve(parseFileDropListOutput(String(stdout)));
       },
     );
   });
