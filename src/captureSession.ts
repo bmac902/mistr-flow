@@ -134,6 +134,16 @@ export interface RunSessionDependencies<A> {
   cropCapture?(artifact: A, rect: CropRect): Promise<A | null>;
   queryEligibleTargets(): Promise<HerdrQueryResult>;
   /**
+   * Remaps the loop's OWN synthesized pane-query-timeout result — distinct
+   * from wrapping `queryEligibleTargets` above, which only ever sees the
+   * query promise settle. A verb whose picker states have an invariant on
+   * every non-targets message (Herald's "never say Clipboard only", issue
+   * #87) needs it applied here too, since the outer deadline below races
+   * ahead of that promise and wins whenever the query itself is slow.
+   * Absent (Capture, Relay), the shared "Clipboard only" wording is unchanged.
+   */
+  mapQueryTimeoutResult?(result: HerdrQueryResult): HerdrQueryResult;
+  /**
    * Slot 1's local action on the artifact: Capture copies it to the clipboard,
    * Herald pastes it into the focused window. Optional: Relay OMITS it (#64) —
    * its slot 1 keeps the copy that's already on the clipboard, so writing
@@ -307,6 +317,7 @@ export async function runSendSession<A>(
     dependencies.queryEligibleTargets,
     clock,
     paneQueryTimeoutMs,
+    dependencies.mapQueryTimeoutResult,
   ).then((result) => {
     // A query resolving after Esc/dismiss/deadline is ignored — it can
     // never resurrect or mutate a closed picker (instance binding).
@@ -452,6 +463,7 @@ function queryTargetsWithDeadline(
   queryEligibleTargets: () => Promise<HerdrQueryResult>,
   clock: CaptureSessionClock,
   timeoutMs: number,
+  mapTimeoutResult?: (result: HerdrQueryResult) => HerdrQueryResult,
 ): Promise<HerdrQueryResult> {
   return new Promise((resolve) => {
     let settled = false;
@@ -459,11 +471,12 @@ function queryTargetsWithDeadline(
     const handle = clock.setTimeout(() => {
       if (settled) return;
       settled = true;
-      resolve({
+      const timeoutResult: HerdrQueryResult = {
         kind: "failed",
         code: "pane-query-timeout",
         message: herdrSafeMessageFor("pane-query-timeout"),
-      });
+      };
+      resolve(mapTimeoutResult?.(timeoutResult) ?? timeoutResult);
     }, timeoutMs);
 
     queryEligibleTargets().then((result) => {

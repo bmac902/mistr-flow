@@ -380,6 +380,35 @@ test("Herdr unavailable degrades to Clipboard + Esc — the truthful copy-is-saf
   assert.equal(h.picker.closeCalls(), 1, "picker closed cleanly");
 });
 
+test("cross-verb guard: a hung Herdr query's OUTER deadline still says Clipboard only for Relay (issue #87 fix must not leak here)", async () => {
+  const fakeClock = makeFakeClock();
+  const h = makeHarness({
+    port: fakeClipboardPort({ text: "copied url" }),
+    clock: fakeClock.clock,
+    queryEligibleTargets: () =>
+      new Promise(() => {
+        // Never resolves — exercised by the outer deadline firing.
+      }),
+  });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+
+  fakeClock.fire();
+  await flush();
+
+  const state = h.states.filter((s) => s.phase === "capture-picker").at(-1);
+  assert.ok(state);
+  // Relay never wraps the outer timeout the way Herald now does (#87) — the
+  // shared loop's own "Clipboard only" wording is unchanged for Relay.
+  assert.equal(state!.toastCopy, "Herdr took too long to answer — Clipboard only, sir.");
+  assert.equal(state!.clipboardSlot, true, "slot 1 survives the deadline");
+
+  h.picker.resolve({ kind: "clipboard" });
+  const result = await session;
+  assert.deepEqual(result, { kind: "copy-kept" });
+});
+
 test("Herdr up but with no eligible panes is a truthful no-panes state — copy on the clipboard, slot 1 intact", async () => {
   const h = makeHarness({
     port: fakeClipboardPort({ text: "copied url" }),

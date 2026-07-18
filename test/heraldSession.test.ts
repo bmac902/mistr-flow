@@ -415,6 +415,34 @@ test("Herdr down: the picker still offers Paste here (slot 1), and it works — 
   assert.deepEqual(h.pasted, [POLISHED]);
 });
 
+test("a hung Herdr query (the OUTER deadline, not the query's own message) still never says Clipboard only (issue #87)", async () => {
+  const fakeClock = makeFakeClock();
+  const h = makeHarness({
+    clock: fakeClock.clock,
+    queryEligibleTargets: () =>
+      new Promise(() => {
+        // Never resolves — exercised by the outer deadline firing, which is
+        // the path that bypassed Herald's toHeraldQueryResult remap.
+      }),
+  });
+
+  const session = runHeraldSession(h.deps);
+  await flush();
+
+  fakeClock.fire();
+  await flush();
+
+  const state = h.states.filter((s) => s.phase === "capture-picker").at(-1);
+  assert.ok(state);
+  assert.equal(state!.toastCopy, HERALD_HERDR_DOWN_MESSAGE);
+  assert.doesNotMatch(state!.toastCopy ?? "", /Clipboard only/i);
+  assert.equal(state!.clipboardSlot, true, "slot 1 survives the deadline");
+
+  h.picker.resolve({ kind: "clipboard" });
+  const result = await session;
+  assert.deepEqual(result, { kind: "pasted-here" });
+});
+
 test("Herdr up but no eligible panes: a truthful no-panes message, slot 1 intact", async () => {
   const h = makeHarness({
     queryEligibleTargets: async () => ({ kind: "targets", targets: [] }),

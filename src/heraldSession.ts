@@ -170,6 +170,12 @@ export async function runHeraldSession(
       // in-overlay editing was explicitly rejected for v1 (ADR 0003).
       queryEligibleTargets: () =>
         deps.queryEligibleTargets().then(toHeraldQueryResult),
+      // The shared loop's OWN synthesized pane-query-timeout result bypasses
+      // the wrapped queryEligibleTargets above (issue #87): its outer deadline
+      // races the query and, on a slow Herdr, resolves first with Herdr's raw
+      // "— Clipboard only, sir." wording — a slot Herald doesn't have. The
+      // same remap applies here so that invariant holds on this deadline too.
+      mapQueryTimeoutResult: toHeraldQueryResult,
       copyToClipboard: (a) => deps.pasteHere(a.text),
       // Slot 1's outcome beat is dictation's own `done` ("Pasted, sir.") —
       // it IS the Ctrl+Alt+D outcome, and no new mascot art (ADR 0003).
