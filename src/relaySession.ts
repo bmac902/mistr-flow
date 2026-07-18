@@ -108,6 +108,12 @@ export interface RunRelaySessionDependencies {
   renderImageThumbnail(artifact: CaptureArtifact): Promise<CapturePreview | null>;
   /** Crops a relayed image, returning a fresh artifact; null keeps the uncropped one. */
   cropImage(artifact: CaptureArtifact, rect: CropRect): Promise<CaptureArtifact | null>;
+  /**
+   * Writes a cropped relayed image to the OS clipboard (issue #86). Called
+   * ONLY when slot 1 fires on a cropped image — see the note on
+   * `clipboardSlot` below for why the uncropped case never calls this.
+   */
+  copyToClipboard?(artifact: CaptureArtifact): void | Promise<void>;
   queryEligibleTargets(): Promise<HerdrQueryResult>;
   deliver(payload: SendPayload, target: EligibleTarget): Promise<CaptureDeliverOutcome>;
   /** Same agent again (issue #58): the shared Last Target, passed straight through. */
@@ -163,12 +169,22 @@ export async function runRelaySession(
         : buildOverlaySnapshot("relay-delivered"),
     // Slot 1 (issue #64): "1 Clipboard" = keep the copy, stop here. No
     // slotOneLabel — the renderer's "Clipboard" default, byte-identical to
-    // Capture's — and no clipboard-write dependency at all: the content is
+    // Capture's. Ordinarily no clipboard write either: the content is
     // already on the clipboard (the user's own Ctrl+C, or the copy main.ts
     // performed before this session opened), whatever the source kind, so
     // writing anything here could only clobber it — a relayed image would be
-    // re-encoded over itself. Slot 1 writes nothing.
+    // re-encoded over itself.
+    //
+    // The one exception (issue #86): a crop in the preview produces a fresh
+    // artifact that was NEVER written to the clipboard, so keeping it means
+    // writing it for the first time — identity against `relayArtifact` is
+    // how a crop is told apart from the untouched original.
     clipboardSlot: true,
+    copyToClipboard: (artifact) => {
+      if (artifact.kind === "image" && artifact !== relayArtifact) {
+        return deps.copyToClipboard?.(artifact.artifact);
+      }
+    },
     clipboardDeliveredSnapshot: () => buildRelayCopyKeptOverlaySnapshot(),
     again: deps.again,
     clock: deps.clock,

@@ -35,6 +35,8 @@ import type { EligibleTarget, HerdrQueryResult } from "../src/herdr";
 import type { OverlaySnapshot } from "../src/overlay";
 import type { CaptureDeliverOutcome } from "../src/captureSession";
 import type { PickerPreview } from "../src/captureThumbnail";
+import type { CaptureArtifact } from "../src/capture";
+import type { CropRect } from "../src/captureCrop";
 
 /** The image preview carries no `kind`; the text preview's is "text". */
 function isTextPreview(preview: PickerPreview | undefined): boolean {
@@ -176,6 +178,7 @@ interface Harness {
   deps: RunRelaySessionDependencies;
   states: OverlaySnapshot[];
   delivered: { payload: SendPayload; target: EligibleTarget }[];
+  copiedToClipboard: CaptureArtifact[];
   picker: FakePicker;
   openPickerCalls(): number;
 }
@@ -187,10 +190,15 @@ function makeHarness(overrides: {
     payload: SendPayload,
     target: EligibleTarget,
   ) => Promise<CaptureDeliverOutcome>;
+  cropImage?: (
+    artifact: CaptureArtifact,
+    rect: CropRect,
+  ) => Promise<CaptureArtifact | null>;
   clock?: CaptureSessionClock;
 }): Harness {
   const states: OverlaySnapshot[] = [];
   const delivered: { payload: SendPayload; target: EligibleTarget }[] = [];
+  const copiedToClipboard: CaptureArtifact[] = [];
   const picker = makeFakePicker();
   let openCalls = 0;
 
@@ -207,7 +215,7 @@ function makeHarness(overrides: {
       dataUrl: `data:image/png;base64,${artifact.id}`,
       windowTitle: artifact.windowTitle,
     }),
-    cropImage: async () => null,
+    cropImage: overrides.cropImage ?? (async () => null),
     queryEligibleTargets:
       overrides.queryEligibleTargets ??
       (async () => ({ kind: "targets", targets: [TARGET_A, TARGET_B] })),
@@ -217,10 +225,20 @@ function makeHarness(overrides: {
         delivered.push({ payload, target });
         return { kind: "delivered" };
       }),
+    copyToClipboard: async (artifact) => {
+      copiedToClipboard.push(artifact);
+    },
     clock: overrides.clock,
   };
 
-  return { deps, states, delivered, picker, openPickerCalls: () => openCalls };
+  return {
+    deps,
+    states,
+    delivered,
+    copiedToClipboard,
+    picker,
+    openPickerCalls: () => openCalls,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -428,7 +446,33 @@ test("slot 1 renders and works for every source kind — text, file, and image",
     const result = await session;
     assert.deepEqual(result, { kind: "copy-kept" }, `${kind}: the copy is kept`);
     assert.equal(h.delivered.length, 0, `${kind}: slot 1 bypasses deliver entirely`);
+    assert.deepEqual(h.copiedToClipboard, [], `${kind}: slot 1 writes nothing uncropped`);
   }
+});
+
+test("slot 1 writes the CROPPED image to the clipboard — a crop must not be silently discarded (issue #86)", async () => {
+  const CROP_RECT: CropRect = { x: 0, y: 0.4, width: 1, height: 0.6 };
+  let croppedArtifact: CaptureArtifact | undefined;
+
+  const h = makeHarness({
+    port: fakeClipboardPort({ text: "", imagePng: Buffer.from([1, 2, 3, 4]) }),
+    cropImage: async (artifact) => {
+      croppedArtifact = { ...artifact, id: `${artifact.id}-cropped`, pngPath: "/tmp/MistrFlowCaptures/relay-cropped.png" };
+      return croppedArtifact;
+    },
+  });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+  h.picker.resolve({ kind: "crop", rect: CROP_RECT });
+  await flush();
+  h.picker.resolve({ kind: "clipboard" });
+  const result = await session;
+
+  assert.deepEqual(result, { kind: "copy-kept" });
+  assert.equal(h.delivered.length, 0, "slot 1 bypasses deliver entirely");
+  assert.equal(h.copiedToClipboard.length, 1, "the crop is written through the port exactly once");
+  assert.deepEqual(h.copiedToClipboard[0], croppedArtifact, "the write carries the CROPPED artifact, not the original");
 });
 
 test("Esc still cancels with the cancelled beat — the affirmative ending didn't eat the escape hatch", async () => {
@@ -468,17 +512,19 @@ test("slot 1 never updates the Last Target — a pane delivery does", async () =
   assert.deepEqual(memory.current(), TARGET_A);
 });
 
-test("slot 1 writes nothing: the session has no clipboard-write seam and never sees copySelectionFirst", () => {
-  // Structural guards (house pattern: clickablePickerRows.test.ts reads main.ts):
-  // the content is ALREADY on the clipboard — whether the user copied it or
-  // main.ts's copySelectionFirst did, before the session opened — so the
-  // session must never re-write it (a relayed image would be clobbered by a
-  // re-encode), and must behave identically with the flag on or off.
+test("slot 1's clipboard write never sees copySelectionFirst — that flag stays a main.ts concern", () => {
+  // Structural guard (house pattern: clickablePickerRows.test.ts reads main.ts):
+  // ordinarily the content is ALREADY on the clipboard — whether the user
+  // copied it or main.ts's copySelectionFirst did, before the session opened
+  // — so slot 1 must not blindly re-write it (a relayed image would be
+  // clobbered by a re-encode). The one exception is a crop (issue #86): a
+  // cropped artifact was never written, so slot 1 writes it once — see the
+  // behavioral tests above for that guard. This structural test only pins
+  // down that the flag itself never leaks into the session.
   const source = readFileSync(
     path.join(__dirname, "..", "src", "relaySession.ts"),
     "utf8",
   );
-  assert.doesNotMatch(source, /copyToClipboard/, "the copyToClipboard dep is omitted");
   assert.doesNotMatch(source, /copySelectionFirst/, "the flag lives in main.ts, before the session");
 });
 

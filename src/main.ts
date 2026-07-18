@@ -1289,6 +1289,7 @@ function startRelay(): void {
     openPicker: () => openRelayPicker(),
     renderImageThumbnail: (artifact) => renderCaptureThumbnail(artifact),
     cropImage: (artifact, rect) => cropCaptureArtifact(artifact, rect),
+    copyToClipboard: (artifact) => copyCaptureToClipboard(artifact),
     queryEligibleTargets: () => queryAnchoredTargets(),
     // Same adapter, same ledger, same ack/unknown-retry semantics, same
     // focusOnDeliver as Capture — Relay's payload just isn't always a PNG.
