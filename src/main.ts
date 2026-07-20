@@ -27,7 +27,7 @@ import {
   readDoneChime,
   readAppTargets,
   readFocusOnDeliver,
-  readPersistentBlockDing,
+  readBlockedChime,
   readMuteSystemAudioWhileRecording,
   readOverlayPosition,
   readProjectAnchors,
@@ -51,10 +51,11 @@ import { createFleetState, type FleetPosture } from "./fleetState";
 import { attentionCycle, createBlockedJumpCursor } from "./blockedJumpCursor";
 import {
   createHerdrForegroundCheck,
+  playBlockedChime,
   playDoneChime,
-  shouldChimeDone,
+  shouldChime,
   type IsHerdrForeground,
-} from "./doneChime";
+} from "./fleetChime";
 import { focusHerdrPane } from "./focusPane";
 import { createActiveVerbLock } from "./activeVerbLock";
 import {
@@ -136,9 +137,9 @@ let projectAnchors: ProjectAnchor[] = [];
 // "config, never source; MF learns no app semantics" posture as projectAnchors.
 let appTargets: AppTarget[] = [];
 let copySelectionFirst = false;
-// PRD #44 / #51: the persistent-block ding is on by default; config can silence
-// the sound while keeping the visual fleet awareness. Read once at startup.
-let persistentBlockDing = true;
+// ADR 0007: the blocked chime is on by default; config can silence the sound
+// while keeping the visual fleet awareness. Read once at startup.
+let blockedChime = true;
 // PRD #77 / #80: the one soft done chime is on by default; config can silence the
 // sound while keeping the done badge and jump gesture. Read once at startup.
 let doneChime = true;
@@ -273,28 +274,13 @@ async function pollFleetOnce(): Promise<void> {
       ? fleetState.observe({ kind: "panes", agents: result.agents }, Date.now())
       : fleetState.observe({ kind: "unavailable" }, Date.now());
   renderFleetPosture(posture);
-  maybeDingPersistentBlock(posture);
-  await maybeChimeDone(posture);
+  await maybeChimeFleet(posture);
 }
 
-/**
- * The single active cue of the whole feature (#51): one quiet ding when an agent
- * has been continuously blocked past the persistent-block duration. fleetState
- * fires the one-shot signal; here we decide whether to actually sound it —
- * silenced by config, and suppressed while a verb is active (the ding only
- * matters when you're away from the work, never mid-dictation). One ding per
- * poll regardless of how many crossed, since it's a nudge, not a count.
- */
-function maybeDingPersistentBlock(posture: FleetPosture): void {
-  if (posture.newlyPersistentBlockedTargets.length === 0) return;
-  if (!persistentBlockDing) return;
-  if (verbLock.activeVerb() !== null) return;
-  beep();
-}
-
-// The done-awareness foreground seam (ADR 0006 §3): "is Herdr's host window the
-// OS foreground window right now?" Created lazily so a missing socket at startup
-// doesn't matter — identification re-reads the socket path per attempt.
+// The fleet-awareness foreground seam (ADR 0006 §3, shared by both cues since
+// ADR 0007): "is Herdr's host window the OS foreground window right now?"
+// Created lazily so a missing socket at startup doesn't matter — identification
+// re-reads the socket path per attempt.
 let herdrForegroundCheck: IsHerdrForeground | null = null;
 function isHerdrForeground(): Promise<boolean> {
   if (herdrForegroundCheck === null) {
@@ -306,30 +292,56 @@ function isHerdrForeground(): Promise<boolean> {
 }
 
 /**
- * The one soft chime of done-awareness (ADR 0006 §§2–3, #80): when a done episode
- * begins and Herdr's host window is not the OS foreground window at that poll,
- * sound a single gentle chime — distinct from and softer than the block ding.
+ * The two active cues of fleet awareness (ADR 0007, amending ADR 0006 §§2–3):
+ * when a block passes its dwell or a done episode begins, and Herdr's host
+ * window is not the OS foreground window at that poll, sound that state's chime
+ * — a double beep for blocked, one soft tone for done.
+ *
  * The foreground gate is evaluated exactly once, at the transition poll: Herdr
- * being foreground *consumes* the chime for that episode (fleetState's one-shot is
- * already spent), never deferring it to a later alt-tab. Config- and verb-gated
- * exactly like the ding; suppression silences the sound only, never the state.
+ * being foreground *consumes* the chime for that episode (fleetState's one-shot
+ * is already spent), never deferring it to a later alt-tab. Config- and
+ * verb-gated; suppression silences the sound only, never the state.
  */
-async function maybeChimeDone(posture: FleetPosture): Promise<void> {
-  // Cheap gates first: nothing newly done, chime disabled, or a verb active
-  // all short-circuit before the foreground probe — which shells out to
-  // PowerShell (the same spawn class #72 fixed), so it must never run for a
-  // chime we'd have suppressed anyway (e.g. every done episode under
-  // `doneChime: false`).
-  if (posture.newlyDoneTargets.length === 0) return;
-  if (!doneChime) return;
-  if (verbLock.activeVerb() !== null) return;
+async function maybeChimeFleet(posture: FleetPosture): Promise<void> {
+  // Cheap gates first, for BOTH cues: nothing newly signalled, the cue disabled,
+  // or a verb active all short-circuit before the foreground probe — which shells
+  // out to PowerShell (the same spawn class #72 fixed), so it must never run for
+  // a chime we'd have suppressed anyway (e.g. every episode under
+  // `doneChime: false`), and must run at most ONCE per poll even when both cues
+  // are live.
+  const verbActive = verbLock.activeVerb() !== null;
+  const blockedPending =
+    posture.newlyBlockedTargets.length > 0 && blockedChime && !verbActive;
+  const donePending = posture.newlyDoneTargets.length > 0 && doneChime && !verbActive;
+  if (!blockedPending && !donePending) return;
 
   const herdrForeground = await isHerdrForeground();
+  // Re-read the verb lock: the probe is async, so a verb that started during it
+  // must still suppress the cue.
+  const verbActiveNow = verbLock.activeVerb() !== null;
+
+  // Blocked outranks done when both fire on the same poll (ADR 0006 §4, ADR
+  // 0007): a bottleneck outranks a harvest, and two beep shell-outs racing each
+  // other interleave into noise rather than two legible cues. The swallowed
+  // completion is the same accepted edge as foreground suppression — the done
+  // badge and the jump gesture remain the durable surface.
   if (
-    shouldChimeDone({
-      newlyDoneTargets: posture.newlyDoneTargets,
+    shouldChime({
+      newlyTargets: posture.newlyBlockedTargets,
+      chimeEnabled: blockedChime,
+      verbActive: verbActiveNow,
+      herdrForeground,
+    })
+  ) {
+    playBlockedChime();
+    return;
+  }
+
+  if (
+    shouldChime({
+      newlyTargets: posture.newlyDoneTargets,
       chimeEnabled: doneChime,
-      verbActive: verbLock.activeVerb() !== null,
+      verbActive: verbActiveNow,
       herdrForeground,
     })
   ) {
@@ -1508,8 +1520,8 @@ app.whenReady().then(async () => {
     deliverCapture = buildDeliverCapture(focusOnDeliver);
     copySelectionFirst = await readCopySelectionFirst();
     console.log("[mistr-flow] config: copySelectionFirst =", copySelectionFirst);
-    persistentBlockDing = await readPersistentBlockDing();
-    console.log("[mistr-flow] config: persistentBlockDing =", persistentBlockDing);
+    blockedChime = await readBlockedChime();
+    console.log("[mistr-flow] config: blockedChime =", blockedChime);
     doneChime = await readDoneChime();
     console.log("[mistr-flow] config: doneChime =", doneChime);
     projectAnchors = await readProjectAnchors();
