@@ -1,8 +1,12 @@
 ## Latest session handoff
 
-**`docs/handoff/2026-07-17-work-laptop-project-anchors-config-and-verify-pass.md`** — read this first. It states what to pick up next on the **work laptop** (npm install, configure this machine's Project Anchors in config.json, run the #82 verify pass), what shipped in the 2026-07-16 evening session (done-awareness end-to-end, project anchors + three-channel picker rows, verb switch, the visual scale-up, Ctrl+Alt+S), and the open threads (#73, #82, the H-hammering quirk, the intermittent capture helper-error).
+**`docs/handoff/2026-07-20-work-laptop-fleet-chimes-and-capture-history.md`** — read this first. It states what to pick up next on the **work laptop** and leads with the trap that silently breaks the sync: this repo has **two remotes**, and every commit from the 2026-07-19/20 session went to `origin` (`bmac902/mistr-flow`) only — never to `blairfork` (`Blair-MacDonald_questsw/mistr-flow`). Check `git remote -v` *before* pulling, or the pull returns nothing and looks like it worked.
 
-Most handoffs in `docs/handoff/` are machine-local (excluded via `.git/info/exclude`, which does not travel), so on a fresh clone that folder looks empty. The one named above is **force-added and tracked** on purpose, so it survives a `git pull` on another machine. If you write a handoff that a *different machine* needs, `git add -f` it — otherwise it silently never leaves the machine that wrote it.
+It also covers what shipped (#91 fleet chimes standardised — Blocked now chimes at the 5s dwell instead of 4 minutes, rhythm-distinguished from Done; #93 the never-called TTL sweep wired on after 417 MB of screenshots accumulated over five days; #94–#96 capture history — an in-memory ring per verb, arrow-navigable in the picker), the **config trap** (`persistentBlockDing: false` still silences the new blocked chime, so an old config makes #91 look broken), what was and was not verified at home, and the open threads (#85 now unblocked and refined, #82/#68/#65/#62/#59 both-machine verification, #89, #73, #98).
+
+Earlier handoffs remain useful for context: `2026-07-17-…` (Project Anchors setup, still the per-machine config task), `2026-07-18-…` (CRLF/EOL recovery).
+
+Most handoffs in `docs/handoff/` are machine-local (excluded via `.git/info/exclude`, which does not travel), so on a fresh clone that folder looks empty. The ones named above are **force-added and tracked** on purpose, so they survive a `git pull` on another machine. If you write a handoff that a *different machine* needs, `git add -f` it — otherwise it silently never leaves the machine that wrote it.
 
 ## Running Mistr Flow on a fresh machine
 
