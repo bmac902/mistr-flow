@@ -208,6 +208,95 @@ test("a picker with no cropSource still works", () => {
   });
 });
 
+// --- Capture-history navigation (issue #95) --------------------------------
+
+test("historySource older emit resolves a navigate-older selection", async () => {
+  let emit: ((direction: "older" | "newer") => void) | null = null;
+  const handle = createCapturePickerHandle({
+    shortcuts: makeFakeShortcuts(),
+    historySource: (cb) => {
+      emit = cb;
+      return () => {};
+    },
+  });
+
+  const selection = handle.awaitSelection();
+  emit!("older");
+
+  assert.deepEqual(await selection, { kind: "navigate", direction: "older" });
+  handle.close();
+});
+
+test("historySource newer emit resolves a navigate-newer selection", async () => {
+  let emit: ((direction: "older" | "newer") => void) | null = null;
+  const handle = createCapturePickerHandle({
+    shortcuts: makeFakeShortcuts(),
+    historySource: (cb) => {
+      emit = cb;
+      return () => {};
+    },
+  });
+
+  const selection = handle.awaitSelection();
+  emit!("newer");
+
+  assert.deepEqual(await selection, { kind: "navigate", direction: "newer" });
+  handle.close();
+});
+
+test("a history picker registers Left/Right and releases them on close", () => {
+  const shortcuts = makeFakeShortcuts();
+  const handle = createCapturePickerHandle({
+    shortcuts,
+    historySource: () => () => {},
+  });
+
+  assert.ok(shortcuts.registeredAccelerators().includes("Left"));
+  assert.ok(shortcuts.registeredAccelerators().includes("Right"));
+
+  handle.close();
+  assert.deepEqual(shortcuts.registeredAccelerators(), []);
+});
+
+test("pressing Left/Right resolves the navigation selection channel", async () => {
+  const shortcuts = makeFakeShortcuts();
+  const handle = createCapturePickerHandle({
+    shortcuts,
+    historySource: () => () => {},
+  });
+
+  const older = handle.awaitSelection();
+  shortcuts.press("Left");
+  assert.deepEqual(await older, { kind: "navigate", direction: "older" });
+
+  const newer = handle.awaitSelection();
+  shortcuts.press("Right");
+  assert.deepEqual(await newer, { kind: "navigate", direction: "newer" });
+
+  handle.close();
+});
+
+test("a picker with no historySource registers no arrow keys", () => {
+  const shortcuts = makeFakeShortcuts();
+  createCapturePickerHandle({ shortcuts });
+
+  assert.ok(!shortcuts.registeredAccelerators().includes("Left"));
+  assert.ok(!shortcuts.registeredAccelerators().includes("Right"));
+});
+
+test("historySource is unsubscribed on close", () => {
+  let unsubscribed = false;
+  const handle = createCapturePickerHandle({
+    shortcuts: makeFakeShortcuts(),
+    historySource: () => () => {
+      unsubscribed = true;
+    },
+  });
+
+  handle.close();
+  assert.equal(unsubscribed, true);
+});
+
 // --- Same agent again: the verb-key confirm (issue #58, ADR 0004) ----------
 
 test("an again press from the verb hotkey resolves the same selection channel as digits", async () => {

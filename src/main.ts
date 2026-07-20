@@ -68,6 +68,7 @@ import { muteSystemAudio, type SystemAudioMuteHandle } from "./systemAudio";
 import {
   captureActiveWindow as captureActiveWindowImpl,
   defaultCaptureDir,
+  sweepExpiredCaptures,
   type CaptureArtifact,
 } from "./capture";
 import {
@@ -75,21 +76,32 @@ import {
   readClipboardSource,
   type ClipboardSourcePort,
 } from "./clipboardSource";
-import { runRelaySession } from "./relaySession";
+import {
+  runRelaySession,
+  relayArtifactPaths,
+  type RelayArtifact,
+} from "./relaySession";
 import { runHeraldSession } from "./heraldSession";
 import {
   createCaptureGrabFailedError,
   runCaptureSession,
   type CapturePickerHandle,
+  type SessionHistoryPort,
 } from "./captureSession";
 import {
   createCapturePickerHandle,
   type AgainSource,
   type CancelSource,
   type CropSource,
+  type HistorySource,
   type PickerRowClick,
   type RowClickSource,
 } from "./capturePickerHandle";
+import {
+  createCaptureHistory,
+  isRetainedByAny,
+  type CaptureHistory,
+} from "./captureHistory";
 import { decideVerbStart, type Verb } from "./verbArbiter";
 import { routeBarClick } from "./barClickRouting";
 import {
@@ -248,6 +260,72 @@ function refuseVerb(): void {
 const FLEET_POLL_INTERVAL_MS = 3500;
 const fleetState = createFleetState();
 let fleetPollTimer: ReturnType<typeof setInterval> | null = null;
+
+// Reclaim expired capture/relay temp files. A 5-minute cadence against the
+// 15-minute TTL means a file lives at most ~20 minutes past its last touch
+// while giving three sweep opportunities inside every TTL window, so nothing
+// mid-flight is caught and nothing lingers for long. Left unrun, this dir grew
+// to hundreds of MB of retained screenshots over a work week (issue #93).
+const CAPTURE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let captureSweepTimer: ReturnType<typeof setInterval> | null = null;
+
+// The Capture verb's persistent history ring (issue #94/#95): the last ~10
+// screenshots, arrow-navigable in the picker. It outlives any one session, so
+// it lives at module scope. Count-bounded only — capture PNGs live on disk (the
+// TTL sweep owns that reclaim), not in memory, so a huge byte budget keeps the
+// ring purely a recency window. Relay's own ring (issue #96) is byte-bounded
+// because its clipboard images are held in memory.
+const captureHistory = createCaptureHistory<CaptureArtifact>({
+  maxBytes: Number.MAX_SAFE_INTEGER,
+  sizeOf: () => 0,
+  pathsOf: (artifact) => [artifact.pngPath],
+});
+
+// Relay's own ring (issue #96), separate from Capture's — a Relay picker must
+// never arrow onto a screenshot, and vice versa. This one IS byte-bounded:
+// clipboard images run to tens of MB, so the budget caps how much retained disk
+// the ring can pin at once (~three large images) rather than letting ten balloon
+// it. A text entry is sized by its byte length; an image by its PNG file on disk
+// (best-effort — a missing/unreadable file counts as 0, never throwing here).
+const RELAY_HISTORY_BYTE_BUDGET = 64 * 1024 * 1024;
+const relayHistory = createCaptureHistory<RelayArtifact>({
+  maxBytes: RELAY_HISTORY_BYTE_BUDGET,
+  sizeOf: (artifact) =>
+    artifact.kind === "text"
+      ? artifact.preview.byteSize
+      : safeFileSize(artifact.artifact.pngPath),
+  pathsOf: (artifact) => relayArtifactPaths(artifact),
+});
+
+function safeFileSize(filePath: string): number {
+  try {
+    return fs.statSync(filePath).size;
+  } catch {
+    return 0;
+  }
+}
+
+// A capture/relay file is retained — exempt from the TTL sweep — exactly as long
+// as EITHER history ring can still arrow to it (issue #93's seam). Both rings are
+// OR-ed so wiring the second never masks the first. Evicting an entry drops its
+// paths, which is what lets the sweep reclaim them next tick.
+function isCaptureRetained(filePath: string): boolean {
+  return isRetainedByAny([captureHistory, relayHistory], filePath);
+}
+
+function sweepCapturesBestEffort(): void {
+  void sweepExpiredCaptures({ isRetained: isCaptureRetained }).catch((error) => {
+    // A sweep failure must never crash or interrupt anything — same best-effort
+    // posture as the fleet poll. Log and let the next tick try again.
+    console.error("[mistr-flow] capture sweep failed:", error);
+  });
+}
+
+function startCaptureSweeping(): void {
+  if (captureSweepTimer) return;
+  sweepCapturesBestEffort();
+  captureSweepTimer = setInterval(sweepCapturesBestEffort, CAPTURE_SWEEP_INTERVAL_MS);
+}
 
 /**
  * The fleet posture is an expression of the *resting* bar only. During any
@@ -997,6 +1075,43 @@ const captureCropSource: CropSource = (emit) => {
   };
 };
 
+// History navigation (issues #95/#96), shared by both verbs' pickers — the verb
+// lock guarantees at most one is open, so one source suffices. Passing it is what
+// makes the picker register the Left/Right `globalShortcut`s (the real arrow
+// input), so the emit hook stays dormant in production (the arrows resolve
+// directly in the handle) and exists so navigation is drivable from tests without
+// a keyboard, mirroring the crop/again seams.
+let activeHistoryEmit: ((direction: "older" | "newer") => void) | null = null;
+
+const pickerHistorySource: HistorySource = (emit) => {
+  activeHistoryEmit = emit;
+  return () => {
+    if (activeHistoryEmit === emit) activeHistoryEmit = null;
+  };
+};
+
+// A session's window onto a module-level ring, generic over the entry type so
+// Capture and Relay share one wiring rather than forking it (issue #96).
+// `navigate` moves the cursor and hands back the entry landed on (never null —
+// the session pushes the fresh grab before opening); position counts from the
+// newest (newest = 1).
+function makeHistoryPort<A>(ring: CaptureHistory<A>): SessionHistoryPort<A> {
+  return {
+    push: (artifact) => ring.push(artifact),
+    navigate: (direction) => {
+      if (direction === "older") ring.older();
+      else ring.newer();
+      return ring.current as A;
+    },
+    replaceCurrent: (artifact) => ring.replaceCurrent(artifact),
+    currentOriginal: () => ring.currentOriginal as A,
+    position: () => ({
+      current: ring.length - ring.cursorIndex,
+      total: ring.length,
+    }),
+  };
+}
+
 // The verb-key again-confirm (issue #58, ADR 0004), mirroring the crop
 // source: non-null exactly while a picker is open (the handle unsubscribes on
 // close, on every exit path), so `verbLock.activeVerb() === <verb> &&
@@ -1147,6 +1262,7 @@ function openCapturePicker(): CapturePickerHandle {
     againSource: pickerAgainSource,
     clickSource: pickerRowClickSource,
     cancelSource: pickerCancelSource,
+    historySource: pickerHistorySource,
   });
 }
 
@@ -1157,14 +1273,25 @@ function startCapture(): void {
 
   void runCaptureSession({
     showOverlay: (snapshot) => showCaptureOverlay(snapshot),
-    captureActiveWindow: () => grabActiveWindow(),
+    // Push the fresh grab onto the history ring before the picker opens, so the
+    // ring's current entry is exactly what the session is standing on (#95).
+    captureActiveWindow: async () => {
+      const artifact = await grabActiveWindow();
+      captureHistory.push(artifact);
+      return artifact;
+    },
     openPicker: () => openCapturePicker(),
     renderThumbnail: (artifact) => renderCaptureThumbnail(artifact),
     cropCapture: (artifact, rect) => cropCaptureArtifact(artifact, rect),
     queryEligibleTargets: () => queryAnchoredTargets(),
     copyToClipboard: (artifact) => copyCaptureToClipboard(artifact),
+    // Mint a fresh payload id per delivery (#95): the ledger keys idempotency on
+    // (id, injectText, target) and caches the outcome, so re-delivering a history
+    // entry to a pane it already went to would silently no-op. A fresh id keeps
+    // the file/pane stable while making each send a distinct ledger key.
     deliver: (capture, target) =>
-      deliverCapture(captureArtifactToPayload(capture), target),
+      deliverCapture(captureArtifactToPayload(capture, randomUUID()), target),
+    history: makeHistoryPort(captureHistory),
     // Same agent again (issue #58): the shared Last Target, keyed to this
     // verb's own hotkey — pressed again while the picker is open, it confirms.
     again: {
@@ -1180,8 +1307,8 @@ function startCapture(): void {
     });
 }
 
-// Relay reads/PNG-spills into the same temp dir captures use, so the existing
-// TTL sweep reclaims relay spill/image files too (CONTEXT.md).
+// Relay reads/PNG-spills into the same temp dir captures use, so the TTL sweep
+// (startCaptureSweeping) reclaims relay spill/image files too (CONTEXT.md).
 const relayCaptureDir = defaultCaptureDir();
 
 /** Adapts Electron's clipboard + fs to the pure Relay source port (issue #38). */
@@ -1291,6 +1418,7 @@ function openRelayPicker(): CapturePickerHandle {
     againSource: pickerAgainSource,
     clickSource: pickerRowClickSource,
     cancelSource: pickerCancelSource,
+    historySource: pickerHistorySource,
     // Slot 1 returned (#64): "1 Clipboard" = keep the copy, stop here — the
     // affirmative local ending now that Ctrl+Alt+C (with copySelectionFirst)
     // is itself the copy. Same digit, same "Clipboard" label as Capture's.
@@ -1320,6 +1448,9 @@ function startRelay(): void {
     // Same adapter, same ledger, same ack/unknown-retry semantics, same
     // focusOnDeliver as Capture — Relay's payload just isn't always a PNG.
     deliver: (payload, target) => deliverCapture(payload, target),
+    history: makeHistoryPort(relayHistory),
+    // Fresh payload id per delivery (#96), same ledger reason as Capture (#95).
+    mintId: () => randomUUID(),
     // The same ONE Last Target as Capture and Herald (issue #58, ADR 0004).
     again: {
       readLastTarget: () => lastTargetMemory.current(),
@@ -1589,6 +1720,7 @@ app.whenReady().then(async () => {
   }
 
   startFleetPolling();
+  startCaptureSweeping();
 });
 
 app.on("window-all-closed", () => {
@@ -1609,5 +1741,9 @@ app.on("will-quit", () => {
   if (fleetPollTimer) {
     clearInterval(fleetPollTimer);
     fleetPollTimer = null;
+  }
+  if (captureSweepTimer) {
+    clearInterval(captureSweepTimer);
+    captureSweepTimer = null;
   }
 });

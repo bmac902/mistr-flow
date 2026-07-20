@@ -82,6 +82,36 @@ const doneBadgeEl = document.createElement("div");
 doneBadgeEl.id = "mf-done-badge";
 cardEl.appendChild(doneBadgeEl);
 
+// Capture/relay-history position (issue #95): a small "3 / 10" chip on the
+// preview panel telling you where you are in the arrow-navigable ring. Renderer-
+// owned placeholder, same discipline as the done badge above — overlay.html is a
+// Claude Design asset and carries no knowledge of it; a later design round-trip
+// blesses the real thing. Only mounts on the picker phase and only when a
+// history position is present (see renderHistoryPosition).
+const historyPositionStyle = document.createElement("style");
+historyPositionStyle.textContent = `
+  #mf-history-position {
+    display: none;
+    position: absolute;
+    top: 6px;
+    right: 10px;
+    padding: 1px 7px;
+    background: rgba(22, 16, 10, 0.72);
+    border-radius: 9px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 15px;
+    color: #e8d4a6;
+    pointer-events: none;
+  }
+  #mf-history-position.mf-has-position { display: block; }
+`;
+document.head.appendChild(historyPositionStyle);
+
+const historyPositionEl = document.createElement("div");
+historyPositionEl.id = "mf-history-position";
+previewEl.appendChild(historyPositionEl);
+
 // TV-scale nudge (dogfood 2026-07-16): on the 42" 4K the butler reads tiny, so
 // the mascot ensemble — butler + mic, the whole #mascot SVG — gets a 25% lift
 // (18% first, bumped on sight).
@@ -631,6 +661,20 @@ function renderCapturePreview(snapshot) {
   previewEl.classList.add("has-preview");
 }
 
+// Reflect the history cursor onto the "n / total" chip. Picker-phase only: the
+// position rides only the capture-picker snapshot, so any other phase clears it.
+function renderHistoryPosition(snapshot) {
+  const position =
+    snapshot.phase === "capture-picker" ? snapshot.historyPosition : undefined;
+  if (position && Number(position.total) >= 1) {
+    historyPositionEl.textContent = `${position.current} / ${position.total}`;
+    historyPositionEl.classList.add("mf-has-position");
+  } else {
+    historyPositionEl.textContent = "";
+    historyPositionEl.classList.remove("mf-has-position");
+  }
+}
+
 window.mistrFlow.onOverlayState((snapshot) => {
   const previousPhase = overlayEl.dataset.phase || "idle";
   overlayEl.dataset.phase = snapshot.phase;
@@ -649,6 +693,7 @@ window.mistrFlow.onOverlayState((snapshot) => {
   toastEl.textContent = snapshot.toastCopy || "";
   renderCapturePreview(snapshot);
   renderCapturePickerEntries(snapshot);
+  renderHistoryPosition(snapshot);
   renderDoneBadge(snapshot);
 });
 

@@ -65,12 +65,27 @@ export type RowClickSource = (emit: (click: PickerRowClick) => void) => () => vo
  */
 export type CancelSource = (emit: () => void) => () => void;
 
+/**
+ * Subscribes to capture-history navigation (issue #95), returning an
+ * unsubscribe. Left/Right arrow through the last-N captures; the arrows
+ * themselves are `globalShortcut`s this handle registers (the renderer can't
+ * take keyboard input — main.ts:1412/1421), but the same navigation also
+ * arrives through this injected seam so it is provable without a keyboard,
+ * exactly as `cropSource`/`againSource`/`clickSource`/`cancelSource` are. It
+ * resolves the same one-selection-at-a-time channel: one ordered event stream,
+ * whatever the input.
+ */
+export type HistorySource = (
+  emit: (direction: "older" | "newer") => void,
+) => () => void;
+
 export interface CapturePickerHandleDeps {
   readonly shortcuts: GlobalShortcutPort;
   readonly cropSource?: CropSource;
   readonly againSource?: AgainSource;
   readonly clickSource?: RowClickSource;
   readonly cancelSource?: CancelSource;
+  readonly historySource?: HistorySource;
   /**
    * Whether digit `1` resolves to the pinned local-outcome slot. True for
    * every verb since #64 (slot 1 is always "end this locally, no pane" —
@@ -91,7 +106,8 @@ export interface CapturePickerHandleDeps {
 export function createCapturePickerHandle(
   deps: CapturePickerHandleDeps,
 ): CapturePickerHandle {
-  const { shortcuts, cropSource, againSource, clickSource, cancelSource } = deps;
+  const { shortcuts, cropSource, againSource, clickSource, cancelSource, historySource } =
+    deps;
   const includeClipboardSlot = deps.includeClipboardSlot ?? true;
   const registeredAccelerators = new Set<string>();
   // The targets THIS instance put on digit slots, in append order — the sole
@@ -104,6 +120,7 @@ export function createCapturePickerHandle(
   let unsubscribeAgain: (() => void) | null = null;
   let unsubscribeClick: (() => void) | null = null;
   let unsubscribeCancel: (() => void) | null = null;
+  let unsubscribeHistory: (() => void) | null = null;
 
   function resolveSelection(event: CaptureSelectionEvent): void {
     if (closed || !pendingResolve) return;
@@ -168,6 +185,24 @@ export function createCapturePickerHandle(
     unsubscribeCancel = cancelSource(() => resolveSelection({ kind: "escape" }));
   }
 
+  // History arrows exist only for a verb with a history ring (Capture #95,
+  // Relay #96). Registered like the digits — with the picker's lifetime, in
+  // both the plain and (for symmetry with the digit numpad forms) the bare
+  // arrow forms Electron exposes — and released on every close path, so a
+  // leaked system-wide arrow grab can't outlive the picker. The injected
+  // source carries the same navigation for the sandbox, where no key fires.
+  if (historySource) {
+    registerAccelerator("Left", () =>
+      resolveSelection({ kind: "navigate", direction: "older" }),
+    );
+    registerAccelerator("Right", () =>
+      resolveSelection({ kind: "navigate", direction: "newer" }),
+    );
+    unsubscribeHistory = historySource((direction) =>
+      resolveSelection({ kind: "navigate", direction }),
+    );
+  }
+
   return {
     appendTargets(targets: readonly EligibleTarget[]): void {
       if (closed) return;
@@ -201,6 +236,9 @@ export function createCapturePickerHandle(
 
       unsubscribeCancel?.();
       unsubscribeCancel = null;
+
+      unsubscribeHistory?.();
+      unsubscribeHistory = null;
 
       for (const accelerator of registeredAccelerators) {
         shortcuts.unregister(accelerator);

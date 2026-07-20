@@ -71,6 +71,18 @@ export interface PickerAgainRow {
   readonly state: "live" | "unmarked";
 }
 
+/**
+ * The capture/relay-history position indicator (issue #95): where the cursor
+ * sits in the last-N ring, enough for the renderer to draw "3 / 10". Absent
+ * when the verb has no history ring, or trivially "1 / 1" for a lone entry.
+ */
+export interface PickerHistoryPosition {
+  /** 1-based position of the current entry, newest = 1. */
+  readonly current: number;
+  /** Total live entries in the ring. */
+  readonly total: number;
+}
+
 export interface OverlaySnapshot {
   phase: OverlayPhase;
   barMode: "peek" | "expanded";
@@ -118,6 +130,12 @@ export interface OverlaySnapshot {
    * then there is no row and the verb-key confirm is a truthful no-op.
    */
   againRow?: PickerAgainRow;
+  /**
+   * Capture/relay-history position (issue #95): the "3 / 10" indicator for the
+   * arrow-navigable ring. Picker phase only; absent when the verb has no
+   * history. Placeholder styling in the renderer — never touch the mascot.
+   */
+  historyPosition?: PickerHistoryPosition;
   /**
    * Done-awareness ambient half (ADR 0006 §5, PRD #77 / #81): how many watched
    * panes are currently *done* — the badge that answers "what have you finished?"
@@ -365,6 +383,7 @@ export function buildCapturePickerOverlaySnapshot(
   clipboardSlot = true,
   slotOneLabel?: string,
   againRow?: PickerAgainRow,
+  historyPosition?: PickerHistoryPosition,
 ): OverlaySnapshot {
   const summoning = targets.length === 0 && message === undefined;
   return {
@@ -380,6 +399,7 @@ export function buildCapturePickerOverlaySnapshot(
     slotOneLabel,
     capturePreview: preview ?? undefined,
     againRow,
+    historyPosition,
   };
 }
 

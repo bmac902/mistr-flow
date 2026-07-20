@@ -452,6 +452,12 @@ export interface CaptureSweepDeps {
   readonly readdir?: (dir: string) => Promise<string[]>;
   readonly stat?: (filePath: string) => Promise<{ mtimeMs: number }>;
   readonly unlink?: (filePath: string) => Promise<void>;
+  /**
+   * A retained file is skipped even when older than the TTL, and is not
+   * included in the returned deleted-paths array. Defaults to retaining
+   * nothing, which preserves the pre-history-ring sweep behaviour exactly.
+   */
+  readonly isRetained?: (filePath: string) => boolean;
 }
 
 /** Deletes capture files older than the TTL; returns the paths it deleted. */
@@ -464,6 +470,7 @@ export async function sweepExpiredCaptures(
   const readdir = deps.readdir ?? ((dir) => fsPromises.readdir(dir));
   const stat = deps.stat ?? ((filePath) => fsPromises.stat(filePath));
   const unlink = deps.unlink ?? ((filePath) => fsPromises.unlink(filePath));
+  const isRetained = deps.isRetained ?? (() => false);
 
   const cutoff = now() - ttlMs;
 
@@ -480,10 +487,23 @@ export async function sweepExpiredCaptures(
   const deleted: string[] = [];
   for (const entry of entries) {
     const filePath = path.join(captureDir, entry);
-    const stats = await stat(filePath);
-    if (stats.mtimeMs <= cutoff) {
-      await unlink(filePath);
-      deleted.push(filePath);
+    if (isRetained(filePath)) {
+      continue;
+    }
+    try {
+      const stats = await stat(filePath);
+      if (stats.mtimeMs <= cutoff) {
+        await unlink(filePath);
+        deleted.push(filePath);
+      }
+    } catch (error) {
+      // A file removed between the readdir and its stat/unlink (or gone by
+      // the time we unlink) is exactly what we wanted anyway — skip it and
+      // keep sweeping. Any other error is real and must not be swallowed.
+      if (isNodeError(error) && error.code === "ENOENT") {
+        continue;
+      }
+      throw error;
     }
   }
 
