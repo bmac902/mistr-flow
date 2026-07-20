@@ -68,6 +68,7 @@ import { muteSystemAudio, type SystemAudioMuteHandle } from "./systemAudio";
 import {
   captureActiveWindow as captureActiveWindowImpl,
   defaultCaptureDir,
+  sweepExpiredCaptures,
   type CaptureArtifact,
 } from "./capture";
 import {
@@ -248,6 +249,28 @@ function refuseVerb(): void {
 const FLEET_POLL_INTERVAL_MS = 3500;
 const fleetState = createFleetState();
 let fleetPollTimer: ReturnType<typeof setInterval> | null = null;
+
+// Reclaim expired capture/relay temp files. A 5-minute cadence against the
+// 15-minute TTL means a file lives at most ~20 minutes past its last touch
+// while giving three sweep opportunities inside every TTL window, so nothing
+// mid-flight is caught and nothing lingers for long. Left unrun, this dir grew
+// to hundreds of MB of retained screenshots over a work week (issue #93).
+const CAPTURE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let captureSweepTimer: ReturnType<typeof setInterval> | null = null;
+
+function sweepCapturesBestEffort(): void {
+  void sweepExpiredCaptures().catch((error) => {
+    // A sweep failure must never crash or interrupt anything — same best-effort
+    // posture as the fleet poll. Log and let the next tick try again.
+    console.error("[mistr-flow] capture sweep failed:", error);
+  });
+}
+
+function startCaptureSweeping(): void {
+  if (captureSweepTimer) return;
+  sweepCapturesBestEffort();
+  captureSweepTimer = setInterval(sweepCapturesBestEffort, CAPTURE_SWEEP_INTERVAL_MS);
+}
 
 /**
  * The fleet posture is an expression of the *resting* bar only. During any
@@ -1180,8 +1203,8 @@ function startCapture(): void {
     });
 }
 
-// Relay reads/PNG-spills into the same temp dir captures use, so the existing
-// TTL sweep reclaims relay spill/image files too (CONTEXT.md).
+// Relay reads/PNG-spills into the same temp dir captures use, so the TTL sweep
+// (startCaptureSweeping) reclaims relay spill/image files too (CONTEXT.md).
 const relayCaptureDir = defaultCaptureDir();
 
 /** Adapts Electron's clipboard + fs to the pure Relay source port (issue #38). */
@@ -1589,6 +1612,7 @@ app.whenReady().then(async () => {
   }
 
   startFleetPolling();
+  startCaptureSweeping();
 });
 
 app.on("window-all-closed", () => {
@@ -1609,5 +1633,9 @@ app.on("will-quit", () => {
   if (fleetPollTimer) {
     clearInterval(fleetPollTimer);
     fleetPollTimer = null;
+  }
+  if (captureSweepTimer) {
+    clearInterval(captureSweepTimer);
+    captureSweepTimer = null;
   }
 });

@@ -460,3 +460,111 @@ test("a non-ENOENT readdir failure propagates instead of being swallowed", async
     }),
   );
 });
+
+test("an expired but retained file is neither unlinked nor returned", async () => {
+  const now = 1_000_000;
+  const seams = makeFsSeams({
+    "retained.png": now - CAPTURE_TTL_MS - 1,
+    "sweepable.png": now - CAPTURE_TTL_MS - 1,
+  });
+
+  const deleted = await sweepExpiredCaptures({
+    captureDir: "/tmp/captures",
+    now: () => now,
+    readdir: seams.readdir,
+    stat: seams.stat,
+    unlink: seams.unlink,
+    isRetained: (filePath) => path.basename(filePath) === "retained.png",
+  });
+
+  assert.deepEqual(deleted.map((p) => path.basename(p)), ["sweepable.png"]);
+  assert.deepEqual(seams.unlinked, ["sweepable.png"]);
+});
+
+test("a fresh file is never swept, retained or not", async () => {
+  const now = 1_000_000;
+  const seams = makeFsSeams({ "fresh.png": now - 1000 });
+
+  const deleted = await sweepExpiredCaptures({
+    captureDir: "/tmp/captures",
+    now: () => now,
+    readdir: seams.readdir,
+    stat: seams.stat,
+    unlink: seams.unlink,
+    isRetained: () => false,
+  });
+
+  assert.deepEqual(deleted, []);
+  assert.deepEqual(seams.unlinked, []);
+});
+
+test("a stat ENOENT on one entry skips it and keeps sweeping the rest", async () => {
+  const now = 1_000_000;
+  const files: Record<string, number> = {
+    "gone.png": now - CAPTURE_TTL_MS - 1,
+    "old.png": now - CAPTURE_TTL_MS - 1,
+  };
+  const unlinked: string[] = [];
+
+  const deleted = await sweepExpiredCaptures({
+    captureDir: "/tmp/captures",
+    now: () => now,
+    readdir: async () => Object.keys(files),
+    stat: async (filePath: string) => {
+      const name = path.basename(filePath);
+      if (name === "gone.png") {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+      return { mtimeMs: files[name] };
+    },
+    unlink: async (filePath: string) => {
+      unlinked.push(path.basename(filePath));
+    },
+  });
+
+  assert.deepEqual(deleted.map((p) => path.basename(p)), ["old.png"]);
+  assert.deepEqual(unlinked, ["old.png"]);
+});
+
+test("an unlink ENOENT on one entry skips it and keeps sweeping the rest", async () => {
+  const now = 1_000_000;
+  const files: Record<string, number> = {
+    "racy.png": now - CAPTURE_TTL_MS - 1,
+    "old.png": now - CAPTURE_TTL_MS - 1,
+  };
+  const unlinked: string[] = [];
+
+  const deleted = await sweepExpiredCaptures({
+    captureDir: "/tmp/captures",
+    now: () => now,
+    readdir: async () => Object.keys(files),
+    stat: async (filePath: string) => ({ mtimeMs: files[path.basename(filePath)] }),
+    unlink: async (filePath: string) => {
+      const name = path.basename(filePath);
+      if (name === "racy.png") {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+      unlinked.push(name);
+    },
+  });
+
+  assert.deepEqual(deleted.map((p) => path.basename(p)), ["old.png"]);
+  assert.deepEqual(unlinked, ["old.png"]);
+});
+
+test("a non-ENOENT stat failure propagates instead of being swallowed", async () => {
+  const now = 1_000_000;
+  await assert.rejects(
+    sweepExpiredCaptures({
+      captureDir: "/tmp/captures",
+      now: () => now,
+      readdir: async () => ["boom.png"],
+      stat: async () => {
+        throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      },
+      unlink: async () => {
+        throw new Error("should not be called");
+      },
+    }),
+  );
+});
