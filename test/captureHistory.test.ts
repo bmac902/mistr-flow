@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createCaptureHistory } from "../src/captureHistory";
+import { createCaptureHistory, isRetainedByAny } from "../src/captureHistory";
 
 // A tiny entry shape: an id, a byte cost, and the file paths it references.
 // Crops mint a new id but keep the same "original".
@@ -218,4 +218,27 @@ test("eviction of the parked entry when not the newest keeps the cursor in range
   ring.push(entry("C", 10)); // busts budget, evicts A, cursor reset to C
   assert.ok(ring.cursorIndex >= 0 && ring.cursorIndex < ring.length);
   assert.equal(ring.current?.id, "C");
+});
+
+test("isRetainedByAny: a path in EITHER ring is retained; both are visible at once", () => {
+  const capture = makeRing();
+  const relay = makeRing();
+  capture.push(entry("cap", 1, ["/tmp/cap.png"]));
+  relay.push(entry("relay", 1, ["/tmp/relay.png"]));
+
+  // Both rings' retentions are honoured simultaneously — wiring the second
+  // never masks the first (issue #96's isRetained contract).
+  assert.equal(isRetainedByAny([capture, relay], "/tmp/cap.png"), true);
+  assert.equal(isRetainedByAny([capture, relay], "/tmp/relay.png"), true);
+  assert.equal(isRetainedByAny([capture, relay], "/tmp/unknown.png"), false);
+});
+
+test("isRetainedByAny: an evicted path is no longer retained by either ring", () => {
+  const capture = makeRing({ maxEntries: 1 });
+  const relay = makeRing();
+  capture.push(entry("old", 1, ["/tmp/old.png"]));
+  capture.push(entry("new", 1, ["/tmp/new.png"])); // evicts old
+
+  assert.equal(isRetainedByAny([capture, relay], "/tmp/old.png"), false);
+  assert.equal(isRetainedByAny([capture, relay], "/tmp/new.png"), true);
 });

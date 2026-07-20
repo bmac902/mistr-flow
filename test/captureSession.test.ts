@@ -929,6 +929,9 @@ function makeHistoryPort(
   ring: ReturnType<typeof createCaptureHistory<CaptureArtifact>>,
 ): SessionHistoryPort<CaptureArtifact> {
   return {
+    push(artifact) {
+      ring.push(artifact);
+    },
     navigate(direction) {
       if (direction === "older") ring.older();
       else ring.newer();

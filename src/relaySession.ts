@@ -7,6 +7,7 @@ import {
   type CaptureSessionClock,
   type RunCaptureSessionResult,
   type SameAgentAgainDependency,
+  type SessionHistoryPort,
 } from "./captureSession";
 import type { CapturePreview, ClipboardTextPreview } from "./captureThumbnail";
 import type { ClipboardSource } from "./clipboardSource";
@@ -118,9 +119,38 @@ export interface RunRelaySessionDependencies {
   deliver(payload: SendPayload, target: EligibleTarget): Promise<CaptureDeliverOutcome>;
   /** Same agent again (issue #58): the shared Last Target, passed straight through. */
   again?: SameAgentAgainDependency;
+  /**
+   * Relay's own history ring (issue #96), separate from Capture's — a Relay
+   * picker must never arrow onto a screenshot. Present → Left/Right arrow through
+   * the last-N relays; absent → the one-shot behaviour, unchanged.
+   */
+  history?: SessionHistoryPort<RelayArtifact>;
+  /**
+   * Mints a fresh payload id per delivery (issue #96, same reason as #95): the
+   * delivery ledger keys on (id, injectText, target) and caches, so re-delivering
+   * a history entry to a pane it already went to would silently no-op. A fresh id
+   * keeps injectText stable while making each send a distinct ledger key. Absent
+   * → the payload's own id (today's one-shot dedupe behaviour).
+   */
+  mintId?: () => string;
   clock?: CaptureSessionClock;
   paneQueryTimeoutMs?: number;
   deliveryAckTimeoutMs?: number;
+}
+
+/**
+ * Every file path a relay entry references — its retained set for #93's sweep.
+ * An image pins its PNG; a spilled-text or file(s) payload pins the file(s) it
+ * injects; inline text pins nothing. Exported so main.ts's ring and the tests
+ * agree on what a relay entry keeps alive.
+ */
+export function relayArtifactPaths(artifact: RelayArtifact): readonly string[] {
+  if (artifact.kind === "image") return [artifact.artifact.pngPath];
+  const { requiresFile, requiresFiles } = artifact.payload;
+  return [
+    ...(requiresFile !== undefined ? [requiresFile] : []),
+    ...(requiresFiles ?? []),
+  ];
 }
 
 export async function runRelaySession(
@@ -142,7 +172,12 @@ export async function runRelaySession(
     // The clipboard was already read above; the shared loop's "grab" step just
     // hands back what we classified. It never fails — the empty/read outcomes
     // are decided before the session opens — so no CaptureGrabFailedError path.
-    captureActiveWindow: async () => relayArtifact,
+    // Push onto the history ring before the picker opens, so the ring's current
+    // entry is exactly this fresh relay (issue #96).
+    captureActiveWindow: async () => {
+      deps.history?.push(relayArtifact);
+      return relayArtifact;
+    },
     openPicker: deps.openPicker,
     renderThumbnail: (artifact) =>
       artifact.kind === "image"
@@ -154,7 +189,14 @@ export async function runRelaySession(
         : Promise.resolve(null),
     queryEligibleTargets: () =>
       deps.queryEligibleTargets().then(toRelayQueryResult),
-    deliver: (artifact, target) => deps.deliver(artifact.payload, target),
+    // Mint a fresh payload id per delivery (issue #96): keep injectText/file
+    // stable, vary only the ledger key, so re-delivering a history entry to a
+    // pane it already went to actually lands rather than returning the cache.
+    deliver: (artifact, target) =>
+      deps.deliver(
+        deps.mintId ? { ...artifact.payload, id: deps.mintId() } : artifact.payload,
+        target,
+      ),
     // Relay's delivering/delivered beats carry the payload-specific prop
     // (note/ledger/portrait) rather than Capture's generic ones (issue #41).
     deliveringSnapshot: (artifact) =>
@@ -177,16 +219,21 @@ export async function runRelaySession(
     //
     // The one exception (issue #86): a crop in the preview produces a fresh
     // artifact that was NEVER written to the clipboard, so keeping it means
-    // writing it for the first time — identity against `relayArtifact` is
-    // how a crop is told apart from the untouched original.
+    // writing it for the first time. A crop is told apart from the untouched
+    // original by identity against that entry's pre-crop original — with
+    // history you may have arrowed onto an older entry, so the reference must be
+    // the entry you're STANDING ON (its `currentOriginal`), not the session's
+    // initial `relayArtifact` (issue #96). Without history the two coincide.
     clipboardSlot: true,
     copyToClipboard: (artifact) => {
-      if (artifact.kind === "image" && artifact !== relayArtifact) {
+      const original = deps.history?.currentOriginal() ?? relayArtifact;
+      if (artifact.kind === "image" && artifact !== original) {
         return deps.copyToClipboard?.(artifact.artifact);
       }
     },
     clipboardDeliveredSnapshot: () => buildRelayCopyKeptOverlaySnapshot(),
     again: deps.again,
+    history: deps.history,
     clock: deps.clock,
     paneQueryTimeoutMs: deps.paneQueryTimeoutMs,
     deliveryAckTimeoutMs: deps.deliveryAckTimeoutMs,

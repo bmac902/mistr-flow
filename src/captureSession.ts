@@ -122,6 +122,13 @@ export interface SameAgentAgainDependency {
  * never navigates, and the loop's no-history path is byte-identical to before.
  */
 export interface SessionHistoryPort<A> {
+  /**
+   * Push the fresh grab onto the ring and park the cursor on it. Called once at
+   * open, before the picker renders. Kept on the port (rather than done in the
+   * grab wrapper) so Relay — whose grab is built inside its own session — and
+   * Capture push through one seam.
+   */
+  push(artifact: A): void;
   /** Step the cursor one entry older/newer (clamped) and return the entry landed on. */
   navigate(direction: "older" | "newer"): A;
   /**

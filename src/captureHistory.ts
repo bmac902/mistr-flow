@@ -76,6 +76,20 @@ export interface CaptureHistory<T> {
   retainedPaths(): Set<string>;
 }
 
+/**
+ * Whether any of the given rings still reaches `filePath` — the retention
+ * predicate #93's sweep consults. Capture and Relay keep separate rings (a
+ * Relay picker must never arrow onto a screenshot, #96), but a file is retained
+ * if *either* can still reach it, so both are OR-ed here in one place rather
+ * than each ring overwriting the other's exemption.
+ */
+export function isRetainedByAny(
+  rings: ReadonlyArray<{ retainedPaths(): Set<string> }>,
+  filePath: string,
+): boolean {
+  return rings.some((ring) => ring.retainedPaths().has(filePath));
+}
+
 interface Slot<T> {
   /** The live value — mutated in place by a crop. */
   current: T;

@@ -5,16 +5,20 @@ import test from "node:test";
 
 import {
   runRelaySession,
+  relayArtifactPaths,
   RELAY_HERDR_DOWN_MESSAGE,
   RELAY_NO_PANES_MESSAGE,
+  type RelayArtifact,
   type RunRelaySessionDependencies,
 } from "../src/relaySession";
+import { createCaptureHistory } from "../src/captureHistory";
 import { createLastTargetMemory, withLastTargetRecording } from "../src/lastTarget";
 import { RELAY_COPY_KEPT_STATUS_COPY } from "../src/overlay";
 import type {
   CaptureSessionClock,
   CapturePickerHandle,
   CaptureSelectionEvent,
+  SessionHistoryPort,
 } from "../src/captureSession";
 import {
   CLIPBOARD_SPILL_THRESHOLD,
@@ -184,6 +188,59 @@ interface Harness {
   openPickerCalls(): number;
 }
 
+// A history port over a real ring, exactly as main.ts wires it (issue #96).
+function makeRelayHistoryPort(
+  ring: ReturnType<typeof createCaptureHistory<RelayArtifact>>,
+): SessionHistoryPort<RelayArtifact> {
+  return {
+    push: (artifact) => ring.push(artifact),
+    navigate: (direction) => {
+      if (direction === "older") ring.older();
+      else ring.newer();
+      return ring.current as RelayArtifact;
+    },
+    replaceCurrent: (artifact) => ring.replaceCurrent(artifact),
+    currentOriginal: () => ring.currentOriginal as RelayArtifact,
+    position: () => ({
+      current: ring.length - ring.cursorIndex,
+      total: ring.length,
+    }),
+  };
+}
+
+function makeRelayRing() {
+  return createCaptureHistory<RelayArtifact>({
+    maxBytes: Number.MAX_SAFE_INTEGER,
+    sizeOf: () => 0,
+    pathsOf: (artifact) => relayArtifactPaths(artifact),
+  });
+}
+
+// A recording execFile for the real delivery adapter (mirrors deliver.test.ts).
+function recordingExecFile(): {
+  execFile: DeliverExecFile;
+  calls: { file: string; args: readonly string[] }[];
+  respond: (error: (Error & { code?: string | number }) | null) => void;
+} {
+  const calls: { file: string; args: readonly string[] }[] = [];
+  let pendingCallback:
+    | ((error: (Error & { code?: string | number }) | null, stdout: string, stderr: string) => void)
+    | null = null;
+  return {
+    execFile: (file, args, callback) => {
+      calls.push({ file, args: [...args] });
+      pendingCallback = callback;
+    },
+    calls,
+    respond(error) {
+      const cb = pendingCallback;
+      assert.ok(cb, "execFile was never invoked");
+      pendingCallback = null;
+      cb!(error, "", "");
+    },
+  };
+}
+
 function makeHarness(overrides: {
   port: ClipboardSourcePort;
   queryEligibleTargets?: () => Promise<HerdrQueryResult>;
@@ -196,6 +253,8 @@ function makeHarness(overrides: {
     rect: CropRect,
   ) => Promise<CaptureArtifact | null>;
   clock?: CaptureSessionClock;
+  history?: SessionHistoryPort<RelayArtifact>;
+  mintId?: () => string;
 }): Harness {
   const states: OverlaySnapshot[] = [];
   const delivered: { payload: SendPayload; target: EligibleTarget }[] = [];
@@ -230,6 +289,8 @@ function makeHarness(overrides: {
       copiedToClipboard.push(artifact);
     },
     clock: overrides.clock,
+    history: overrides.history,
+    mintId: overrides.mintId,
   };
 
   return {
@@ -906,4 +967,293 @@ test("text to a working pane is plain delivered — the busy caveat is image-onl
   await s;
   assert.ok(h.states.some((x) => x.phase === "relay-delivered"));
   assert.ok(!h.states.some((x) => x.phase === "relay-delivered-busy"));
+});
+
+// ---------------------------------------------------------------------------
+// Relay history: arrow through the ring in the Ctrl+Alt+C picker (issue #96)
+// ---------------------------------------------------------------------------
+
+// Minimal RelayArtifacts of each payload kind, for ring-level assertions.
+function textRelayArtifact(id: string, injectText = `body-${id}`): RelayArtifact {
+  return {
+    kind: "text",
+    payload: { id, injectText },
+    preview: {
+      kind: "text",
+      firstLines: injectText,
+      truncated: false,
+      lineCount: 1,
+      byteSize: injectText.length,
+      spilled: false,
+      summary: `text · 1 line · ${injectText.length} B`,
+    },
+  };
+}
+
+function spilledTextRelayArtifact(id: string, filePath: string): RelayArtifact {
+  return {
+    kind: "text",
+    payload: { id, injectText: filePath, requiresFile: filePath },
+    preview: {
+      kind: "text",
+      firstLines: "…",
+      truncated: true,
+      lineCount: 999,
+      byteSize: 20000,
+      spilled: true,
+      summary: "text · 999 lines · 20 kB · spilled",
+    },
+  };
+}
+
+function filesRelayArtifact(id: string, files: string[]): RelayArtifact {
+  return {
+    kind: "text",
+    payload: { id, injectText: files.join("\n"), requiresFiles: files },
+    preview: {
+      kind: "text",
+      firstLines: files.join("\n"),
+      truncated: false,
+      lineCount: files.length,
+      byteSize: 128,
+      spilled: false,
+      summary: `files · ${files.length} · 128 B`,
+    },
+  };
+}
+
+function imageRelayArtifact(id: string, pngPath = `/tmp/MistrFlowCaptures/${id}.png`): RelayArtifact {
+  return {
+    kind: "image",
+    payload: { id, injectText: pngPath, requiresFile: pngPath },
+    artifact: {
+      id,
+      pngPath,
+      windowTitle: "clip",
+      processName: "n/a",
+      takenAt: "2026-07-19T00:00:00.000Z",
+    },
+  };
+}
+
+test("relay ring: a text payload pushes and is retrievable by stepping older", () => {
+  const ring = makeRelayRing();
+  ring.push(textRelayArtifact("t1", "first relay"));
+  ring.push(textRelayArtifact("t2", "second relay"));
+
+  ring.older();
+  assert.equal(ring.current?.payload.id, "t1");
+  assert.equal((ring.current as RelayArtifact & { kind: "text" }).preview.firstLines, "first relay");
+});
+
+test("relay ring: all four payload kinds survive a push and retrieval intact", () => {
+  const inline = textRelayArtifact("inline", "hi");
+  const spilled = spilledTextRelayArtifact("spill", "/tmp/MistrFlowCaptures/spill.txt");
+  const image = imageRelayArtifact("img");
+  const files = filesRelayArtifact("multi", ["/a.py", "/b.xlsx"]);
+
+  const ring = makeRelayRing();
+  for (const a of [inline, spilled, image, files]) ring.push(a);
+
+  const seen: RelayArtifact[] = [];
+  seen.push(ring.current as RelayArtifact); // files (newest)
+  ring.older(); seen.push(ring.current as RelayArtifact); // image
+  ring.older(); seen.push(ring.current as RelayArtifact); // spilled
+  ring.older(); seen.push(ring.current as RelayArtifact); // inline
+
+  assert.deepEqual(seen[0], files);
+  assert.deepEqual(seen[1], image);
+  assert.deepEqual(seen[2], spilled);
+  assert.deepEqual(seen[3], inline);
+});
+
+test("relay ring and capture ring are independent", () => {
+  const relay = makeRelayRing();
+  const capture = createCaptureHistory<{ pngPath: string }>({
+    maxBytes: Number.MAX_SAFE_INTEGER,
+    sizeOf: () => 0,
+    pathsOf: (a) => [a.pngPath],
+  });
+
+  relay.push(textRelayArtifact("t1"));
+  capture.push({ pngPath: "/tmp/cap.png" });
+  relay.push(textRelayArtifact("t2"));
+
+  assert.equal(relay.length, 2);
+  assert.equal(capture.length, 1);
+  assert.equal(capture.current?.pngPath, "/tmp/cap.png");
+  assert.equal(relay.current?.payload.id, "t2");
+});
+
+test("relay ring: byte-budget eviction with image-sized entries drops the evicted paths", () => {
+  const TWENTY_MB = 20 * 1024 * 1024;
+  const ring = createCaptureHistory<RelayArtifact>({
+    maxEntries: 10,
+    maxBytes: 45 * 1024 * 1024, // room for two 20 MB images, not three
+    sizeOf: () => TWENTY_MB,
+    pathsOf: (a) => relayArtifactPaths(a),
+  });
+
+  ring.push(imageRelayArtifact("imgA", "/tmp/MistrFlowCaptures/imgA.png"));
+  ring.push(imageRelayArtifact("imgB", "/tmp/MistrFlowCaptures/imgB.png"));
+  ring.push(imageRelayArtifact("imgC", "/tmp/MistrFlowCaptures/imgC.png")); // busts budget → evict A
+
+  assert.equal(ring.length, 2);
+  const retained = ring.retainedPaths();
+  assert.ok(!retained.has("/tmp/MistrFlowCaptures/imgA.png"), "evicted image's path is released");
+  assert.deepEqual(
+    retained,
+    new Set(["/tmp/MistrFlowCaptures/imgB.png", "/tmp/MistrFlowCaptures/imgC.png"]),
+  );
+});
+
+test("relay: the picker position indicator is populated for a TEXT entry", async () => {
+  const ring = makeRelayRing();
+  const history = makeRelayHistoryPort(ring);
+
+  const h = makeHarness({ port: fakeClipboardPort({ text: "just some text" }), history });
+  const session = runRelaySession(h.deps);
+  await flush();
+
+  const picker = h.states.filter((s) => s.phase === "capture-picker").at(-1);
+  assert.deepEqual(picker!.historyPosition, { current: 1, total: 1 });
+
+  h.picker.resolve({ kind: "escape" });
+  await session;
+});
+
+test("relay: two deliveries of the same entry mint different ids but keep injectText", async () => {
+  const ring = makeRelayRing();
+  let n = 0;
+  const mintId = () => `fresh-${++n}`;
+
+  const first = makeHarness({
+    port: fakeClipboardPort({ text: "same copied text" }),
+    history: makeRelayHistoryPort(ring),
+    mintId,
+  });
+  const s1 = runRelaySession(first.deps);
+  await flush();
+  first.picker.resolve({ kind: "target", target: TARGET_A });
+  await s1;
+
+  const second = makeHarness({
+    port: fakeClipboardPort({ text: "same copied text" }),
+    history: makeRelayHistoryPort(ring),
+    mintId,
+  });
+  const s2 = runRelaySession(second.deps);
+  await flush();
+  second.picker.resolve({ kind: "target", target: TARGET_A });
+  await s2;
+
+  const p1 = first.delivered[0].payload;
+  const p2 = second.delivered[0].payload;
+  assert.notEqual(p1.id, p2.id, "each delivery mints a fresh id");
+  assert.equal(p1.injectText, p2.injectText, "injectText is stable across deliveries");
+});
+
+test("relay: re-delivering the same entry injects twice (not served from the ledger cache)", async () => {
+  const recorder = recordingExecFile();
+  const deliverAdapter = createHerdrDeliveryAdapter({
+    execFile: recorder.execFile,
+    pathExists: async () => true,
+  });
+  const ring = makeRelayRing();
+  let n = 0;
+  const mintId = () => `send-${++n}`;
+
+  const runOnce = async () => {
+    const h = makeHarness({
+      port: fakeClipboardPort({ text: "resend me" }),
+      history: makeRelayHistoryPort(ring),
+      mintId,
+      deliver: (payload, target) => deliverAdapter(payload, target),
+    });
+    const session = runRelaySession(h.deps);
+    await flush();
+    h.picker.resolve({ kind: "target", target: TARGET_A });
+    await flush();
+    recorder.respond(null);
+    await session;
+  };
+
+  await runOnce();
+  await runOnce();
+
+  assert.equal(recorder.calls.length, 2, "the second send actually injects, not cached");
+});
+
+test("relay: slot 1 on an arrowed-to CROPPED image writes THAT entry, not the session's first", async () => {
+  const ring = makeRelayRing();
+
+  // Session 1: relay image A, pushing it onto the ring, then dismiss.
+  const s1 = makeHarness({
+    port: fakeClipboardPort({ text: "", imagePng: Buffer.from([1, 2, 3, 4]) }),
+    history: makeRelayHistoryPort(ring),
+  });
+  const sess1 = runRelaySession(s1.deps);
+  await flush();
+  s1.picker.resolve({ kind: "escape" });
+  await sess1;
+  assert.equal(ring.length, 1, "the first relay is on the ring");
+
+  // Session 2: relay image B; arrow back to A, crop A, keep the copy (slot 1).
+  let croppedOfOlder: CaptureArtifact | undefined;
+  const s2 = makeHarness({
+    port: fakeClipboardPort({ text: "", imagePng: Buffer.from([5, 6, 7, 8]) }),
+    history: makeRelayHistoryPort(ring),
+    cropImage: async (artifact) => {
+      croppedOfOlder = {
+        ...artifact,
+        id: `${artifact.id}-cropped`,
+        pngPath: "/tmp/MistrFlowCaptures/older-cropped.png",
+      };
+      return croppedOfOlder;
+    },
+  });
+  const sess2 = runRelaySession(s2.deps);
+  await flush();
+  assert.equal(ring.length, 2, "the second relay pushed too");
+
+  s2.picker.resolve({ kind: "navigate", direction: "older" });
+  await flush();
+  s2.picker.resolve({ kind: "crop", rect: { x: 0, y: 0.4, width: 1, height: 0.6 } });
+  await flush();
+  s2.picker.resolve({ kind: "clipboard" });
+  const result = await sess2;
+
+  assert.deepEqual(result, { kind: "copy-kept" });
+  assert.equal(s2.copiedToClipboard.length, 1, "the crop of the arrowed-to entry is written once");
+  assert.deepEqual(
+    s2.copiedToClipboard[0],
+    croppedOfOlder,
+    "slot 1 wrote the cropped OLDER entry, checked against that entry not the session's first",
+  );
+});
+
+test("relay: arrowing to an uncropped older entry and slot 1 writes nothing", async () => {
+  const ring = makeRelayRing();
+
+  const s1 = makeHarness({
+    port: fakeClipboardPort({ text: "", imagePng: Buffer.from([1, 2, 3, 4]) }),
+    history: makeRelayHistoryPort(ring),
+  });
+  const sess1 = runRelaySession(s1.deps);
+  await flush();
+  s1.picker.resolve({ kind: "escape" });
+  await sess1;
+
+  const s2 = makeHarness({
+    port: fakeClipboardPort({ text: "", imagePng: Buffer.from([5, 6, 7, 8]) }),
+    history: makeRelayHistoryPort(ring),
+  });
+  const sess2 = runRelaySession(s2.deps);
+  await flush();
+  s2.picker.resolve({ kind: "navigate", direction: "older" });
+  await flush();
+  s2.picker.resolve({ kind: "clipboard" }); // slot 1 on the uncropped older entry
+  await sess2;
+
+  assert.deepEqual(s2.copiedToClipboard, [], "an uncropped entry is already on the clipboard — no write");
 });

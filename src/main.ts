@@ -76,7 +76,11 @@ import {
   readClipboardSource,
   type ClipboardSourcePort,
 } from "./clipboardSource";
-import { runRelaySession } from "./relaySession";
+import {
+  runRelaySession,
+  relayArtifactPaths,
+  type RelayArtifact,
+} from "./relaySession";
 import { runHeraldSession } from "./heraldSession";
 import {
   createCaptureGrabFailedError,
@@ -93,7 +97,11 @@ import {
   type PickerRowClick,
   type RowClickSource,
 } from "./capturePickerHandle";
-import { createCaptureHistory } from "./captureHistory";
+import {
+  createCaptureHistory,
+  isRetainedByAny,
+  type CaptureHistory,
+} from "./captureHistory";
 import { decideVerbStart, type Verb } from "./verbArbiter";
 import { routeBarClick } from "./barClickRouting";
 import {
@@ -273,11 +281,36 @@ const captureHistory = createCaptureHistory<CaptureArtifact>({
   pathsOf: (artifact) => [artifact.pngPath],
 });
 
-// A capture file is retained — exempt from the TTL sweep — exactly as long as
-// the history ring can still arrow to it (issue #93's seam). Evicting an entry
-// drops its paths, which is what lets the sweep reclaim them next tick.
+// Relay's own ring (issue #96), separate from Capture's — a Relay picker must
+// never arrow onto a screenshot, and vice versa. This one IS byte-bounded:
+// clipboard images run to tens of MB, so the budget caps how much retained disk
+// the ring can pin at once (~three large images) rather than letting ten balloon
+// it. A text entry is sized by its byte length; an image by its PNG file on disk
+// (best-effort — a missing/unreadable file counts as 0, never throwing here).
+const RELAY_HISTORY_BYTE_BUDGET = 64 * 1024 * 1024;
+const relayHistory = createCaptureHistory<RelayArtifact>({
+  maxBytes: RELAY_HISTORY_BYTE_BUDGET,
+  sizeOf: (artifact) =>
+    artifact.kind === "text"
+      ? artifact.preview.byteSize
+      : safeFileSize(artifact.artifact.pngPath),
+  pathsOf: (artifact) => relayArtifactPaths(artifact),
+});
+
+function safeFileSize(filePath: string): number {
+  try {
+    return fs.statSync(filePath).size;
+  } catch {
+    return 0;
+  }
+}
+
+// A capture/relay file is retained — exempt from the TTL sweep — exactly as long
+// as EITHER history ring can still arrow to it (issue #93's seam). Both rings are
+// OR-ed so wiring the second never masks the first. Evicting an entry drops its
+// paths, which is what lets the sweep reclaim them next tick.
 function isCaptureRetained(filePath: string): boolean {
-  return captureHistory.retainedPaths().has(filePath);
+  return isRetainedByAny([captureHistory, relayHistory], filePath);
 }
 
 function sweepCapturesBestEffort(): void {
@@ -1042,35 +1075,39 @@ const captureCropSource: CropSource = (emit) => {
   };
 };
 
-// Capture-history navigation (issue #95). Passing this source is what makes the
-// picker register the Left/Right `globalShortcut`s — the real arrow input — so
-// the emit hook itself stays dormant in production (the arrows resolve directly
-// in the handle) and exists so the navigation is drivable from tests without a
-// keyboard, mirroring the crop/again seams.
+// History navigation (issues #95/#96), shared by both verbs' pickers — the verb
+// lock guarantees at most one is open, so one source suffices. Passing it is what
+// makes the picker register the Left/Right `globalShortcut`s (the real arrow
+// input), so the emit hook stays dormant in production (the arrows resolve
+// directly in the handle) and exists so navigation is drivable from tests without
+// a keyboard, mirroring the crop/again seams.
 let activeHistoryEmit: ((direction: "older" | "newer") => void) | null = null;
 
-const captureHistorySource: HistorySource = (emit) => {
+const pickerHistorySource: HistorySource = (emit) => {
   activeHistoryEmit = emit;
   return () => {
     if (activeHistoryEmit === emit) activeHistoryEmit = null;
   };
 };
 
-// The session's window onto the module-level capture ring. `navigate` moves the
-// cursor and hands back the entry landed on (never null — the session pushes the
-// fresh grab before opening); position counts from the newest (newest = 1).
-function captureHistoryPort(): SessionHistoryPort<CaptureArtifact> {
+// A session's window onto a module-level ring, generic over the entry type so
+// Capture and Relay share one wiring rather than forking it (issue #96).
+// `navigate` moves the cursor and hands back the entry landed on (never null —
+// the session pushes the fresh grab before opening); position counts from the
+// newest (newest = 1).
+function makeHistoryPort<A>(ring: CaptureHistory<A>): SessionHistoryPort<A> {
   return {
+    push: (artifact) => ring.push(artifact),
     navigate: (direction) => {
-      if (direction === "older") captureHistory.older();
-      else captureHistory.newer();
-      return captureHistory.current as CaptureArtifact;
+      if (direction === "older") ring.older();
+      else ring.newer();
+      return ring.current as A;
     },
-    replaceCurrent: (artifact) => captureHistory.replaceCurrent(artifact),
-    currentOriginal: () => captureHistory.currentOriginal as CaptureArtifact,
+    replaceCurrent: (artifact) => ring.replaceCurrent(artifact),
+    currentOriginal: () => ring.currentOriginal as A,
     position: () => ({
-      current: captureHistory.length - captureHistory.cursorIndex,
-      total: captureHistory.length,
+      current: ring.length - ring.cursorIndex,
+      total: ring.length,
     }),
   };
 }
@@ -1225,7 +1262,7 @@ function openCapturePicker(): CapturePickerHandle {
     againSource: pickerAgainSource,
     clickSource: pickerRowClickSource,
     cancelSource: pickerCancelSource,
-    historySource: captureHistorySource,
+    historySource: pickerHistorySource,
   });
 }
 
@@ -1254,7 +1291,7 @@ function startCapture(): void {
     // the file/pane stable while making each send a distinct ledger key.
     deliver: (capture, target) =>
       deliverCapture(captureArtifactToPayload(capture, randomUUID()), target),
-    history: captureHistoryPort(),
+    history: makeHistoryPort(captureHistory),
     // Same agent again (issue #58): the shared Last Target, keyed to this
     // verb's own hotkey — pressed again while the picker is open, it confirms.
     again: {
@@ -1381,6 +1418,7 @@ function openRelayPicker(): CapturePickerHandle {
     againSource: pickerAgainSource,
     clickSource: pickerRowClickSource,
     cancelSource: pickerCancelSource,
+    historySource: pickerHistorySource,
     // Slot 1 returned (#64): "1 Clipboard" = keep the copy, stop here — the
     // affirmative local ending now that Ctrl+Alt+C (with copySelectionFirst)
     // is itself the copy. Same digit, same "Clipboard" label as Capture's.
@@ -1410,6 +1448,9 @@ function startRelay(): void {
     // Same adapter, same ledger, same ack/unknown-retry semantics, same
     // focusOnDeliver as Capture — Relay's payload just isn't always a PNG.
     deliver: (payload, target) => deliverCapture(payload, target),
+    history: makeHistoryPort(relayHistory),
+    // Fresh payload id per delivery (#96), same ledger reason as Capture (#95).
+    mintId: () => randomUUID(),
     // The same ONE Last Target as Capture and Herald (issue #58, ADR 0004).
     again: {
       readLastTarget: () => lastTargetMemory.current(),
