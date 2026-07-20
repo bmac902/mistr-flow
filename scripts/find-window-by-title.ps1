@@ -1,7 +1,7 @@
 # Win32 shim: return the HWND of the visible top-level window with an exact
 # title, WITHOUT raising or focusing it. Knows nothing about Herdr — the caller
-# owns that (src/doneChime.ts). The focusing cousin is focus-window-by-title.ps1;
-# this one only *identifies*, so the done-chime foreground check can find Herdr's
+# owns that (src/fleetChime.ts). The focusing cousin is focus-window-by-title.ps1;
+# this one only *identifies*, so the fleet-chime foreground check can find Herdr's
 # host window once and cache the handle (ADR 0002 minted-title identification).
 #
 # Exit codes are the contract (stdout is the resolved HWND on success):

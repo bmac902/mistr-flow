@@ -1,5 +1,5 @@
 # Win32 shim: is the given HWND the OS foreground window right now? The cheap,
-# no-socket compare behind the done-chime foreground gate (src/doneChime.ts) —
+# no-socket compare behind the fleet-chime foreground gate (src/fleetChime.ts) —
 # run once per poll against the cached handle from find-window-by-title.ps1.
 # Knows nothing about Herdr; it only compares handles.
 #

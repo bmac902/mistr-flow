@@ -13,7 +13,7 @@ function posture(
     blockedCount: blockedTargets.length,
     longestBlockedTarget: blockedTargets[0] ?? null,
     blockedTargets,
-    newlyPersistentBlockedTargets: [],
+    newlyBlockedTargets: [],
     doneCount: doneTargets.length,
     doneTargets,
     newlyDoneTargets: [],

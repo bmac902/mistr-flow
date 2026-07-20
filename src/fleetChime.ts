@@ -4,12 +4,18 @@ import path from "node:path";
 
 import { callHerdrSocket, type HerdrSocketDeps } from "./herdrSocket";
 
-// The one active cue of done-awareness (ADR 0006 §§2–3, PRD #77): a single soft
-// chime the moment a watched agent finishes and you aren't looking at Herdr —
-// "your work is ready." Distinct from and gentler than the persistent-block ding
-// (a completion is not a bottleneck). All the decision logic is pure and lives in
-// shouldChimeDone; the foreground seam and the sound are the only effects, both
-// injectable so the whole thing is driven from fake inputs in tests.
+// The two active cues of fleet awareness (ADR 0007, amending ADR 0006 §§2–3):
+// one chime the moment a watched agent finishes, one the moment a block is real,
+// each fired only when you aren't already looking at Herdr. Both ride the same
+// pure gate and the same foreground seam — the cues differ only in their sound.
+//
+// The sounds are distinguished by *rhythm*, not pitch: done is a single soft
+// tone, blocked is a double beep. Pitch alone proved hard to discriminate from
+// another window, which is exactly the situation both cues exist for.
+//
+// All the decision logic is pure and lives in shouldChime; the foreground seam
+// and the sound are the only effects, both injectable so the whole thing is
+// driven from fake inputs in tests.
 
 /** One execFile shape, matching herdrWindow's — callback is (error, stdout, stderr). */
 export type ChimeExecFile = (
@@ -28,56 +34,111 @@ const defaultExecFile: ChimeExecFile = (file, args, callback) => {
   });
 };
 
-/**
- * The chime's beep parameters — deliberately a lower, gentler tone than the
- * persistent-block ding's `[console]::beep(900,120)`, so a completion never
- * sounds like a bottleneck. Exact feel is tuned in human verification; the only
- * invariant asserted here is "audibly distinct from the ding" (lower Hz).
- */
-export const DONE_CHIME_BEEP = { hz: 587, ms: 90 } as const;
+/** One tone in a chime: a frequency and a duration, straight to `[console]::beep`. */
+export interface ChimeTone {
+  readonly hz: number;
+  readonly ms: number;
+}
 
 /**
- * Sound the done chime once. Best-effort like every other cue — a failed beep
- * never interrupts anything. The execFile seam lets tests assert the parameters
- * at the call site rather than by ear.
+ * A chime is a sequence of tones separated by a fixed gap. The gap is not
+ * cosmetic: `[console]::beep` is synchronous, so back-to-back calls with no
+ * sleep between them render as ONE continuous tone — the rhythm that makes the
+ * two cues tellable apart only exists because of the silence.
  */
-export function playDoneChime(execFile: ChimeExecFile = defaultExecFile): void {
+export interface ChimePattern {
+  readonly tones: readonly ChimeTone[];
+  readonly gapMs: number;
+}
+
+/**
+ * Done: one soft, low tone — "your work is ready." Deliberately gentler than
+ * blocked, because a completion is not a bottleneck. Exact feel is tuned in
+ * human verification; the invariants asserted here are that it is lower and
+ * shorter than blocked, and that it is a *single* tone.
+ */
+export const DONE_CHIME: ChimePattern = {
+  tones: [{ hz: 587, ms: 90 }],
+  gapMs: 60,
+};
+
+/**
+ * Blocked: two quick higher beeps — "something needs you." The doubling, not
+ * the pitch, is what carries the meaning; 60 ms of silence is enough to read as
+ * two events rather than one long note (ADR 0007).
+ */
+export const BLOCKED_CHIME: ChimePattern = {
+  tones: [
+    { hz: 900, ms: 70 },
+    { hz: 900, ms: 70 },
+  ],
+  gapMs: 60,
+};
+
+/**
+ * Render a pattern as one PowerShell command. Tones are joined by an explicit
+ * sleep so the gap actually exists; a single-tone pattern emits no sleep at all.
+ */
+export function chimeCommand(pattern: ChimePattern): string {
+  return pattern.tones
+    .map((tone) => `[console]::beep(${tone.hz},${tone.ms})`)
+    .join(`;Start-Sleep -Milliseconds ${pattern.gapMs};`);
+}
+
+/**
+ * Sound one chime. Best-effort like every other cue — a failed beep never
+ * interrupts anything. The execFile seam lets tests assert the parameters at the
+ * call site rather than by ear, which is the only way this is verifiable in an
+ * environment with no audio.
+ */
+export function playChime(
+  pattern: ChimePattern,
+  execFile: ChimeExecFile = defaultExecFile,
+): void {
   execFile(
     "powershell",
-    [
-      "-NoProfile",
-      "-WindowStyle",
-      "Hidden",
-      "-Command",
-      `[console]::beep(${DONE_CHIME_BEEP.hz},${DONE_CHIME_BEEP.ms})`,
-    ],
+    ["-NoProfile", "-WindowStyle", "Hidden", "-Command", chimeCommand(pattern)],
     () => {
       // Best-effort cue only — a failure here must not disturb the fleet loop.
     },
   );
 }
 
-export interface DoneChimeDecision {
-  /** fleetState's one-shot: targets that began a done episode on this observe. */
-  readonly newlyDoneTargets: readonly string[];
-  /** The `doneChime` config flag (default on). */
+/** Sound the done chime once. */
+export function playDoneChime(execFile: ChimeExecFile = defaultExecFile): void {
+  playChime(DONE_CHIME, execFile);
+}
+
+/** Sound the blocked chime once. */
+export function playBlockedChime(execFile: ChimeExecFile = defaultExecFile): void {
+  playChime(BLOCKED_CHIME, execFile);
+}
+
+export interface ChimeDecision {
+  /**
+   * fleetState's one-shot for this cue: the targets that just crossed into the
+   * announced state on this observe (`newlyDoneTargets` or `newlyBlockedTargets`).
+   */
+  readonly newlyTargets: readonly string[];
+  /** This cue's own config flag (`doneChime` / `blockedChime`, both default on). */
   readonly chimeEnabled: boolean;
-  /** Whether a verb (dictation/relay) is active — the chime yields to it. */
+  /** Whether a verb (dictation/relay) is active — every chime yields to it. */
   readonly verbActive: boolean;
   /** Whether Herdr's host window is the OS foreground window *right now*. */
   readonly herdrForeground: boolean;
 }
 
 /**
- * The pure gate (ADR 0006 §3): a chime is due exactly when a done episode just
- * began, the cue is enabled, no verb is active, and Herdr is not the foreground
- * window at this transition. Because the newly-done one-shot fires only on the
- * transition poll, evaluating this per poll gives the ADR's *consume-on-suppress*
- * for free: Herdr-foreground at the transition swallows the chime (the one-shot
- * is spent), so it is never deferred to a later alt-tab.
+ * The pure gate, shared by both cues (ADR 0006 §3, extended to blocked by ADR
+ * 0007): a chime is due exactly when its one-shot just fired, the cue is
+ * enabled, no verb is active, and Herdr is not the foreground window at this
+ * transition. Because each one-shot fires only on the transition poll,
+ * evaluating this per poll gives *consume-on-suppress* for free: Herdr-foreground
+ * at the transition swallows the chime (the one-shot is spent), so it is never
+ * deferred to a later alt-tab.
  */
-export function shouldChimeDone(input: DoneChimeDecision): boolean {
-  if (input.newlyDoneTargets.length === 0) return false;
+export function shouldChime(input: ChimeDecision): boolean {
+  if (input.newlyTargets.length === 0) return false;
   if (!input.chimeEnabled) return false;
   if (input.verbActive) return false;
   if (input.herdrForeground) return false;
@@ -122,8 +183,8 @@ export interface HerdrForegroundDeps {
  * reused or vanished) the compare reports it and we re-identify once.
  *
  * Can't-see-Herdr defaults to *not foreground*: if the window can't be found at
- * all you are plainly not looking at Herdr, so a completion should still chime —
- * the feature exists precisely to reach you while you're heads-down elsewhere.
+ * all you are plainly not looking at Herdr, so the cue should still fire — the
+ * feature exists precisely to reach you while you're heads-down elsewhere.
  */
 export function createHerdrForegroundCheck(
   deps: HerdrForegroundDeps = {},

@@ -14,7 +14,9 @@ export interface AppConfig {
   vocabulary?: unknown;
   focusOnDeliver?: unknown;
   copySelectionFirst?: unknown;
+  /** @deprecated pre-#91 name for `blockedChime`; still honoured on read. */
   persistentBlockDing?: unknown;
+  blockedChime?: unknown;
   doneChime?: unknown;
   provider?: unknown;
   projectAnchors?: unknown;
@@ -162,27 +164,31 @@ export async function readCopySelectionFirst(
 
 /**
  * Default ON, silenceable — mirrors readMuteSystemAudioWhileRecording's
- * `!== false` shape. The persistent-block ding (PRD #44, #51) is the feature's
- * one active cue; a user can kill the sound while keeping the visual fleet
- * awareness by setting `persistentBlockDing: false`. On by default so the value
- * isn't hidden behind a flag nobody discovers.
+ * `!== false` shape. The blocked chime (ADR 0007) is one of the feature's two
+ * active cues; `blockedChime: false` keeps the visual fleet awareness while
+ * killing the sound. On by default so the value isn't hidden behind a flag
+ * nobody discovers.
+ *
+ * `persistentBlockDing` is the pre-#91 name for this same switch, still
+ * honoured: configs live per-machine outside the repo (`%APPDATA%`), so a silent
+ * rename would un-silence the cue on any machine that had already turned it off.
+ * Either key set to `false` silences it; the new name is the one to write.
  */
-export async function readPersistentBlockDing(
+export async function readBlockedChime(
   env: NodeJS.ProcessEnv = process.env,
   fileSystem = fs,
 ): Promise<boolean> {
   const configPath = getConfigPath(env);
   const rawConfig = await fileSystem.readFile(configPath, "utf8");
   const parsed = JSON.parse(rawConfig) as AppConfig;
-  return parsed.persistentBlockDing !== false;
+  return parsed.blockedChime !== false && parsed.persistentBlockDing !== false;
 }
 
 /**
- * Default ON, silenceable — mirrors readPersistentBlockDing's `!== false` shape
- * (ADR 0006 §2). The one soft done chime rides the same fleet-awareness master
- * behavior as the ding; `doneChime: false` keeps the ambient done badge and the
- * jump gesture while killing only the sound. On by default so the value isn't
- * hidden behind a flag nobody discovers.
+ * Default ON, silenceable — mirrors readBlockedChime's `!== false` shape
+ * (ADR 0006 §2). `doneChime: false` keeps the ambient done badge and the jump
+ * gesture while killing only the sound. On by default so the value isn't hidden
+ * behind a flag nobody discovers.
  */
 export async function readDoneChime(
   env: NodeJS.ProcessEnv = process.env,

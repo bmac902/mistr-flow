@@ -10,7 +10,7 @@ import {
   readCopySelectionFirst,
   readMuteSystemAudioWhileRecording,
   readDoneChime,
-  readPersistentBlockDing,
+  readBlockedChime,
   readAppTargets,
   readOpenAiApiKey,
   readOverlayPosition,
@@ -148,34 +148,43 @@ test("readMuteSystemAudioWhileRecording allows config opt-out", async () => {
   assert.equal(shouldMute, false);
 });
 
-test("readPersistentBlockDing defaults to enabled — the one nudge is on unless silenced", async () => {
+/** Write a config.json under a fresh temp APPDATA root and return that root. */
+async function withConfig(config: Record<string, unknown>): Promise<string> {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
   const configDir = path.join(tempRoot, "MistrFlow");
   await fs.mkdir(configDir, { recursive: true });
   await fs.writeFile(
     path.join(configDir, "config.json"),
-    JSON.stringify({ openaiApiKey: "test-api-key" }),
+    JSON.stringify({ openaiApiKey: "test-api-key", ...config }),
     "utf8",
   );
+  return tempRoot;
+}
 
-  const shouldDing = await readPersistentBlockDing({ APPDATA: tempRoot }, fs);
+test("readBlockedChime defaults to enabled — the cue is on unless silenced", async () => {
+  const tempRoot = await withConfig({});
 
-  assert.equal(shouldDing, true);
+  assert.equal(await readBlockedChime({ APPDATA: tempRoot }, fs), true);
 });
 
-test("readPersistentBlockDing allows config opt-out — keep the visual, kill the sound", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mistr-flow-"));
-  const configDir = path.join(tempRoot, "MistrFlow");
-  await fs.mkdir(configDir, { recursive: true });
-  await fs.writeFile(
-    path.join(configDir, "config.json"),
-    JSON.stringify({ openaiApiKey: "test-api-key", persistentBlockDing: false }),
-    "utf8",
-  );
+test("readBlockedChime allows config opt-out — keep the visual, kill the sound", async () => {
+  const tempRoot = await withConfig({ blockedChime: false });
 
-  const shouldDing = await readPersistentBlockDing({ APPDATA: tempRoot }, fs);
+  assert.equal(await readBlockedChime({ APPDATA: tempRoot }, fs), false);
+});
 
-  assert.equal(shouldDing, false);
+test("readBlockedChime still honours the pre-#91 persistentBlockDing key", async () => {
+  // Config lives per-machine outside the repo, so a machine that had already
+  // silenced the ding must not be un-silenced by the rename.
+  const tempRoot = await withConfig({ persistentBlockDing: false });
+
+  assert.equal(await readBlockedChime({ APPDATA: tempRoot }, fs), false);
+});
+
+test("readBlockedChime treats the legacy key set to true as no objection", async () => {
+  const tempRoot = await withConfig({ persistentBlockDing: true });
+
+  assert.equal(await readBlockedChime({ APPDATA: tempRoot }, fs), true);
 });
 
 test("readDoneChime defaults to enabled — the soft chime is on unless silenced", async () => {

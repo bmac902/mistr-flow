@@ -180,74 +180,131 @@ test("a block that clears re-arms the dwell timer on the next block", () => {
   assert.equal(posture.tier, "1");
 });
 
-test("the persistent-block signal fires once at the duration and never before it", () => {
-  const fleet = createFleetState({ dwellMs: 5000, persistentBlockMs: 240000 });
+test("the newly-blocked signal fires at the dwell crossing and never before it", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
 
-  // Blocked continuously from t=0. Well past the dwell threshold but short of
-  // the persistent-block duration — no ding yet.
-  fleet.observe(panes(agent("a", "blocked")), 0);
-  let posture = fleet.observe(panes(agent("a", "blocked")), 60000);
-  assert.deepEqual(posture.newlyPersistentBlockedTargets, []);
+  // Blocked from t=0, but still inside the dwell — nothing announced yet.
+  let posture = fleet.observe(panes(agent("a", "blocked")), 0);
+  assert.deepEqual(posture.newlyBlockedTargets, []);
 
-  posture = fleet.observe(panes(agent("a", "blocked")), 239999);
-  assert.deepEqual(posture.newlyPersistentBlockedTargets, []);
+  posture = fleet.observe(panes(agent("a", "blocked")), 4999);
+  assert.deepEqual(posture.newlyBlockedTargets, []);
 
-  // Crosses the persistent-block duration — fires exactly here.
-  posture = fleet.observe(panes(agent("a", "blocked")), 240000);
-  assert.deepEqual(posture.newlyPersistentBlockedTargets, ["a"]);
+  // Crosses the dwell — fires exactly here, the same poll it joins the count.
+  posture = fleet.observe(panes(agent("a", "blocked")), 5000);
+  assert.deepEqual(posture.newlyBlockedTargets, ["a"]);
+  assert.deepEqual(posture.blockedTargets, ["a"]);
 });
 
-test("the persistent-block signal fires exactly once per episode, not on later polls", () => {
-  const fleet = createFleetState({ dwellMs: 5000, persistentBlockMs: 240000 });
+test("the newly-blocked signal fires exactly once per episode, not on later polls", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
 
   fleet.observe(panes(agent("a", "blocked")), 0);
-  let posture = fleet.observe(panes(agent("a", "blocked")), 240000);
-  assert.deepEqual(posture.newlyPersistentBlockedTargets, ["a"]);
+  let posture = fleet.observe(panes(agent("a", "blocked")), 5000);
+  assert.deepEqual(posture.newlyBlockedTargets, ["a"]);
 
-  // Still blocked on the next polls — the one-shot must not re-fire.
-  posture = fleet.observe(panes(agent("a", "blocked")), 243500);
-  assert.deepEqual(posture.newlyPersistentBlockedTargets, []);
+  // Still blocked on the next polls — the one-shot must not re-fire, however
+  // long the block runs. This is what retires the old 4-minute escalation.
+  posture = fleet.observe(panes(agent("a", "blocked")), 8500);
+  assert.deepEqual(posture.newlyBlockedTargets, []);
   posture = fleet.observe(panes(agent("a", "blocked")), 600000);
-  assert.deepEqual(posture.newlyPersistentBlockedTargets, []);
+  assert.deepEqual(posture.newlyBlockedTargets, []);
 });
 
-test("the persistent-block signal re-arms only after the block clears", () => {
-  const fleet = createFleetState({ dwellMs: 5000, persistentBlockMs: 240000 });
+test("the newly-blocked signal re-arms only after the block clears", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
 
   fleet.observe(panes(agent("a", "blocked")), 0);
-  let posture = fleet.observe(panes(agent("a", "blocked")), 240000);
-  assert.deepEqual(posture.newlyPersistentBlockedTargets, ["a"]);
+  let posture = fleet.observe(panes(agent("a", "blocked")), 5000);
+  assert.deepEqual(posture.newlyBlockedTargets, ["a"]);
 
   // Answered — the block clears.
-  fleet.observe(panes(agent("a", "idle")), 250000);
+  fleet.observe(panes(agent("a", "idle")), 6000);
 
-  // Blocks again; the fresh episode's ding is armed and fires only after a
-  // fresh full persistent-block duration, not instantly on the old timer.
-  fleet.observe(panes(agent("a", "blocked")), 300000);
-  posture = fleet.observe(panes(agent("a", "blocked")), 539999);
-  assert.deepEqual(posture.newlyPersistentBlockedTargets, []);
-  posture = fleet.observe(panes(agent("a", "blocked")), 540000);
-  assert.deepEqual(posture.newlyPersistentBlockedTargets, ["a"]);
+  // Blocks again; the fresh episode is armed and fires only after a fresh full
+  // dwell, not instantly on the old timer.
+  fleet.observe(panes(agent("a", "blocked")), 7000);
+  posture = fleet.observe(panes(agent("a", "blocked")), 11999);
+  assert.deepEqual(posture.newlyBlockedTargets, []);
+  posture = fleet.observe(panes(agent("a", "blocked")), 12000);
+  assert.deepEqual(posture.newlyBlockedTargets, ["a"]);
 });
 
-test("posture() is a pure read and never emits the one-shot persistent-block signal", () => {
-  const fleet = createFleetState({ dwellMs: 5000, persistentBlockMs: 240000 });
+test("posture() is a pure read and never emits the one-shot newly-blocked signal", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
 
   fleet.observe(panes(agent("a", "blocked")), 0);
-  const observed = fleet.observe(panes(agent("a", "blocked")), 240000);
-  assert.deepEqual(observed.newlyPersistentBlockedTargets, ["a"]);
+  const observed = fleet.observe(panes(agent("a", "blocked")), 5000);
+  assert.deepEqual(observed.newlyBlockedTargets, ["a"]);
 
   // Reading the posture again must not surface the (already-consumed) signal.
-  assert.deepEqual(fleet.posture().newlyPersistentBlockedTargets, []);
+  assert.deepEqual(fleet.posture().newlyBlockedTargets, []);
 });
 
-test("a persistent block that vanishes before its ding never fires it", () => {
-  const fleet = createFleetState({ dwellMs: 5000, persistentBlockMs: 240000 });
+test("a block that clears inside the dwell never announces — the transient filter", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
 
   fleet.observe(panes(agent("a", "blocked")), 0);
-  // Pane closed just short of the persistent-block duration.
-  const posture = fleet.observe(panes(), 239000);
-  assert.deepEqual(posture.newlyPersistentBlockedTargets, []);
+  // Self-resolved a beat before the dwell: never a real bottleneck, never a cue.
+  const posture = fleet.observe(panes(agent("a", "idle")), 4000);
+  assert.deepEqual(posture.newlyBlockedTargets, []);
+
+  // And it stays silent afterwards — the episode is gone, not merely deferred.
+  assert.deepEqual(
+    fleet.observe(panes(agent("a", "idle")), 20000).newlyBlockedTargets,
+    [],
+  );
+});
+
+test("a blocked pane that vanishes inside the dwell never announces", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  fleet.observe(panes(agent("a", "blocked")), 0);
+  // Pane closed just short of the dwell.
+  const posture = fleet.observe(panes(), 4000);
+  assert.deepEqual(posture.newlyBlockedTargets, []);
+});
+
+test("an unavailable poll never invents a newly-blocked signal", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  fleet.observe(panes(agent("a", "blocked")), 0);
+  // Herdr unreachable exactly when the dwell would have crossed: we can't see
+  // the block, so we must not announce it.
+  const blind = fleet.observe({ kind: "unavailable" }, 5000);
+  assert.equal(blind.tier, "unknown");
+  assert.deepEqual(blind.newlyBlockedTargets, []);
+
+  // It announces on the next poll that can actually confirm the block.
+  const seen = fleet.observe(panes(agent("a", "blocked")), 6000);
+  assert.deepEqual(seen.newlyBlockedTargets, ["a"]);
+});
+
+test("newly-blocked targets order oldest-first, ties broken by target id", () => {
+  const fleet = createFleetState({ dwellMs: 5000 });
+
+  fleet.observe(panes(agent("older", "blocked")), 0);
+  // Three more block at t=1000, so they tie against each other but all trail
+  // `older` — one deterministic order for the cue and the jump cycle alike.
+  fleet.observe(
+    panes(
+      agent("older", "blocked"),
+      agent("zeta", "blocked"),
+      agent("alpha", "blocked"),
+    ),
+    1000,
+  );
+
+  // At t=6000 every one of them is past its own dwell, all announcing together.
+  const posture = fleet.observe(
+    panes(
+      agent("older", "blocked"),
+      agent("zeta", "blocked"),
+      agent("alpha", "blocked"),
+    ),
+    6000,
+  );
+  assert.deepEqual(posture.newlyBlockedTargets, ["older", "alpha", "zeta"]);
 });
 
 test("a watched agent reporting done appears in the done count/targets on that same observe — no dwell", () => {
