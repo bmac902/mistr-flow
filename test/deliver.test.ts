@@ -175,6 +175,50 @@ test("deliver: retrying the same capture + target after settling is idempotent �
   assert.equal(recorder.calls.length, 1);
 });
 
+test("captureArtifactToPayload: a fresh id keeps injectText and requiresFile identical", () => {
+  const withOwnId = captureArtifactToPayload(ARTIFACT);
+  const withFreshId = captureArtifactToPayload(ARTIFACT, "fresh-payload-id");
+
+  assert.equal(withOwnId.id, ARTIFACT.id, "omitted id defaults to the artifact's own");
+  assert.equal(withFreshId.id, "fresh-payload-id");
+  assert.notEqual(withFreshId.id, withOwnId.id);
+  // Same file, same injected path — only the ledger key differs.
+  assert.equal(withFreshId.injectText, withOwnId.injectText);
+  assert.equal(withFreshId.requiresFile, withOwnId.requiresFile);
+});
+
+test("deliver: re-delivering a history entry with a fresh id injects a SECOND time (not ledger-cached)", async () => {
+  // The #95 regression: the delivery ledger keys on payload id, so re-delivering
+  // the SAME history artifact to the SAME pane with its own id would silently
+  // return the cached outcome — "Delivered, sir." while nothing lands. Minting a
+  // fresh id per send makes each a distinct key, so the second injection fires.
+  const recorder = recordingExecFile();
+  const deliver = createHerdrDeliveryAdapter({
+    execFile: recorder.execFile,
+    pathExists: async () => true,
+  });
+
+  const first = deliver(captureArtifactToPayload(ARTIFACT, "send-1"), TARGET_A);
+  await flush();
+  recorder.respond(null);
+  assert.deepEqual(await first, { kind: "delivered" });
+
+  const second = deliver(captureArtifactToPayload(ARTIFACT, "send-2"), TARGET_A);
+  await flush();
+  recorder.respond(null);
+  assert.deepEqual(await second, { kind: "delivered" });
+
+  // Two real injections, both to the same pane with the same path.
+  assert.equal(recorder.calls.length, 2);
+  assert.deepEqual(recorder.calls[0].args, recorder.calls[1].args);
+  assert.deepEqual(recorder.calls[1].args, [
+    "agent",
+    "send",
+    TARGET_A.target,
+    ARTIFACT.pngPath,
+  ]);
+});
+
 test("deliver: retrying while the first attempt is still in flight attaches to it — single injection", async () => {
   const recorder = recordingExecFile();
   const deliver = createHerdrDeliveryAdapter({

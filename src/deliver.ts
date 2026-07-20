@@ -77,10 +77,22 @@ export interface SendPayload {
 /**
  * A CaptureArtifact is one producer of {@link SendPayload}: the injected text
  * and the required file are both the capture's absolute PNG path.
+ *
+ * `id` overrides the payload id. The delivery ledger keys idempotency on
+ * `(id, injectText, target)` and returns the *cached* outcome on a repeat, so a
+ * history entry re-delivered to a pane it already went to would silently no-op —
+ * "Delivered, sir." while `herdr agent send` never fires (issue #95). Minting a
+ * fresh id at send time keeps `injectText`/`requiresFile` stable (same file, same
+ * pane) while making each delivery a distinct ledger key, so the second send
+ * actually lands. Omitted, it defaults to the artifact's own id — today's
+ * one-shot behaviour, where a retry of the *same* delivery is meant to dedupe.
  */
-export function captureArtifactToPayload(capture: CaptureArtifact): SendPayload {
+export function captureArtifactToPayload(
+  capture: CaptureArtifact,
+  id: string = capture.id,
+): SendPayload {
   return {
-    id: capture.id,
+    id,
     injectText: capture.pngPath,
     requiresFile: capture.pngPath,
   };

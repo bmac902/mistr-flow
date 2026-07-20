@@ -9,7 +9,9 @@ import {
   type CaptureSelectionEvent,
   type CaptureSessionClock,
   type RunCaptureSessionDependencies,
+  type SessionHistoryPort,
 } from "../src/captureSession";
+import { createCaptureHistory } from "../src/captureHistory";
 import type { CaptureArtifact } from "../src/capture";
 import type { EligibleTarget, HerdrQueryResult } from "../src/herdr";
 import type { OverlaySnapshot } from "../src/overlay";
@@ -900,6 +902,216 @@ test("runCaptureSession: no cropCapture dependency leaves crop events inert", as
   await flush();
 
   assert.equal(states.at(-1)!.phase, "capture-picker");
+  assert.equal(picker.closeCallCount(), 0);
+
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});
+
+// ---------------------------------------------------------------------------
+// Capture history: arrow through the ring in the picker (issue #95)
+// ---------------------------------------------------------------------------
+
+// An older grab, sitting in the ring from a prior session.
+const OLDER_ARTIFACT: CaptureArtifact = {
+  ...ARTIFACT,
+  id: "capture-uuid-older",
+  pngPath: "/tmp/MistrFlowCaptures/capture-uuid-older.png",
+};
+
+const OLDER_PREVIEW = {
+  dataUrl: "data:image/png;base64,b2xkZXI=",
+  windowTitle: "Older — Notepad",
+};
+
+// A real ring behind the session's history port, exactly as main.ts wires it.
+function makeHistoryPort(
+  ring: ReturnType<typeof createCaptureHistory<CaptureArtifact>>,
+): SessionHistoryPort<CaptureArtifact> {
+  return {
+    navigate(direction) {
+      if (direction === "older") ring.older();
+      else ring.newer();
+      return ring.current as CaptureArtifact;
+    },
+    replaceCurrent(artifact) {
+      ring.replaceCurrent(artifact);
+    },
+    currentOriginal() {
+      return ring.currentOriginal as CaptureArtifact;
+    },
+    position() {
+      return { current: ring.length - ring.cursorIndex, total: ring.length };
+    },
+  };
+}
+
+function historyDeps(
+  ring: ReturnType<typeof createCaptureHistory<CaptureArtifact>>,
+  overrides: Partial<RunCaptureSessionDependencies> = {},
+) {
+  return baseDeps({
+    // The fresh grab is pushed onto the ring before the picker opens (main.ts).
+    async captureActiveWindow() {
+      ring.push(ARTIFACT);
+      return ARTIFACT;
+    },
+    async renderThumbnail(artifact) {
+      if (artifact.id === CROPPED_ARTIFACT.id) return CROPPED_PREVIEW;
+      if (artifact.id === OLDER_ARTIFACT.id) return OLDER_PREVIEW;
+      return PREVIEW;
+    },
+    async cropCapture() {
+      return CROPPED_ARTIFACT;
+    },
+    history: makeHistoryPort(ring),
+    ...overrides,
+  });
+}
+
+test("runCaptureSession: navigate-older swaps the preview to the older entry", async () => {
+  const ring = createCaptureHistory<CaptureArtifact>({
+    maxBytes: Number.MAX_SAFE_INTEGER,
+    sizeOf: () => 0,
+    pathsOf: (a) => [a.pngPath],
+  });
+  ring.push(OLDER_ARTIFACT); // a prior session's grab
+  const { deps, states, picker } = historyDeps(ring);
+
+  const session = runCaptureSession(deps);
+  await flush();
+  assert.deepEqual(states.at(-1)!.capturePreview, PREVIEW, "opens on the fresh grab");
+
+  picker.resolveSelection({ kind: "navigate", direction: "older" });
+  await flush();
+  assert.equal(states.at(-1)!.phase, "capture-picker");
+  assert.deepEqual(states.at(-1)!.capturePreview, OLDER_PREVIEW);
+
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});
+
+test("runCaptureSession: navigate-newer returns to the fresh grab", async () => {
+  const ring = createCaptureHistory<CaptureArtifact>({
+    maxBytes: Number.MAX_SAFE_INTEGER,
+    sizeOf: () => 0,
+    pathsOf: (a) => [a.pngPath],
+  });
+  ring.push(OLDER_ARTIFACT);
+  const { deps, states, picker } = historyDeps(ring);
+
+  const session = runCaptureSession(deps);
+  await flush();
+
+  picker.resolveSelection({ kind: "navigate", direction: "older" });
+  await flush();
+  assert.deepEqual(states.at(-1)!.capturePreview, OLDER_PREVIEW);
+
+  picker.resolveSelection({ kind: "navigate", direction: "newer" });
+  await flush();
+  assert.deepEqual(states.at(-1)!.capturePreview, PREVIEW);
+
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});
+
+test("runCaptureSession: the picker snapshot carries the history position indicator", async () => {
+  const ring = createCaptureHistory<CaptureArtifact>({
+    maxBytes: Number.MAX_SAFE_INTEGER,
+    sizeOf: () => 0,
+    pathsOf: (a) => [a.pngPath],
+  });
+  ring.push(OLDER_ARTIFACT);
+  const { deps, states, picker } = historyDeps(ring);
+
+  const session = runCaptureSession(deps);
+  await flush();
+  // Two entries, standing on the newest: newest = 1 of 2.
+  assert.deepEqual(states.at(-1)!.historyPosition, { current: 1, total: 2 });
+
+  picker.resolveSelection({ kind: "navigate", direction: "older" });
+  await flush();
+  // Now on the older of two: 2 of 2.
+  assert.deepEqual(states.at(-1)!.historyPosition, { current: 2, total: 2 });
+
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});
+
+test("runCaptureSession: a lone-entry ring reads as 1 / 1", async () => {
+  const ring = createCaptureHistory<CaptureArtifact>({
+    maxBytes: Number.MAX_SAFE_INTEGER,
+    sizeOf: () => 0,
+    pathsOf: (a) => [a.pngPath],
+  });
+  const { deps, states, picker } = historyDeps(ring);
+
+  const session = runCaptureSession(deps);
+  await flush();
+  assert.deepEqual(states.at(-1)!.historyPosition, { current: 1, total: 1 });
+
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});
+
+test("runCaptureSession: crop then arrow away and back yields the cropped artifact", async () => {
+  const ring = createCaptureHistory<CaptureArtifact>({
+    maxBytes: Number.MAX_SAFE_INTEGER,
+    sizeOf: () => 0,
+    pathsOf: (a) => [a.pngPath],
+  });
+  ring.push(OLDER_ARTIFACT);
+  const delivered: CaptureArtifact[] = [];
+  const { deps, states, picker } = historyDeps(ring, {
+    async deliver(capture) {
+      delivered.push(capture);
+      return { kind: "delivered" };
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+
+  // Crop the fresh grab we're standing on.
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+  assert.deepEqual(states.at(-1)!.capturePreview, CROPPED_PREVIEW);
+
+  // Arrow to the older entry, then back to where the crop was.
+  picker.resolveSelection({ kind: "navigate", direction: "older" });
+  await flush();
+  assert.deepEqual(states.at(-1)!.capturePreview, OLDER_PREVIEW);
+
+  picker.resolveSelection({ kind: "navigate", direction: "newer" });
+  await flush();
+  assert.deepEqual(
+    states.at(-1)!.capturePreview,
+    CROPPED_PREVIEW,
+    "the crop survived arrowing away and back",
+  );
+
+  // And delivering sends the cropped artifact, not the pre-crop grab.
+  picker.resolveSelection({ kind: "target", target: TARGET_A });
+  await session;
+  assert.deepEqual(delivered, [CROPPED_ARTIFACT]);
+});
+
+test("runCaptureSession: navigate events are inert without a history port", async () => {
+  const { deps, states, picker } = baseDeps({
+    async renderThumbnail() {
+      return PREVIEW;
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  const before = states.length;
+
+  picker.resolveSelection({ kind: "navigate", direction: "older" });
+  await flush();
+
+  // No history: the event is a no-op, no re-render, picker stays open.
+  assert.equal(states.length, before);
   assert.equal(picker.closeCallCount(), 0);
 
   picker.resolveSelection({ kind: "escape" });

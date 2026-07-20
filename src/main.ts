@@ -82,15 +82,18 @@ import {
   createCaptureGrabFailedError,
   runCaptureSession,
   type CapturePickerHandle,
+  type SessionHistoryPort,
 } from "./captureSession";
 import {
   createCapturePickerHandle,
   type AgainSource,
   type CancelSource,
   type CropSource,
+  type HistorySource,
   type PickerRowClick,
   type RowClickSource,
 } from "./capturePickerHandle";
+import { createCaptureHistory } from "./captureHistory";
 import { decideVerbStart, type Verb } from "./verbArbiter";
 import { routeBarClick } from "./barClickRouting";
 import {
@@ -258,8 +261,27 @@ let fleetPollTimer: ReturnType<typeof setInterval> | null = null;
 const CAPTURE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 let captureSweepTimer: ReturnType<typeof setInterval> | null = null;
 
+// The Capture verb's persistent history ring (issue #94/#95): the last ~10
+// screenshots, arrow-navigable in the picker. It outlives any one session, so
+// it lives at module scope. Count-bounded only — capture PNGs live on disk (the
+// TTL sweep owns that reclaim), not in memory, so a huge byte budget keeps the
+// ring purely a recency window. Relay's own ring (issue #96) is byte-bounded
+// because its clipboard images are held in memory.
+const captureHistory = createCaptureHistory<CaptureArtifact>({
+  maxBytes: Number.MAX_SAFE_INTEGER,
+  sizeOf: () => 0,
+  pathsOf: (artifact) => [artifact.pngPath],
+});
+
+// A capture file is retained — exempt from the TTL sweep — exactly as long as
+// the history ring can still arrow to it (issue #93's seam). Evicting an entry
+// drops its paths, which is what lets the sweep reclaim them next tick.
+function isCaptureRetained(filePath: string): boolean {
+  return captureHistory.retainedPaths().has(filePath);
+}
+
 function sweepCapturesBestEffort(): void {
-  void sweepExpiredCaptures().catch((error) => {
+  void sweepExpiredCaptures({ isRetained: isCaptureRetained }).catch((error) => {
     // A sweep failure must never crash or interrupt anything — same best-effort
     // posture as the fleet poll. Log and let the next tick try again.
     console.error("[mistr-flow] capture sweep failed:", error);
@@ -1020,6 +1042,39 @@ const captureCropSource: CropSource = (emit) => {
   };
 };
 
+// Capture-history navigation (issue #95). Passing this source is what makes the
+// picker register the Left/Right `globalShortcut`s — the real arrow input — so
+// the emit hook itself stays dormant in production (the arrows resolve directly
+// in the handle) and exists so the navigation is drivable from tests without a
+// keyboard, mirroring the crop/again seams.
+let activeHistoryEmit: ((direction: "older" | "newer") => void) | null = null;
+
+const captureHistorySource: HistorySource = (emit) => {
+  activeHistoryEmit = emit;
+  return () => {
+    if (activeHistoryEmit === emit) activeHistoryEmit = null;
+  };
+};
+
+// The session's window onto the module-level capture ring. `navigate` moves the
+// cursor and hands back the entry landed on (never null — the session pushes the
+// fresh grab before opening); position counts from the newest (newest = 1).
+function captureHistoryPort(): SessionHistoryPort<CaptureArtifact> {
+  return {
+    navigate: (direction) => {
+      if (direction === "older") captureHistory.older();
+      else captureHistory.newer();
+      return captureHistory.current as CaptureArtifact;
+    },
+    replaceCurrent: (artifact) => captureHistory.replaceCurrent(artifact),
+    currentOriginal: () => captureHistory.currentOriginal as CaptureArtifact,
+    position: () => ({
+      current: captureHistory.length - captureHistory.cursorIndex,
+      total: captureHistory.length,
+    }),
+  };
+}
+
 // The verb-key again-confirm (issue #58, ADR 0004), mirroring the crop
 // source: non-null exactly while a picker is open (the handle unsubscribes on
 // close, on every exit path), so `verbLock.activeVerb() === <verb> &&
@@ -1170,6 +1225,7 @@ function openCapturePicker(): CapturePickerHandle {
     againSource: pickerAgainSource,
     clickSource: pickerRowClickSource,
     cancelSource: pickerCancelSource,
+    historySource: captureHistorySource,
   });
 }
 
@@ -1180,14 +1236,25 @@ function startCapture(): void {
 
   void runCaptureSession({
     showOverlay: (snapshot) => showCaptureOverlay(snapshot),
-    captureActiveWindow: () => grabActiveWindow(),
+    // Push the fresh grab onto the history ring before the picker opens, so the
+    // ring's current entry is exactly what the session is standing on (#95).
+    captureActiveWindow: async () => {
+      const artifact = await grabActiveWindow();
+      captureHistory.push(artifact);
+      return artifact;
+    },
     openPicker: () => openCapturePicker(),
     renderThumbnail: (artifact) => renderCaptureThumbnail(artifact),
     cropCapture: (artifact, rect) => cropCaptureArtifact(artifact, rect),
     queryEligibleTargets: () => queryAnchoredTargets(),
     copyToClipboard: (artifact) => copyCaptureToClipboard(artifact),
+    // Mint a fresh payload id per delivery (#95): the ledger keys idempotency on
+    // (id, injectText, target) and caches the outcome, so re-delivering a history
+    // entry to a pane it already went to would silently no-op. A fresh id keeps
+    // the file/pane stable while making each send a distinct ledger key.
     deliver: (capture, target) =>
-      deliverCapture(captureArtifactToPayload(capture), target),
+      deliverCapture(captureArtifactToPayload(capture, randomUUID()), target),
+    history: captureHistoryPort(),
     // Same agent again (issue #58): the shared Last Target, keyed to this
     // verb's own hotkey — pressed again while the picker is open, it confirms.
     again: {

@@ -11,6 +11,7 @@ import {
   buildOverlaySnapshot,
   type OverlaySnapshot,
   type PickerAgainRow,
+  type PickerHistoryPosition,
 } from "./overlay";
 
 // Capture core tracer (issue #30, PRD #24): `runCaptureSession` mirrors
@@ -64,6 +65,12 @@ export type CaptureSelectionEvent =
   /** A drag on the preview: trim the capture and keep the picker open. */
   | { readonly kind: "crop"; readonly rect: CropRect }
   /**
+   * Left/Right through the capture-history ring (issue #95): step the cursor one
+   * entry older/newer, swap the live artifact/preview to it, keep the picker
+   * open. A no-op when the session has no history port.
+   */
+  | { readonly kind: "navigate"; readonly direction: "older" | "newer" }
+  /**
    * The verb's own hotkey pressed again while its picker is open (issue #58,
    * ADR 0004): confirm to the Last Target. Carries no target — the session
    * resolves it against its reconciled again-state, so a confirm can never
@@ -105,6 +112,27 @@ export interface CaptureSessionClock {
 export interface SameAgentAgainDependency {
   readLastTarget(): EligibleTarget | null;
   readonly hotkeyLabel: string;
+}
+
+/**
+ * The session's window onto the verb's persistent capture-history ring (issue
+ * #95). The ring itself lives in main.ts and outlives any one session — the
+ * fresh grab is pushed onto it before the picker opens, so `current()` at open
+ * equals the just-captured artifact. Optional: a verb without history simply
+ * never navigates, and the loop's no-history path is byte-identical to before.
+ */
+export interface SessionHistoryPort<A> {
+  /** Step the cursor one entry older/newer (clamped) and return the entry landed on. */
+  navigate(direction: "older" | "newer"): A;
+  /**
+   * Replace the current entry's artifact in place (a crop), preserving its
+   * pre-crop original for Esc's undo. Does not move the cursor or reorder.
+   */
+  replaceCurrent(artifact: A): void;
+  /** The pre-crop original of the current entry — Esc's two-stage undo target. */
+  currentOriginal(): A;
+  /** Where the cursor sits, for the overlay's position indicator. */
+  position(): PickerHistoryPosition;
 }
 
 /**
@@ -189,6 +217,13 @@ export interface RunSessionDependencies<A> {
    * without it simply has no fast path.
    */
   again?: SameAgentAgainDependency;
+  /**
+   * The verb's persistent capture-history ring (issue #95). Present → Left/Right
+   * arrow through the last-N grabs, crops route through in-place replacement, and
+   * the picker carries a position indicator. Absent → the one-shot behaviour this
+   * module has always had, unchanged.
+   */
+  history?: SessionHistoryPort<A>;
   clock?: CaptureSessionClock;
   paneQueryTimeoutMs?: number;
   deliveryAckTimeoutMs?: number;
@@ -294,8 +329,11 @@ export async function runSendSession<A>(
         }
       : undefined;
 
-  // The picker re-renders on every crop/reset, so its target list and any
-  // local-only message have to outlive the async query that produced them.
+  const history = dependencies.history;
+
+  // The picker re-renders on every crop/reset/navigation, so its target list
+  // and any local-only message have to outlive the async query that produced
+  // them.
   let currentTargets: readonly EligibleTarget[] = [];
   let currentMessage: string | undefined;
   function showPicker(): void {
@@ -307,6 +345,7 @@ export async function runSendSession<A>(
         clipboardSlot,
         dependencies.slotOneLabel,
         againRow,
+        history?.position(),
       ),
     );
   }
@@ -355,12 +394,28 @@ export async function runSendSession<A>(
   for (;;) {
     const selection = await picker.awaitSelection();
 
+    if (selection.kind === "navigate") {
+      // Arrow through the history ring: move the cursor, swap the live artifact
+      // and preview to the entry landed on, re-render. A no-op without history
+      // (the arrows are never registered for such a picker, but stay defensive).
+      if (history) {
+        artifact = history.navigate(selection.direction);
+        preview = await renderPreviewFor(artifact);
+        showPicker();
+      }
+      continue;
+    }
+
     if (selection.kind === "crop") {
       // Crop keeps the picker open and re-renders the preview from the
       // cropped pixels, so the result is seen rather than assumed.
       const cropped = await cropCurrent(selection.rect);
       if (cropped) {
         artifact = cropped;
+        // Route the crop through in-place replacement so it survives arrowing
+        // away and back (issue #94's contract), and its pre-crop original stays
+        // available for Esc's undo below.
+        history?.replaceCurrent(cropped);
         preview = await renderPreviewFor(cropped);
       }
       showPicker();
@@ -369,8 +424,19 @@ export async function runSendSession<A>(
 
     if (selection.kind === "escape") {
       // Esc undoes a crop before it dismisses: a mis-drag that clipped the
-      // thing you wanted must cost one keypress, not the whole capture.
-      if (artifact !== originalArtifact) {
+      // thing you wanted must cost one keypress, not the whole capture. With
+      // history the undo target is the CURRENT entry's pre-crop original (you
+      // may have arrowed onto it); without, the session-start artifact.
+      if (history) {
+        const original = history.currentOriginal();
+        if (artifact !== original) {
+          artifact = original;
+          history.replaceCurrent(original);
+          preview = await renderPreviewFor(original);
+          showPicker();
+          continue;
+        }
+      } else if (artifact !== originalArtifact) {
         artifact = originalArtifact;
         preview = originalPreview;
         showPicker();
