@@ -78,7 +78,7 @@ Create the config file at `%APPDATA%\MistrFlow\config.json`. The simplest, defau
 `azureEndpoint` and `azureApiKey` come from your Azure AI Foundry resource (Keys and Endpoint). Optional Azure fields: `azureApiVersion` (default `2025-04-01-preview`), `transcribeDeployment` (default `gpt-4o-transcribe`), `polishDeployment` (default `gpt-5-mini`). These may also be supplied via `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_API_VERSION`.
 </details>
 
-Everything beyond the provider is per-machine and optional — behaviour flags (focus-after-delivery, the agent chimes, clipboard pre-copy) and your list of delivery targets live in the same `config.json`, and Mistr Flow starts with sensible defaults for all of them.
+Everything beyond the provider is per-machine and optional — Mistr Flow starts with sensible defaults for all of it. See [Configuration](#configuration) below for the full set of keys.
 
 Build and run:
 
@@ -88,6 +88,69 @@ npm start
 ```
 
 `dist/` is gitignored, so a fresh clone has no build until `npm start` (which builds, then launches) runs at least once.
+
+### Configuration
+
+Everything lives in `%APPDATA%\MistrFlow\config.json`. Only the provider key is required; every other key is optional and has a default, so you can add just the ones you want.
+
+| Key | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `provider` | string | `"openai"` | Which AI provider — `"openai"` or `"azure"`. |
+| `openaiApiKey` | string | — | Your OpenAI key (or set `OPENAI_API_KEY` in the environment). |
+| `muteSystemAudioWhileRecording` | boolean | `true` | Mute system audio while recording, then restore it. |
+| `focusOnDeliver` | boolean | `false` | Raise the target pane/app window after a successful delivery. |
+| `copySelectionFirst` | boolean | `false` | Relay simulates `Ctrl+C` first, so a *selection* is grabbed without an explicit copy. |
+| `blockedChime` | boolean | `true` | The "an agent is blocked" cue — two quick beeps. |
+| `doneChime` | boolean | `true` | The "an agent finished" cue — one soft tone. |
+
+The app also writes `overlayPosition` itself whenever you drag the overlay, so it reopens where you left it — you don't author that one by hand.
+
+Three richer keys have their own shapes:
+
+<details>
+<summary><code>vocabulary</code> — a custom dictionary to bias transcription and polish</summary>
+
+Nudges the transcriber toward names it would otherwise mishear, and fixes consistent slips in the polish pass:
+
+```json
+"vocabulary": {
+  "enabled": true,
+  "terms": ["Herdr", "Mistr Flow", "Electron"],
+  "phrases": ["red-green-refactor"],
+  "replacements": [{ "wrong": "mister flow", "right": "Mistr Flow" }]
+}
+```
+
+Set `"enabled": false` to switch it off without deleting your lists. Caps: 200 terms, 100 phrases, 100 replacements, 120 characters each.
+</details>
+
+<details>
+<summary><code>projectAnchors</code> — friendly names and glyphs for picker rows (needs Herdr)</summary>
+
+Maps an agent pane's working directory to a name and a small glyph, so the picker shows "Mistr Flow" with a top-hat instead of a raw path:
+
+```json
+"projectAnchors": [
+  { "prefix": "C:\\dev\\mistr-flow", "name": "Mistr Flow", "glyph": "tophat" }
+]
+```
+
+`glyph` is one of `tophat`, `note`, `terminal`, `wing`, `flask`. Matching is case-insensitive and path-boundary aware, and the longest matching prefix wins. An unmapped directory just falls back to its folder name.
+</details>
+
+<details>
+<summary><code>appTargets</code> — desktop AI apps as delivery destinations (not Herdr panes)</summary>
+
+Lets Capture / Relay / Herald deliver into a normal desktop app (e.g. ChatGPT) by focusing its window and pasting:
+
+```json
+"appTargets": [
+  { "id": "chatgpt", "label": "ChatGPT", "process": "ChatGPT" }
+]
+```
+
+Each entry needs an `id`, a `label`, and at least one window matcher — `process` (preferred) or an exact `title`. Optional `pasteFocusKeys` is a SendKeys string fired once before the paste, to move focus into the app's input box first.
+</details>
 
 ### Hotkeys at a glance
 
