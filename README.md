@@ -1,41 +1,49 @@
 # Mistr Flow
 
-> "Dictate messy. Paste clean."
+> "Dictate messy. Paste clean." — and, these days, rather more than paste.
 
-Mistr Flow is a tiny Windows dictation app with manners. Press a hotkey, speak naturally, and it transcribes, lightly polishes, and pastes the result into whatever app you are already using.
+Mistr Flow started life as a tiny Windows dictation valet: press a hotkey, speak your rambling, and he tidies it into clean text in whatever app you are already using. He still does that, flawlessly, and it is still the thing he is proudest of.
 
-No voice-control grammar. No command language. No SaaS dashboard. Just a cheerful little gentleman tidying your rambling into usable text.
+But he has been promoted. Somewhere along the way the valet learned to carry things — a screenshot to the coding agent that needs to see it, a stack trace from your clipboard, a spoken instruction routed straight into an agent's pane — and to keep half an ear on the household staff while he is at it. What used to be a dictation app is now a **local-first desktop routing layer for your AI workflows**: it polishes speech, captures screenshots, relays clipboard content, and delivers the result to coding agents or desktop AI apps through one unified target picker.
 
-This is a personal project, actively used day to day, and still evolving as the rough edges reveal themselves.
+No voice-control grammar. No command language. No SaaS dashboard. Just a cheerful little gentleman who now wears several hats, and never makes you learn a new one.
 
 ![Mistr Flow hero: Dictate messy. Paste clean.](docs/readme/mistr-flow-hero.png)
 
-## What it does
+## What the gentleman handles now
 
-- Starts dictation from a global hotkey: `Ctrl+Alt+D`.
-- Records until you press the hotkey again.
-- Sends the audio to Azure AI Foundry (Azure OpenAI) for transcription.
-- Uses an LLM polish pass for punctuation, grammar, and spoken-list formatting.
-- Copies the polished text to the clipboard and pastes it into the active app.
-- Shows a small always-on-top overlay so you know what state it is in.
-- Mutes system audio while recording by default, then restores it afterward.
+Each duty is a single global hotkey. Press it, and the same small overlay grows into whatever the moment needs — a waveform, a preview, a picker of who should receive things.
 
-The polish step is deliberately conservative: it should clean up words, not reinterpret them. Mistr Flow is meant to be a valet, not a ghostwriter.
+- **Dictate** — `Ctrl+Alt+D`. The original trick, untouched. Speak, and he transcribes, lightly polishes, and pastes into the active app. A valet, not a ghostwriter: he cleans up your words, he does not reinterpret them.
+- **Herald** — `Ctrl+Alt+H`. The same voice, but instead of pasting where you stand, he carries the polished message to an agent's pane and announces it. Dictation's front half joined to delivery's back half.
+- **Capture** — `Ctrl+Alt+S`. A screenshot of the active window, treated as *evidence to be delivered*, not a file to be misplaced. Snap it, pick who should see it, and it lands in their pane. Crop it first if only part matters.
+- **Relay** — `Ctrl+Alt+C`. Your clipboard, routed the same way — copied code, a stack trace, a URL, an image, a fistful of files. He reads it on demand, never watches or logs it, and hands it wherever you point.
+- **Jump** — `Ctrl+Alt+J`. He keeps an ear on your agents (via Herdr) and, on request, takes you to whoever most needs you next — the one that is blocked before the one that is merely finished. A soft, distinct chime marks each, so you can stay heads-down elsewhere and still know.
 
-## The eight states
+Capture and Relay both remember your **last ten**, so you can arrow back through recent screenshots or clips in the picker and re-send any of them without re-snapping.
 
-The overlay is intentionally small and expressive. The mascot gives just enough feedback to be reassuring without stealing attention.
+## Where things go
 
-![Mistr Flow eight overlay states: idle, listening, recording, processing, polishing, done, error, cancelled.](docs/readme/mistr-flow-eight-states.png)
+The picker offers a pinned local option (keep it on the clipboard / paste it here) plus up to eight live destinations: **Herdr agent panes** and any **desktop AI apps** you have configured as targets. Pick a number, and off it goes — delivery is idempotent, so a nervous double-tap never sends twice.
+
+**An honest note for the curious:** the *deliver-to-an-agent* half assumes you run [Herdr](https://herdr.dev/) ([source](https://github.com/ogulcancelik/herdr)), a local terminal-agent manager, and/or have configured desktop app targets. Without either, Capture, Relay, and Herald degrade gracefully to "it's safe on your clipboard" — and Dictate works entirely on its own. This is a personal project, actively used every day, and shaped by whichever rough edge surfaced most recently. It is Windows-first and opinionated on purpose.
+
+## The overlay
+
+The overlay is intentionally small and expressive. The mascot gives just enough feedback to be reassuring without stealing attention — a tipped hat while he listens, a wiggle while he thinks, a bow when he is done, a different posture entirely when one of your agents is stuck.
+
+![Mistr Flow overlay states: idle, listening, recording, processing, polishing, done, error, cancelled.](docs/readme/mistr-flow-eight-states.png)
 
 ## Current shape
 
-Mistr Flow is a personal Windows-first Electron app built with TypeScript. It currently assumes:
+Mistr Flow is a personal, Windows-first Electron app written in TypeScript. It currently assumes:
 
-- Windows desktop.
-- An Azure AI Foundry (Azure OpenAI) resource with a transcription deployment (e.g. `gpt-4o-transcribe`) and a chat deployment for polish (e.g. `gpt-5-mini`).
+- A Windows desktop.
+- An AI provider for transcription + polish. **OpenAI** is the default; **Azure AI Foundry (Azure OpenAI)** is also supported and selectable by config.
 - English dictation.
 - A hand-edited JSON config file rather than a settings UI.
+
+The production entry point is `src/main.ts`; the overlay lives in `public/overlay.html` and `public/overlay-renderer.js`.
 
 ## Setup
 
@@ -45,23 +53,32 @@ Install dependencies:
 npm install
 ```
 
-Create the config file at `%APPDATA%\MistrFlow\config.json`:
+Create the config file at `%APPDATA%\MistrFlow\config.json`. The simplest, default setup uses OpenAI:
 
 ```json
 {
-  "azureEndpoint": "https://<your-resource>.cognitiveservices.azure.com/",
-  "azureApiKey": "<azure-api-key>",
-  "muteSystemAudioWhileRecording": true
+  "provider": "openai",
+  "openaiApiKey": "<your-openai-api-key>"
 }
 ```
 
-`azureEndpoint` and `azureApiKey` come from your Azure AI Foundry resource (Keys and Endpoint). Optional fields:
+`provider` defaults to `"openai"` if omitted. The API key may instead be supplied via the `OPENAI_API_KEY` environment variable.
 
-- `azureApiVersion` (default `2025-04-01-preview`)
-- `transcribeDeployment` (default `gpt-4o-transcribe`)
-- `polishDeployment` (default `gpt-5-mini`)
+<details>
+<summary>Using Azure AI Foundry instead</summary>
 
-These can also be supplied via the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_API_VERSION` environment variables.
+```json
+{
+  "provider": "azure",
+  "azureEndpoint": "https://<your-resource>.cognitiveservices.azure.com/",
+  "azureApiKey": "<azure-api-key>"
+}
+```
+
+`azureEndpoint` and `azureApiKey` come from your Azure AI Foundry resource (Keys and Endpoint). Optional Azure fields: `azureApiVersion` (default `2025-04-01-preview`), `transcribeDeployment` (default `gpt-4o-transcribe`), `polishDeployment` (default `gpt-5-mini`). These may also be supplied via `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_API_VERSION`.
+</details>
+
+Everything beyond the provider is per-machine and optional — behaviour flags (focus-after-delivery, the agent chimes, clipboard pre-copy) and your list of delivery targets live in the same `config.json`, and Mistr Flow starts with sensible defaults for all of them.
 
 Build and run:
 
@@ -70,36 +87,30 @@ npm run build
 npm start
 ```
 
-Once running, press `Ctrl+Alt+D` to start recording, press it again to stop, and press `Esc` during a recording to cancel.
+`dist/` is gitignored, so a fresh clone has no build until `npm start` (which builds, then launches) runs at least once.
 
-## Local Development
+### Hotkeys at a glance
 
-Install dependencies:
+| Key | Verb | What happens |
+| --- | --- | --- |
+| `Ctrl+Alt+D` | Dictate | Voice → polished text, pasted where you are |
+| `Ctrl+Alt+H` | Herald | Voice → polished text, delivered to an agent pane |
+| `Ctrl+Alt+S` | Capture | Screenshot the active window → deliver it |
+| `Ctrl+Alt+C` | Relay | Clipboard (text / image / files) → deliver it |
+| `Ctrl+Alt+J` | Jump | Go to the agent that most needs you |
+| `Esc` | — | Cancel a recording, or undo a crop, or dismiss the picker |
+| `←` / `→` | — | Arrow through your last ten captures / relays in the picker |
 
-```sh
-npm install
-```
-
-Start the app (compiles TypeScript then launches Electron):
-
-```sh
-npm start
-```
-
-Run the test suite:
+## Local development
 
 ```sh
-npm test
+npm start        # compile TypeScript, then launch Electron
+npm test         # run the test suite
+npm run typecheck  # type-check without building
 ```
 
-For a type-check without building:
-
-```sh
-npm run typecheck
-```
-
-The production entry point is `src/main.ts`; the overlay lives in `public/overlay.html` and `public/overlay-renderer.js`. Design references and extracted mascot assets live under `docs/design/`.
+Design references and extracted mascot assets live under `docs/design/`. Architecture decisions are recorded in `docs/adr/`, and the domain vocabulary — what exactly a *Capture*, a *Relay*, or a *Herald* means — lives in `CONTEXT.md`.
 
 ## Design principle
 
-The joke makes the tool lovable, but it must never slow the user down. The mascot is delightful seasoning — not the meal.
+The joke makes the tool lovable, but it must never slow the user down. The mascot is delightful seasoning — not the meal. Whatever new hat the gentleman puts on, he stays out of your way while wearing it.
