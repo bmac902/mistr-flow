@@ -1232,6 +1232,10 @@ const appDeliveryPorts: AppDeliveryDeps = {
   writeTextToClipboard: (text) => clipboard.writeText(text),
   simulatePaste: () => simulatePasteKeystroke(),
   sendKeys: (keys) => sendKeysRaw(keys),
+  // Focus-settle before the paste (#99): a real setTimeout sleep so a webview
+  // app (ChatGPT) routes input into its composer before Ctrl+V fires. Distinct
+  // from simulatePasteKeystroke's shared 50 ms — that one stays untouched.
+  delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
 // One adapter instance for the app's lifetime: the Herdr AND app delivery

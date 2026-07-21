@@ -149,7 +149,7 @@ Lets Capture / Relay / Herald deliver into a normal desktop app (e.g. ChatGPT) b
 ]
 ```
 
-Each entry needs an `id`, a `label`, and at least one window matcher — `process` (preferred) or an exact `title`. Optional `pasteFocusKeys` is a SendKeys string fired once before the paste, to move focus into the app's input box first.
+Each entry needs an `id`, a `label`, and at least one window matcher — `process` (preferred) or an exact `title`. Optional `pasteFocusKeys` is a SendKeys string fired once before the paste, to move focus into the app's input box first. Optional `pasteDelayMs` is a focus-settle delay (default ~150 ms, capped at 5000) awaited after the window comes forward and before the paste — a webview app like ChatGPT foregrounds its window a beat before it routes input into the composer, so a paste fired instantly can miss; raise this per-app if delivery is still occasionally flaky.
 </details>
 
 ### Hotkeys at a glance
