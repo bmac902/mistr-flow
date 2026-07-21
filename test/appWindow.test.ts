@@ -10,6 +10,7 @@ const CHATGPT: AppTargetView = {
   title: null,
   glyph: "chatgpt",
   pasteFocusKeys: null,
+  pasteDelayMs: null,
 };
 
 // NOTE: like herdrWindow.test.ts, these cover this module's OWN contract —
@@ -66,7 +67,7 @@ test("a match-less view is window-not-found without ever spawning the helper", a
     ran = true;
   };
   const outcome = await focusAppWindow(
-    { label: "Broken", process: null, title: null, glyph: null, pasteFocusKeys: null },
+    { label: "Broken", process: null, title: null, glyph: null, pasteFocusKeys: null, pasteDelayMs: null },
     { execFile },
   );
   assert.deepEqual(outcome, { kind: "window-not-found" });

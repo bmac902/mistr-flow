@@ -49,6 +49,51 @@ test("normalizeAppTargets sanitizes the id to a safe token and carries pasteFocu
   assert.equal(target.pasteFocusKeys, "{ESC}");
 });
 
+test("normalizeAppTargets accepts a valid pasteDelayMs and keeps the rest of the target", () => {
+  const [target] = normalizeAppTargets([
+    { id: "chatgpt", label: "ChatGPT", process: "ChatGPT", pasteDelayMs: 250 },
+  ]);
+  assert.equal(target.pasteDelayMs, 250);
+  assert.equal(target.process, "ChatGPT");
+});
+
+test("normalizeAppTargets accepts a pasteDelayMs of 0 (an explicit no-settle)", () => {
+  const [target] = normalizeAppTargets([
+    { id: "chatgpt", label: "ChatGPT", process: "ChatGPT", pasteDelayMs: 0 },
+  ]);
+  assert.equal(target.pasteDelayMs, 0);
+});
+
+test("normalizeAppTargets drops a non-numeric or negative pasteDelayMs, keeping the rest", () => {
+  const [nonNumeric] = normalizeAppTargets([
+    { id: "chatgpt", label: "ChatGPT", process: "ChatGPT", pasteDelayMs: "200" },
+  ]);
+  assert.equal(nonNumeric.pasteDelayMs, undefined);
+  assert.equal(nonNumeric.process, "ChatGPT"); // rest of the target survives
+
+  const [negative] = normalizeAppTargets([
+    { id: "chatgpt", label: "ChatGPT", process: "ChatGPT", pasteDelayMs: -50 },
+  ]);
+  assert.equal(negative.pasteDelayMs, undefined);
+
+  const [nan] = normalizeAppTargets([
+    { id: "chatgpt", label: "ChatGPT", process: "ChatGPT", pasteDelayMs: Number.NaN },
+  ]);
+  assert.equal(nan.pasteDelayMs, undefined);
+
+  const [infinite] = normalizeAppTargets([
+    { id: "chatgpt", label: "ChatGPT", process: "ChatGPT", pasteDelayMs: Number.POSITIVE_INFINITY },
+  ]);
+  assert.equal(infinite.pasteDelayMs, undefined);
+});
+
+test("normalizeAppTargets caps an absurd pasteDelayMs at the ceiling", () => {
+  const [target] = normalizeAppTargets([
+    { id: "chatgpt", label: "ChatGPT", process: "ChatGPT", pasteDelayMs: 999999 },
+  ]);
+  assert.equal(target.pasteDelayMs, 5000);
+});
+
 test("normalizeAppTargets caps the list so a runaway config can't flood the picker", () => {
   const many = Array.from({ length: 20 }, (_, i) => ({
     id: `app${i}`,
@@ -69,6 +114,7 @@ test("appTargetToEligibleTarget mints an app-kind target with inert pane placeho
     process: "ChatGPT",
     glyph: "chatgpt",
     pasteFocusKeys: "{ESC}",
+    pasteDelayMs: 250,
   };
   const target = appTargetToEligibleTarget(app);
 
@@ -86,5 +132,6 @@ test("appTargetToEligibleTarget mints an app-kind target with inert pane placeho
     title: null,
     glyph: "chatgpt",
     pasteFocusKeys: "{ESC}",
+    pasteDelayMs: 250,
   });
 });

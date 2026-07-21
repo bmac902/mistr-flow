@@ -28,6 +28,14 @@ export interface AppTarget {
    * apps need different composer-focus keystrokes, and some need none at all.
    */
   readonly pasteFocusKeys?: string;
+  /**
+   * Optional focus-settle delay (ms) after focus succeeds and before the paste
+   * (#99). A webview app (ChatGPT) foregrounds its window before it routes input
+   * into the composer, so a Ctrl+V fired the instant focus resolves lands in the
+   * gap and no-ops. Per-machine and tunable without a rebuild — different apps
+   * settle at different speeds. Omitted ⇒ the adapter's default settle.
+   */
+  readonly pasteDelayMs?: number;
 }
 
 /**
@@ -42,10 +50,13 @@ export interface AppTargetView {
   readonly title: string | null;
   readonly glyph: string | null;
   readonly pasteFocusKeys: string | null;
+  readonly pasteDelayMs: number | null;
 }
 
 const MAX_APP_TARGETS = 4;
 const MAX_FIELD_LENGTH = 200;
+/** Cap on a per-target focus-settle: 5s is already an eternity for a paste. */
+const MAX_PASTE_DELAY_MS = 5000;
 
 /**
  * Validates the raw `appTargets` config value into usable targets. Mirrors
@@ -67,6 +78,7 @@ export function normalizeAppTargets(value: unknown): AppTarget[] {
       title?: unknown;
       glyph?: unknown;
       pasteFocusKeys?: unknown;
+      pasteDelayMs?: unknown;
     };
     if (typeof raw.id !== "string" || typeof raw.label !== "string") continue;
 
@@ -90,6 +102,9 @@ export function normalizeAppTargets(value: unknown): AppTarget[] {
       ...(optionalField(raw.glyph) ? { glyph: optionalField(raw.glyph)! } : {}),
       ...(optionalField(raw.pasteFocusKeys)
         ? { pasteFocusKeys: optionalField(raw.pasteFocusKeys)! }
+        : {}),
+      ...(optionalDelayMs(raw.pasteDelayMs) !== undefined
+        ? { pasteDelayMs: optionalDelayMs(raw.pasteDelayMs)! }
         : {}),
     });
     if (result.length >= MAX_APP_TARGETS) break;
@@ -119,6 +134,7 @@ export function appTargetToEligibleTarget(app: AppTarget): EligibleTarget {
       title: app.title ?? null,
       glyph: app.glyph ?? null,
       pasteFocusKeys: app.pasteFocusKeys ?? null,
+      pasteDelayMs: app.pasteDelayMs ?? null,
     },
   };
 }
@@ -137,4 +153,17 @@ function optionalField(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim().slice(0, MAX_FIELD_LENGTH);
   return trimmed || undefined;
+}
+
+/**
+ * A non-negative finite settle in ms, clamped to {@link MAX_PASTE_DELAY_MS}, or
+ * undefined for anything unusable (non-number, NaN, Infinity, negative) — junk
+ * is dropped so the adapter's default settle takes over, never fatal. `0` is a
+ * valid value (an explicit no-settle), so presence is tested against undefined.
+ */
+function optionalDelayMs(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.min(value, MAX_PASTE_DELAY_MS);
 }

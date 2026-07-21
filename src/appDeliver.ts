@@ -47,9 +47,23 @@ export interface AppDeliveryDeps {
   readonly simulatePaste: () => Promise<void>;
   /** Optional pre-paste composer-focus keystroke (per-target `pasteFocusKeys`). */
   readonly sendKeys?: (keys: string) => Promise<void>;
+  /**
+   * Focus-settle delay (#99), injected so the settle is testable without real
+   * time — the `herdrSocket`/fleet-chime seam pattern. Defaults to a
+   * setTimeout-based sleep.
+   */
+  readonly delay?: (ms: number) => Promise<void>;
   readonly pathExists?: (filePath: string) => Promise<boolean>;
   readonly readTextFile?: (filePath: string) => Promise<string>;
 }
+
+/**
+ * Default focus-settle for an app target with no per-target `pasteDelayMs`
+ * (#99): long enough to beat the webview's window-focus → composer-focus gap,
+ * short enough to be imperceptible on a deliberate delivery. A starting point —
+ * the real value is settled in host verification and tuned per-target in config.
+ */
+const DEFAULT_PASTE_SETTLE_MS = 150;
 
 interface DeliveryRecord {
   readonly injectText: string;
@@ -69,6 +83,9 @@ const defaultPathExists = async (filePath: string): Promise<boolean> => {
 const defaultReadTextFile = (filePath: string): Promise<string> =>
   fsPromises.readFile(filePath, "utf8");
 
+const defaultDelay = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
  * Builds the app `deliver`. Owns an in-memory ledger keyed by payload id,
  * structurally identical to {@link createHerdrDeliveryAdapter}: a retry (same
@@ -82,6 +99,7 @@ export function createAppDeliveryAdapter(deps: AppDeliveryDeps): DeliverFn {
     writeTextToClipboard: deps.writeTextToClipboard,
     simulatePaste: deps.simulatePaste,
     sendKeys: deps.sendKeys,
+    delay: deps.delay ?? defaultDelay,
     pathExists: deps.pathExists ?? defaultPathExists,
     readTextFile: deps.readTextFile ?? defaultReadTextFile,
   };
@@ -137,6 +155,7 @@ type ResolvedAppDeps = {
   writeTextToClipboard: (text: string) => void;
   simulatePaste: () => Promise<void>;
   sendKeys?: (keys: string) => Promise<void>;
+  delay: (ms: number) => Promise<void>;
   pathExists: (filePath: string) => Promise<boolean>;
   readTextFile: (filePath: string) => Promise<string>;
 };
@@ -199,12 +218,19 @@ async function runAppDelivery(
     return focusFailure(view.label, focus);
   }
 
-  // 4. Optional composer-focus keystroke before the paste.
+  // 4. Focus-settle (#99) — "the window is foreground" is not "the composer has
+  //    the cursor" for a webview app: it foregrounds first, then routes input a
+  //    beat later. Wait for that beat so Ctrl+V doesn't land in the gap and
+  //    no-op. Only reached on focus success — a failed focus has no paste to
+  //    settle for. Per-target `pasteDelayMs` overrides the default.
+  await deps.delay(view.pasteDelayMs ?? DEFAULT_PASTE_SETTLE_MS);
+
+  // 5. Optional composer-focus keystroke before the paste.
   if (view.pasteFocusKeys && deps.sendKeys) {
     await deps.sendKeys(view.pasteFocusKeys);
   }
 
-  // 5. Paste — Ctrl+V, no Enter.
+  // 6. Paste — Ctrl+V, no Enter.
   await deps.simulatePaste();
   return { kind: "delivered" };
 }

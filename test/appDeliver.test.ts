@@ -41,6 +41,9 @@ function makeDeps(overrides: Partial<AppDeliveryDeps> = {}) {
     sendKeys: async (k) => {
       log.push(`keys:${k}`);
     },
+    delay: async (ms) => {
+      log.push(`delay:${ms}`);
+    },
     pathExists: async () => true,
     readTextFile: async () => "spilled contents",
     ...overrides,
@@ -63,14 +66,14 @@ test("a screenshot (.png) is put on the clipboard as an image, then focus, then 
   const outcome = await deliver(payload, CHATGPT);
 
   assert.deepEqual(outcome, { kind: "delivered" });
-  assert.deepEqual(log, ["image:C:\\tmp\\cap.png", "focus", "paste"]);
+  assert.deepEqual(log, ["image:C:\\tmp\\cap.png", "focus", "delay:150", "paste"]);
 });
 
 test("short text is pasted as text", async () => {
   const { deps, log } = makeDeps();
   const deliver = createAppDeliveryAdapter(deps);
   await deliver({ id: "c2", injectText: "hello world" }, CHATGPT);
-  assert.deepEqual(log, ["text:hello world", "focus", "paste"]);
+  assert.deepEqual(log, ["text:hello world", "focus", "delay:150", "paste"]);
 });
 
 test("a long-text spill (.txt) pastes its CONTENTS, never the path", async () => {
@@ -80,14 +83,83 @@ test("a long-text spill (.txt) pastes its CONTENTS, never the path", async () =>
     { id: "c3", injectText: "C:\\tmp\\relay-1.txt", requiresFile: "C:\\tmp\\relay-1.txt" },
     CHATGPT,
   );
-  assert.deepEqual(log, ["text:spilled contents", "focus", "paste"]);
+  assert.deepEqual(log, ["text:spilled contents", "focus", "delay:150", "paste"]);
 });
 
-test("pasteFocusKeys fires after focus and before the paste", async () => {
+test("pasteFocusKeys fires after the settle and before the paste", async () => {
   const { deps, log } = makeDeps();
   const deliver = createAppDeliveryAdapter(deps);
   await deliver({ id: "c4", injectText: "hi" }, CHATGPT_WITH_KEYS);
-  assert.deepEqual(log, ["text:hi", "focus", "keys:{ESC}", "paste"]);
+  assert.deepEqual(log, ["text:hi", "focus", "delay:150", "keys:{ESC}", "paste"]);
+});
+
+// ---------------------------------------------------------------------------
+// Focus-settle delay (#99): a webview app focuses its window before it routes
+// input into the composer, so Ctrl+V fired the instant focus succeeds lands in
+// the gap and no-ops. Settle between focus and paste; skip it when focus fails.
+// ---------------------------------------------------------------------------
+
+test("with no pasteDelayMs, the default settle (150 ms) is awaited between focus and paste", async () => {
+  const { deps, log } = makeDeps();
+  const deliver = createAppDeliveryAdapter(deps);
+  await deliver({ id: "d1", injectText: "hi" }, CHATGPT);
+  // focus → delay:150 → paste, and the delay sits strictly between them.
+  assert.deepEqual(log, ["text:hi", "focus", "delay:150", "paste"]);
+  assert.ok(
+    log.indexOf("focus") < log.indexOf("delay:150") &&
+      log.indexOf("delay:150") < log.indexOf("paste"),
+    "settle must sit between focus and paste",
+  );
+});
+
+test("a target carrying pasteDelayMs settles for THAT value, not the default", async () => {
+  const { deps, log } = makeDeps();
+  const deliver = createAppDeliveryAdapter(deps);
+  const slow = appTargetToEligibleTarget({
+    id: "chatgpt",
+    label: "ChatGPT",
+    process: "ChatGPT",
+    pasteDelayMs: 400,
+  });
+  await deliver({ id: "d2", injectText: "hi" }, slow);
+  assert.deepEqual(log, ["text:hi", "focus", "delay:400", "paste"]);
+});
+
+test("a pasteDelayMs of 0 settles for 0 (an explicit no-settle), still awaited", async () => {
+  const { deps, log } = makeDeps();
+  const deliver = createAppDeliveryAdapter(deps);
+  const instant = appTargetToEligibleTarget({
+    id: "chatgpt",
+    label: "ChatGPT",
+    process: "ChatGPT",
+    pasteDelayMs: 0,
+  });
+  await deliver({ id: "d3", injectText: "hi" }, instant);
+  assert.deepEqual(log, ["text:hi", "focus", "delay:0", "paste"]);
+});
+
+test("the settle is NOT awaited when focus fails — no paste to settle for", async () => {
+  const cases: AppWindowOutcome["kind"][] = [
+    "window-not-found",
+    "foreground-refused",
+    "helper-not-found",
+    "helper-error",
+  ];
+  for (const focusKind of cases) {
+    const { deps, log } = makeDeps({
+      focusWindow: async () => {
+        log.push("focus");
+        return { kind: focusKind } as AppWindowOutcome;
+      },
+    });
+    const deliver = createAppDeliveryAdapter(deps);
+    await deliver({ id: `nd-${focusKind}`, injectText: "hi" }, CHATGPT);
+    assert.ok(
+      !log.some((x) => x.startsWith("delay")),
+      `${focusKind} must not settle`,
+    );
+    assert.ok(!log.includes("paste"), `${focusKind} must not paste`);
+  }
 });
 
 // ---------------------------------------------------------------------------
