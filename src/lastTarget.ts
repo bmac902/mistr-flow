@@ -40,6 +40,12 @@ export function createLastTargetMemory(): LastTargetMemory {
  * go through `deliver` at all. Wrapping the shared delivery adapter once in
  * main.ts is what makes the memory verb-agnostic — every verb's delivered
  * ack lands here.
+ *
+ * A `kind:"foreground"` paste (Ctrl+Alt+V, issue #101) is the one delivery
+ * that DOES reach `deliver` yet must NOT record: it is a LOCAL outcome like
+ * slot 1 ("the agent I'm working with" is a pane, never the foreground
+ * window), so it is skipped here — the same "slot 1 never updates Last Target"
+ * rule, enforced at the one seam a foreground delivery actually passes through.
  */
 export function withLastTargetRecording<P>(
   deliver: (payload: P, target: EligibleTarget) => Promise<CaptureDeliverOutcome>,
@@ -47,7 +53,7 @@ export function withLastTargetRecording<P>(
 ): (payload: P, target: EligibleTarget) => Promise<CaptureDeliverOutcome> {
   return (payload, target) =>
     deliver(payload, target).then((outcome) => {
-      if (outcome.kind === "delivered") {
+      if (outcome.kind === "delivered" && target.kind !== "foreground") {
         memory.record(target);
       }
       return outcome;

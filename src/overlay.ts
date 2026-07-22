@@ -32,6 +32,13 @@ export type OverlayPhase =
   | "capture-delivery-unknown"
   /** Capture: a crop drag is in progress on the preview — the mascot appraises it. */
   | "capture-framing"
+  /**
+   * Paste-to-foreground (Ctrl+Alt+V, issue #101) fired with an EMPTY capture
+   * ring: nothing to paste. A truthful refusal — never a silent no-op, never a
+   * faked "Pasted, sir." (personality-is-a-property). The bare-hotkey twin of
+   * Relay's "nothing to send".
+   */
+  | "paste-nothing-captured"
   /** Relay: the clipboard was empty — nothing to send, no target picker. */
   | "relay-nothing-to-send"
   /** Relay: Herdr is unreachable — he's holding it, but there's nowhere to give it. */
@@ -164,6 +171,7 @@ const STATUS_COPY: Record<OverlayPhase, string> = {
   "capture-delivery-failed": "That pane didn't take it.",
   "capture-delivery-unknown": "Not sure that landed — try again?",
   "capture-framing": "Say when, sir.",
+  "paste-nothing-captured": "Nothing captured yet, sir.",
   "relay-nothing-to-send": "Your pockets are empty, sir.",
   "relay-no-destination": "I have it, sir. There's no one to give it to.",
   "relay-delivering": "Delivering to the pane…",
@@ -201,6 +209,7 @@ const MASCOT_COPY: Record<OverlayPhase, string> = {
   "capture-delivery-failed": "hat droops",
   "capture-delivery-unknown": "tilts head, puzzled",
   "capture-framing": "raises a monocle to appraise the crop",
+  "paste-nothing-captured": "presents an empty silver tray",
   "relay-nothing-to-send": "pats his pockets, finds nothing",
   "relay-no-destination": "taps the bell at an empty desk",
   "relay-delivering": "leans toward the pane",
@@ -305,6 +314,7 @@ export function buildOverlaySnapshot(phase: OverlayPhase): OverlaySnapshot {
     case "capture-delivery-failed":
       return buildCaptureDeliveryFailedOverlaySnapshot();
     case "capture-framing":
+    case "paste-nothing-captured":
     case "relay-nothing-to-send":
     case "relay-no-destination":
     case "relay-delivered":
@@ -417,6 +427,22 @@ export function buildRelayNothingToSendOverlaySnapshot(): OverlaySnapshot {
     waveformVisible: false,
     mascotCopy: MASCOT_COPY["relay-nothing-to-send"],
     statusCopy: STATUS_COPY["relay-nothing-to-send"],
+  };
+}
+
+/**
+ * Bare Ctrl+Alt+V (issue #101) with an empty capture ring: a truthful "nothing
+ * captured yet" beat, never a silent no-op or a faked paste (personality is a
+ * property). The paste twin of {@link buildRelayNothingToSendOverlaySnapshot} —
+ * he presents an empty tray rather than pats empty pockets.
+ */
+export function buildPasteNothingCapturedOverlaySnapshot(): OverlaySnapshot {
+  return {
+    phase: "paste-nothing-captured",
+    barMode: "expanded",
+    waveformVisible: false,
+    mascotCopy: MASCOT_COPY["paste-nothing-captured"],
+    statusCopy: STATUS_COPY["paste-nothing-captured"],
   };
 }
 

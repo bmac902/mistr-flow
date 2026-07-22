@@ -112,6 +112,32 @@ test("the wrapper is transparent: same outcome object, same arguments through", 
   assert.equal(seen[0]!.target, TARGET_A);
 });
 
+test("a foreground paste (#101) is a local outcome — a delivered ack never updates the memory", async () => {
+  const memory = createLastTargetMemory();
+  memory.record(TARGET_A);
+  const foreground: EligibleTarget = {
+    target: "foreground",
+    label: "the foreground window",
+    agentStatus: "idle",
+    agent: "foreground",
+    cwd: null,
+    kind: "foreground",
+  };
+  const deliver = withLastTargetRecording(
+    outcomeDeliver({ kind: "delivered" }),
+    memory,
+  );
+
+  const outcome = await deliver({ id: "fg-1" }, foreground);
+
+  assert.deepEqual(outcome, { kind: "delivered" }, "the outcome still passes through");
+  assert.deepEqual(
+    memory.current(),
+    TARGET_A,
+    "paste-to-foreground is like slot 1 — it never becomes the shared Last Target",
+  );
+});
+
 test("a rejected delivery propagates and records nothing", async () => {
   const memory = createLastTargetMemory();
   const deliver = withLastTargetRecording(async () => {

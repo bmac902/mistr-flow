@@ -19,6 +19,14 @@ import type { EligibleTarget } from "./herdr";
 // focus the app's window, and paste (Ctrl+V). Exactly Herald's "Paste here",
 // aimed at a specific app rather than whatever happens to be foreground.
 //
+// The same adapter also serves `kind:"foreground"` (Ctrl+Alt+V, issue #101):
+// paste into whatever window ALREADY has focus. That is precisely Herald's
+// "Paste here" un-aimed — app delivery MINUS the focus step — generalized so
+// the clipboard content follows the payload flavor (a screenshot bitmap or
+// text), not just text. Reusing this adapter reuses its ledger, so a double
+// Ctrl+V is deduped the same way; and because it never focuses, it can never
+// mis-target a window it raised.
+//
 // Two rules carried over from src/deliver.ts, on purpose:
 //   - Idempotency ledger keyed by payload id: the session's unknown→retry loop
 //     (captureSession.ts) can re-request the same delivery, and a double PASTE
@@ -64,6 +72,17 @@ export interface AppDeliveryDeps {
  * the real value is settled in host verification and tuned per-target in config.
  */
 const DEFAULT_PASTE_SETTLE_MS = 150;
+
+/**
+ * Foreground-paste settle (Ctrl+Alt+V, issue #101): kept short — much shorter
+ * than the app path's 150 ms — because the foreground window already HOLDS
+ * focus (the overlay is `focusable: false`, so the global hotkey never moved
+ * OS foreground). There is no webview window-focus → composer-focus gap to wait
+ * out, only cheap insurance against a clipboard-write → paste race. Deliberately
+ * a SEPARATE settle from the 50 ms already baked into `simulatePasteKeystroke`;
+ * that shared 50 ms is untouched (#101 scope).
+ */
+const FOREGROUND_PASTE_SETTLE_MS = 50;
 
 interface DeliveryRecord {
   readonly injectText: string;
@@ -135,16 +154,19 @@ export function createAppDeliveryAdapter(deps: AppDeliveryDeps): DeliverFn {
 }
 
 /**
- * Dispatches a delivery to the app adapter for a `kind:"app"` target, and to the
- * Herdr adapter otherwise (absent/"herdr"). The single seam that keeps the send
- * session ignorant of what a target IS.
+ * Dispatches a delivery to the app adapter for a `kind:"app"` OR
+ * `kind:"foreground"` target (both are focus+paste, no PTY — the foreground
+ * case just skips the focus step), and to the Herdr adapter otherwise
+ * (absent/"herdr"). The single seam that keeps the send session ignorant of
+ * what a target IS. The app adapter owns one ledger for both, so a double
+ * `Ctrl+V` into a foreground app is deduped the same way an app paste is.
  */
 export function createRoutingDeliveryAdapter(adapters: {
   readonly herdr: DeliverFn;
   readonly app: DeliverFn;
 }): DeliverFn {
   return (payload, target) =>
-    target.kind === "app"
+    target.kind === "app" || target.kind === "foreground"
       ? adapters.app(payload, target)
       : adapters.herdr(payload, target);
 }
@@ -165,10 +187,13 @@ async function runAppDelivery(
   payload: SendPayload,
   target: EligibleTarget,
 ): Promise<CaptureDeliverOutcome> {
+  // The foreground window IS the target (Ctrl+Alt+V, issue #101): no `app` view,
+  // and delivery is app delivery MINUS the focus step. Any OTHER kind with no
+  // `app` view is malformed — the router only sends kind:"app" (always carries
+  // `app`) or kind:"foreground" here, but never paste blind on a bad target.
+  const foreground = target.kind === "foreground";
   const view = target.app;
-  if (!view) {
-    // The router only sends kind:"app" here, and those always carry `app` —
-    // but never paste blind on a malformed target.
+  if (!foreground && !view) {
     return {
       kind: "failed",
       code: "app-focus-failed",
@@ -199,23 +224,27 @@ async function runAppDelivery(
 
   // 2. Choose clipboard content from the payload's flavor (SendPayload speaks a
   //    Herdr-shaped "inject a string / require a file" vocabulary, so recover
-  //    the flavor by extension — the #73 bridge). Written BEFORE focus.
-  const requires = payload.requiresFile;
-  if (requires && isImagePath(requires)) {
-    deps.writeImageToClipboard(requires);
-  } else if (requires && isTextSpillPath(requires)) {
-    // A long-text Relay spilled to a .txt: paste its CONTENTS, never its path —
-    // ChatGPT can't `Read` a local path the way a coding agent can.
-    deps.writeTextToClipboard(await deps.readTextFile(requires));
-  } else {
-    deps.writeTextToClipboard(payload.injectText);
+  //    the flavor by extension — the #73 bridge). Written BEFORE focus. Shared
+  //    verbatim with the foreground path (#101) — an image pastes as a bitmap,
+  //    a .txt spill pastes its contents, everything else pastes injectText.
+  await writeClipboardForPayload(deps, payload);
+
+  // 3. Foreground (#101): no window to focus — the app you were in still holds
+  //    focus (the overlay never took it), so paste straight into it. Settle
+  //    first (cheap insurance against a clipboard-write → paste race), then
+  //    Ctrl+V, no Enter. Structurally identical to the app path below, minus
+  //    focus and the per-target composer keystroke/delay.
+  if (foreground) {
+    await deps.delay(FOREGROUND_PASTE_SETTLE_MS);
+    await deps.simulatePaste();
+    return { kind: "delivered" };
   }
 
-  // 3. Focus — for an app target, focus IS the delivery mechanism, so a failure
-  //    fails the delivery (never paste into the wrong window).
-  const focus = await deps.focusWindow(view);
+  // 3'. Focus — for an app target, focus IS the delivery mechanism, so a failure
+  //     fails the delivery (never paste into the wrong window).
+  const focus = await deps.focusWindow(view!);
   if (focus.kind !== "focused") {
-    return focusFailure(view.label, focus);
+    return focusFailure(view!.label, focus);
   }
 
   // 4. Focus-settle (#99) — "the window is foreground" is not "the composer has
@@ -223,16 +252,38 @@ async function runAppDelivery(
   //    beat later. Wait for that beat so Ctrl+V doesn't land in the gap and
   //    no-op. Only reached on focus success — a failed focus has no paste to
   //    settle for. Per-target `pasteDelayMs` overrides the default.
-  await deps.delay(view.pasteDelayMs ?? DEFAULT_PASTE_SETTLE_MS);
+  await deps.delay(view!.pasteDelayMs ?? DEFAULT_PASTE_SETTLE_MS);
 
   // 5. Optional composer-focus keystroke before the paste.
-  if (view.pasteFocusKeys && deps.sendKeys) {
-    await deps.sendKeys(view.pasteFocusKeys);
+  if (view!.pasteFocusKeys && deps.sendKeys) {
+    await deps.sendKeys(view!.pasteFocusKeys);
   }
 
   // 6. Paste — Ctrl+V, no Enter.
   await deps.simulatePaste();
   return { kind: "delivered" };
+}
+
+/**
+ * Writes the payload onto the clipboard by flavor — the shared step both the
+ * app path and the foreground path (#101) run before pasting. Recovers the
+ * flavor from the required file's extension: an image path becomes a bitmap, a
+ * `.txt` spill pastes its CONTENTS (never the path — a human app can't `Read` a
+ * local path the way a coding agent can), and everything else pastes the inline
+ * injectText.
+ */
+async function writeClipboardForPayload(
+  deps: ResolvedAppDeps,
+  payload: SendPayload,
+): Promise<void> {
+  const requires = payload.requiresFile;
+  if (requires && isImagePath(requires)) {
+    deps.writeImageToClipboard(requires);
+  } else if (requires && isTextSpillPath(requires)) {
+    deps.writeTextToClipboard(await deps.readTextFile(requires));
+  } else {
+    deps.writeTextToClipboard(payload.injectText);
+  }
 }
 
 function focusFailure(

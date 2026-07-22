@@ -76,7 +76,15 @@ export type CaptureSelectionEvent =
    * resolves it against its reconciled again-state, so a confirm can never
    * ride a stale remembered snapshot past a reconcile that unmarked it.
    */
-  | { readonly kind: "again" };
+  | { readonly kind: "again" }
+  /**
+   * Paste-to-foreground (Ctrl+Alt+V, issue #101): paste the current (arrowed,
+   * possibly cropped) entry into whatever window has focus, then settle the
+   * picker as a LOCAL success — mirror slot 1, never the cancelled beat, and
+   * never the shared Last Target (the foreground window isn't a pane). A
+   * truthful no-op when the session has no `pasteToForeground`.
+   */
+  | { readonly kind: "paste-foreground" };
 
 /**
  * The injected picker handle (concrete implementation lands in the picker UI
@@ -186,6 +194,16 @@ export interface RunSessionDependencies<A> {
    * resolves and shows its beat; it just performs no local write.
    */
   copyToClipboard?(artifact: A): void | Promise<void>;
+  /**
+   * Paste-to-foreground's local action (Ctrl+Alt+V, issue #101): put the
+   * current entry on the clipboard and Ctrl+V it into whatever window has
+   * focus. Best-effort like {@link copyToClipboard} — a LOCAL outcome, so it
+   * never goes through {@link deliver} and never updates the Last Target. Wired
+   * through the `kind:"foreground"` delivery target (src/appDeliver.ts) so it
+   * reuses that ledger and the image-vs-text flavor logic. Optional: without it
+   * the in-picker paste source is a truthful no-op (the picker stays open).
+   */
+  pasteToForeground?(artifact: A): void | Promise<void>;
   deliver(artifact: A, target: EligibleTarget): Promise<CaptureDeliverOutcome>;
   /**
    * Overrides the delivering/delivered beats so a verb can show a payload-aware
@@ -248,6 +266,8 @@ export type RunCaptureSessionResult =
     }
   | { readonly kind: "cancelled" }
   | { readonly kind: "clipboard-delivered" }
+  /** Paste-to-foreground (issue #101): the current entry landed in the focused window. */
+  | { readonly kind: "foreground-pasted" }
   | { readonly kind: "target-delivered"; readonly target: EligibleTarget }
   | {
       readonly kind: "delivery-failed";
@@ -463,6 +483,20 @@ export async function runSendSession<A>(
           buildOverlaySnapshot("capture-delivered"),
       );
       return { kind: "clipboard-delivered" };
+    }
+
+    if (selection.kind === "paste-foreground") {
+      // Ctrl+Alt+V (issue #101): paste the current entry into the focused
+      // window — a LOCAL outcome, exactly like slot 1. It never touches the
+      // pane-delivery path below, so it never updates the Last Target, and it
+      // settles on the success beat ("Pasted, sir."), never the cancelled one.
+      // Without a paste dependency wired it is a truthful no-op: the picker
+      // stays open and the same selection can be made again.
+      if (!dependencies.pasteToForeground) continue;
+      await dependencies.pasteToForeground(artifact);
+      closePicker();
+      void dependencies.showOverlay(buildOverlaySnapshot("done"));
+      return { kind: "foreground-pasted" };
     }
 
     // The verb-key confirm (issue #58): with a live row it resolves to the

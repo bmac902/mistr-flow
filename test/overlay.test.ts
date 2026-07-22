@@ -12,6 +12,7 @@ import {
   fleetTierToOverlayPhase,
   buildErrorOverlaySnapshot,
   buildRefusedOverlaySnapshot,
+  buildPasteNothingCapturedOverlaySnapshot,
   buildRelayCopyKeptOverlaySnapshot,
   buildRelayDeliveringOverlaySnapshot,
   buildRelayNothingToSendOverlaySnapshot,
@@ -607,6 +608,21 @@ test("buildRelayNothingToSendOverlaySnapshot is a truthful, un-faded nothing-to-
 
   // buildOverlaySnapshot routes the phase to the same builder.
   assert.deepEqual(buildOverlaySnapshot("relay-nothing-to-send"), snapshot);
+});
+
+test("buildPasteNothingCapturedOverlaySnapshot is a truthful empty-ring refusal, not a faked paste (issue #101)", () => {
+  const snapshot = buildPasteNothingCapturedOverlaySnapshot();
+
+  assert.equal(snapshot.phase, "paste-nothing-captured");
+  assert.equal(snapshot.barMode, "expanded");
+  // No target list and never the "done"/"Pasted, sir." beat — never a fake success.
+  assert.equal(snapshot.captureTargets, undefined);
+  assert.match(snapshot.statusCopy, /nothing captured/i);
+  // Funny, never ambiguous about what happened (personality is a product property).
+  assert.ok(snapshot.mascotCopy.length > 0);
+
+  // buildOverlaySnapshot routes the phase to the same builder.
+  assert.deepEqual(buildOverlaySnapshot("paste-nothing-captured"), snapshot);
 });
 
 test("buildRelayDeliveringOverlaySnapshot carries a payload-specific prop and copy (issue #41)", () => {

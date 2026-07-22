@@ -49,6 +49,32 @@ test("push A then B: current is B, older gives A, newer gives B", () => {
   assert.equal(ring.current?.id, "B");
 });
 
+test("newest is the last-pushed entry regardless of where the cursor sits (issue #101)", () => {
+  const ring = makeRing();
+  // A local so assert's `asserts` narrowing doesn't pin `ring.newest` to null
+  // for the reads below (node:assert/strict equal narrows its first argument).
+  const emptyNewest = ring.newest;
+  assert.equal(emptyNewest, null, "empty ring has no newest");
+
+  ring.push(entry("A"));
+  ring.push(entry("B"));
+  assert.equal(ring.newest?.id, "B");
+
+  // Bare Ctrl+Alt+V must paste the NEWEST, not wherever a prior picker left the
+  // cursor — arrow to the oldest and `newest` is still B.
+  ring.older();
+  assert.equal(ring.current?.id, "A", "cursor moved to the older entry");
+  assert.equal(ring.newest?.id, "B", "but newest is unaffected by the cursor");
+});
+
+test("newest reflects an in-place crop of the newest entry (issue #101)", () => {
+  const ring = makeRing();
+  ring.push(entry("A"));
+  ring.push(entry("B"));
+  ring.replaceCurrent(entry("B-cropped"));
+  assert.equal(ring.newest?.id, "B-cropped", "the live (possibly cropped) value");
+});
+
 test("stepping older at the oldest stays put — no wraparound", () => {
   const ring = makeRing();
   ring.push(entry("A"));

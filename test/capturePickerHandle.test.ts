@@ -374,6 +374,69 @@ test("an external cancel (verb switch, 2026-07-17) dispatches the exact escape e
   assert.equal(unsubscribed, true);
 });
 
+// --- Paste to foreground: the injected paste source (issue #101) -----------
+// Ctrl+Alt+V while a picker is open pastes the arrowed entry into the
+// foreground window. Like the again/cancel sources it is a pure external emit
+// (the Ctrl+Alt+V globalShortcut is main.ts's, routed in when a picker is
+// open) — it registers NO shortcut of its own, and resolves the same
+// one-selection-at-a-time channel.
+
+test("a paste-source emit resolves a paste-foreground selection", async () => {
+  let emit: (() => void) | null = null;
+  let unsubscribed = false;
+  const handle = createCapturePickerHandle({
+    shortcuts: makeFakeShortcuts(),
+    pasteSource: (cb) => {
+      emit = cb;
+      return () => {
+        unsubscribed = true;
+      };
+    },
+  });
+
+  const selection = handle.awaitSelection();
+  emit!();
+
+  assert.deepEqual(await selection, { kind: "paste-foreground" });
+
+  // Torn down with everything else on close — a stray paste press must never
+  // resolve a closed picker.
+  handle.close();
+  assert.equal(unsubscribed, true);
+});
+
+test("the paste source registers no accelerator of its own (Ctrl+Alt+V is main.ts's)", () => {
+  const shortcuts = makeFakeShortcuts();
+  createCapturePickerHandle({ shortcuts, pasteSource: () => () => {} });
+
+  // Same registrations as a plain picker — slot 1 + Esc, no extra key.
+  assert.deepEqual(shortcuts.registeredAccelerators().sort(), ["1", "Escape", "num1"]);
+});
+
+test("a paste-source emit with no pending awaitSelection is a harmless no-op (e.g. mid-delivery)", () => {
+  let emit: (() => void) | null = null;
+  const handle = createCapturePickerHandle({
+    shortcuts: makeFakeShortcuts(),
+    pasteSource: (cb) => {
+      emit = cb;
+      return () => {};
+    },
+  });
+
+  assert.doesNotThrow(() => emit!());
+  handle.close();
+});
+
+test("a picker with no pasteSource still works", async () => {
+  const shortcuts = makeFakeShortcuts();
+  const handle = createCapturePickerHandle({ shortcuts });
+
+  const selection = handle.awaitSelection();
+  shortcuts.press("Escape");
+
+  assert.deepEqual(await selection, { kind: "escape" });
+});
+
 // --- Clickable rows: the injected click source (issue #61, ADR 0005) -------
 // A mouse click is another way to press the row's key, never a second
 // implementation: a click resolves the EXACT selection event the key
