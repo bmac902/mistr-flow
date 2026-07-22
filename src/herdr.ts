@@ -119,14 +119,19 @@ export interface EligibleTarget {
    * {@link mapPane} mints only these). "app" ⇒ a config-driven app relay target
    * (src/appTargets.ts): NOT a pane — delivered by focus+paste (src/appDeliver.ts),
    * independent of Herdr availability, and never entered into the Watched Set
-   * (that comes from a different query, {@link mapPanesToWatchedSet}).
+   * (that comes from a different query, {@link mapPanesToWatchedSet}). "foreground"
+   * ⇒ whatever window currently has OS focus (Ctrl+Alt+V, issue #101): an app
+   * target with no window matcher — the foreground IS the target, so delivery
+   * writes the clipboard and pastes with NO focus step. A LOCAL outcome like
+   * slot 1, so it never updates the shared Last Target (src/lastTarget.ts skips it).
    */
-  readonly kind?: "herdr" | "app";
+  readonly kind?: "herdr" | "app" | "foreground";
   /**
    * Present iff `kind === "app"`: the app window matcher + row presentation
    * (src/appTargets.ts). The pane fields above (`agentStatus`/`agent`/`cwd`) are
    * inert placeholders for an app target and are never read on the app path —
-   * the renderer and the deliver router both branch on `kind` first.
+   * the renderer and the deliver router both branch on `kind` first. Absent for
+   * a `kind:"foreground"` target: the foreground window needs no matcher.
    */
   readonly app?: AppTargetView;
 }

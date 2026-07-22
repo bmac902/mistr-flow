@@ -60,6 +60,14 @@ export interface CaptureHistory<T> {
   /** The entry at the cursor, or null on an empty ring. */
   readonly current: T | null;
   /**
+   * The NEWEST live entry (last-pushed) — its live, possibly-cropped value —
+   * regardless of where the cursor sits, or null on an empty ring. Bare
+   * Ctrl+Alt+V (issue #101) pastes this: "the last screenshot," never wherever
+   * a prior picker left the cursor. Equal to {@link current} right after a push
+   * (which parks the cursor on the newest) and whenever the cursor is newest.
+   */
+  readonly newest: T | null;
+  /**
    * The pre-crop original of the entry at the cursor, or null on an empty ring.
    * Equal to {@link current} until the entry is replaced.
    */
@@ -156,6 +164,10 @@ export function createCaptureHistory<T>(
 
     get current() {
       return cursor < 0 ? null : slots[cursor].current;
+    },
+
+    get newest() {
+      return slots.length === 0 ? null : slots[slots.length - 1].current;
     },
 
     get currentOriginal() {

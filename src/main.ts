@@ -42,8 +42,10 @@ import { buildPolishVocabularyInstruction, buildWhisperVocabularyPrompt } from "
 import { pasteText as pasteTextImpl } from "./paste";
 import {
   type AnchoredTarget,
+  buildCaptureDeliveryFailedOverlaySnapshot,
   buildFleetPostureOverlaySnapshot,
   buildOverlaySnapshot,
+  buildPasteNothingCapturedOverlaySnapshot,
   buildRefusedOverlaySnapshot,
   type OverlaySnapshot,
 } from "./overlay";
@@ -85,6 +87,7 @@ import { runHeraldSession } from "./heraldSession";
 import {
   createCaptureGrabFailedError,
   runCaptureSession,
+  type CaptureDeliverOutcome,
   type CapturePickerHandle,
   type SessionHistoryPort,
 } from "./captureSession";
@@ -94,6 +97,7 @@ import {
   type CancelSource,
   type CropSource,
   type HistorySource,
+  type PasteSource,
   type PickerRowClick,
   type RowClickSource,
 } from "./capturePickerHandle";
@@ -114,7 +118,12 @@ import {
   type CapturePreview,
   type ThumbnailImagePort,
 } from "./captureThumbnail";
-import { captureArtifactToPayload, createHerdrDeliveryAdapter } from "./deliver";
+import {
+  captureArtifactToPayload,
+  createHerdrDeliveryAdapter,
+  type SendPayload,
+} from "./deliver";
+import { runForegroundPaste } from "./foregroundPaste";
 import {
   appTargetToEligibleTarget,
   type AppTarget,
@@ -126,7 +135,12 @@ import {
 } from "./appDeliver";
 import { composePickerTargets } from "./pickerTargets";
 import { createLastTargetMemory, withLastTargetRecording } from "./lastTarget";
-import { queryHerdr, queryWatchedSet, readHerdrSocketPath } from "./herdr";
+import {
+  queryHerdr,
+  queryWatchedSet,
+  readHerdrSocketPath,
+  type EligibleTarget,
+} from "./herdr";
 import {
   capturePickerWindowHeight,
   resolveGrownWindowBounds,
@@ -964,6 +978,48 @@ function registerJumpHotkey(): void {
   }
 }
 
+// Ctrl+Alt+V ("V" for the Ctrl+V muscle memory, issue #101) — the paste verb,
+// joining the Ctrl+Alt family (D dictate, S screenshot, C copy, H herald, J
+// jump). It pastes a Mistr Flow capture into whatever window has focus. No
+// numpad twin: V is a top-row letter with no keypad equivalent (unlike the
+// picker digits). Same loud-collision contract as the rest — a failed
+// registration surfaces in a dialog (whenReady), never a silent swap.
+const PASTE_ACCELERATOR = "Control+Alt+V";
+
+function registerPasteHotkey(): void {
+  const registered = globalShortcut.register(PASTE_ACCELERATOR, () => {
+    // While ANY picker is open (Capture or Relay), Ctrl+Alt+V pastes the
+    // ARROWED entry into the foreground and settles that picker as a local
+    // success — routed into the picker's selection stream, exactly as the
+    // again-confirm routes the verb's own key. `activePasteEmit` is non-null
+    // for precisely the picker's lifetime (the handle unsubscribes on close).
+    if (activePasteEmit) {
+      activePasteEmit();
+      return;
+    }
+
+    // A modal verb is mid-flight with no picker to route into (recording,
+    // pre-picker grab, mid-polish): don't clobber it. Same visible mascot
+    // refusal the other verbs give — never a silent no-op. (During delivering
+    // the picker is still subscribed, so a press there lands on activePasteEmit
+    // above and is a structural no-op, exactly like a digit press.)
+    if (verbLock.activeVerb() !== null) {
+      refuseVerb();
+      return;
+    }
+
+    // Bare hotkey, nothing else in flight: paste the NEWEST capture-ring entry
+    // into the foreground window (empty ring → truthful refusal).
+    startForegroundPaste();
+  });
+
+  if (!registered) {
+    throw new Error(
+      `Failed to register global hotkey "${PASTE_ACCELERATOR}". It may already be in use by another app.`,
+    );
+  }
+}
+
 /**
  * The picker's target query, dressed with Project Anchors (2026-07-17): each
  * pane's cwd resolves against the per-machine `projectAnchors` config so the
@@ -1140,6 +1196,20 @@ const pickerCancelSource: CancelSource = (emit) => {
   };
 };
 
+// Paste-to-foreground (Ctrl+Alt+V, issue #101), mirroring the again hook:
+// non-null exactly while a picker is open, so the standalone Ctrl+Alt+V hotkey
+// routes into the OPEN picker (pasting the arrowed entry) instead of the bare
+// newest-capture path. Both the Capture and Relay picker builds wire this
+// source, and the verb lock guarantees at most one picker is open.
+let activePasteEmit: (() => void) | null = null;
+
+const pickerPasteSource: PasteSource = (emit) => {
+  activePasteEmit = emit;
+  return () => {
+    if (activePasteEmit === emit) activePasteEmit = null;
+  };
+};
+
 /**
  * The verb switch (2026-07-17): cancel the open picker, then start the
  * intended verb the moment the lock frees — one press, no Esc, no trap. The
@@ -1256,6 +1326,52 @@ function buildDeliverCapture(focusOnDeliver: boolean) {
 
 let deliverCapture = buildDeliverCapture(false);
 
+// The current foreground window as a delivery target (Ctrl+Alt+V, issue #101):
+// an app target with no window matcher — the foreground IS the target, so the
+// adapter writes the clipboard and pastes with NO focus step. The pane fields
+// are inert placeholders (like an app target's). Routed through `deliverCapture`
+// so it reuses the app adapter's ledger and flavor logic; withLastTargetRecording
+// skips `kind:"foreground"`, so this local outcome never becomes the Last Target.
+const FOREGROUND_TARGET: EligibleTarget = {
+  target: "foreground",
+  label: "the foreground window",
+  agentStatus: "idle",
+  agent: "foreground",
+  cwd: null,
+  kind: "foreground",
+};
+
+/**
+ * Deliver a payload to the current foreground window (#101). The caller mints a
+ * fresh payload id per paste — the ledger keys on (id, injectText, target), so
+ * re-pasting a ring entry with a reused id would return the cached "delivered"
+ * while no Ctrl+V ever fired (the #95 trap). Returns the outcome; the bare-path
+ * orchestrator branches on it, the in-picker local action discards it.
+ */
+function deliverToForeground(payload: SendPayload): Promise<CaptureDeliverOutcome> {
+  return deliverCapture(payload, FOREGROUND_TARGET);
+}
+
+/**
+ * Bare Ctrl+Alt+V (#101): paste the NEWEST capture-ring entry into the
+ * foreground window. Empty ring → a truthful "nothing captured yet" refusal.
+ * A fresh payload id is minted per paste (the #95 discipline).
+ */
+function startForegroundPaste(): void {
+  void runForegroundPaste<CaptureArtifact>({
+    entry: () => captureHistory.newest,
+    deliver: (artifact) =>
+      deliverToForeground(captureArtifactToPayload(artifact, randomUUID())),
+    showNothingCaptured: () =>
+      showCaptureOverlay(buildPasteNothingCapturedOverlaySnapshot()),
+    showPasted: () => showCaptureOverlay(buildOverlaySnapshot("done")),
+    showFailed: (message) =>
+      showCaptureOverlay(buildCaptureDeliveryFailedOverlaySnapshot(message)),
+  }).catch((error) =>
+    console.error("[mistr-flow] foreground paste failed:", error),
+  );
+}
+
 function openCapturePicker(): CapturePickerHandle {
   return createCapturePickerHandle({
     shortcuts: {
@@ -1267,6 +1383,7 @@ function openCapturePicker(): CapturePickerHandle {
     clickSource: pickerRowClickSource,
     cancelSource: pickerCancelSource,
     historySource: pickerHistorySource,
+    pasteSource: pickerPasteSource,
   });
 }
 
@@ -1295,6 +1412,13 @@ function startCapture(): void {
     // the file/pane stable while making each send a distinct ledger key.
     deliver: (capture, target) =>
       deliverCapture(captureArtifactToPayload(capture, randomUUID()), target),
+    // Ctrl+Alt+V while this picker is open (#101): paste the arrowed entry into
+    // the foreground window — a LOCAL outcome, so it never updates the Last
+    // Target. Fresh payload id per paste, same #95 ledger discipline as deliver.
+    pasteToForeground: (capture) =>
+      deliverToForeground(captureArtifactToPayload(capture, randomUUID())).then(
+        () => undefined,
+      ),
     history: makeHistoryPort(captureHistory),
     // Same agent again (issue #58): the shared Last Target, keyed to this
     // verb's own hotkey — pressed again while the picker is open, it confirms.
@@ -1423,6 +1547,7 @@ function openRelayPicker(): CapturePickerHandle {
     clickSource: pickerRowClickSource,
     cancelSource: pickerCancelSource,
     historySource: pickerHistorySource,
+    pasteSource: pickerPasteSource,
     // Slot 1 returned (#64): "1 Clipboard" = keep the copy, stop here — the
     // affirmative local ending now that Ctrl+Alt+C (with copySelectionFirst)
     // is itself the copy. Same digit, same "Clipboard" label as Capture's.
@@ -1452,6 +1577,10 @@ function startRelay(): void {
     // Same adapter, same ledger, same ack/unknown-retry semantics, same
     // focusOnDeliver as Capture — Relay's payload just isn't always a PNG.
     deliver: (payload, target) => deliverCapture(payload, target),
+    // Ctrl+Alt+V while this picker is open (#101): paste the arrowed entry
+    // (image or text) into the foreground window — a LOCAL outcome. The session
+    // mints the fresh payload id (via mintId) before handing the payload here.
+    pasteToForeground: (payload) => deliverToForeground(payload).then(() => undefined),
     history: makeHistoryPort(relayHistory),
     // Fresh payload id per delivery (#96), same ledger reason as Capture (#95).
     mintId: () => randomUUID(),
@@ -1510,6 +1639,10 @@ function startHerald(): void {
         writeClipboard: (t) => clipboard.writeText(t),
         simulatePaste: () => simulatePasteKeystroke(),
       }),
+    // Ctrl+Alt+V while Herald's picker is open (#101): the transcript into the
+    // focused window — the same local ending as slot 1's "Paste here", reached
+    // by the paste verb. The session mints the fresh payload id before this.
+    pasteToForeground: (payload) => deliverToForeground(payload).then(() => undefined),
     mintId: () => randomUUID(),
     // The same ONE Last Target as Capture and Relay (issue #58, ADR 0004).
     again: {
@@ -1719,6 +1852,7 @@ app.whenReady().then(async () => {
     registerRelayHotkey();
     registerHeraldHotkey();
     registerJumpHotkey();
+    registerPasteHotkey();
   } catch (error) {
     dialog.showErrorBox("Mistr Flow hotkey error", String(error));
   }

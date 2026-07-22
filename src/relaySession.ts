@@ -117,6 +117,14 @@ export interface RunRelaySessionDependencies {
   copyToClipboard?(artifact: CaptureArtifact): void | Promise<void>;
   queryEligibleTargets(): Promise<HerdrQueryResult>;
   deliver(payload: SendPayload, target: EligibleTarget): Promise<CaptureDeliverOutcome>;
+  /**
+   * Paste-to-foreground (Ctrl+Alt+V, issue #101): put the arrowed entry's
+   * payload on the clipboard and Ctrl+V it into the focused window — a LOCAL
+   * outcome, so it never updates the Last Target. Handles a relayed image OR
+   * text: the shared foreground adapter picks the clipboard flavor. A fresh
+   * payload id is minted per paste (same ledger reason as `deliver`).
+   */
+  pasteToForeground?(payload: SendPayload): void | Promise<void>;
   /** Same agent again (issue #58): the shared Last Target, passed straight through. */
   again?: SameAgentAgainDependency;
   /**
@@ -197,6 +205,16 @@ export async function runRelaySession(
         deps.mintId ? { ...artifact.payload, id: deps.mintId() } : artifact.payload,
         target,
       ),
+    // Paste-to-foreground (issue #101): the arrowed entry into the focused
+    // window, image or text. A fresh payload id per paste, same ledger reason
+    // as `deliver` — re-pasting a ring entry must actually fire Ctrl+V, never
+    // return the cached outcome (the #95 trap). Omitted → the source no-ops.
+    pasteToForeground: deps.pasteToForeground
+      ? (artifact) =>
+          deps.pasteToForeground!(
+            deps.mintId ? { ...artifact.payload, id: deps.mintId() } : artifact.payload,
+          )
+      : undefined,
     // Relay's delivering/delivered beats carry the payload-specific prop
     // (note/ledger/portrait) rather than Capture's generic ones (issue #41).
     deliveringSnapshot: (artifact) =>

@@ -18,6 +18,7 @@ Each duty is a single global hotkey. Press it, and the same small overlay grows 
 - **Herald** — `Ctrl+Alt+H`. The same voice, but instead of pasting where you stand, he carries the polished message to an agent's pane and announces it. Dictation's front half joined to delivery's back half.
 - **Capture** — `Ctrl+Alt+S`. A screenshot of the active window, treated as *evidence to be delivered*, not a file to be misplaced. Snap it, pick who should see it, and it lands in their pane. Crop it first if only part matters.
 - **Relay** — `Ctrl+Alt+C`. Your clipboard, routed the same way — copied code, a stack trace, a URL, an image, a fistful of files. He reads it on demand, never watches or logs it, and hands it wherever you point.
+- **Paste** — `Ctrl+Alt+V`. The counterpart to delivery, aimed at *you* rather than an agent: your latest capture, pasted straight into whatever window you're focused in. Snap a screenshot, hit it in Teams or a chat, and the image lands in the composer — no picker, no Alt-Tab. Inside a picker it pastes the entry you've arrowed to instead. He'll tell you plainly when there's nothing captured yet, rather than pretend.
 - **Jump** — `Ctrl+Alt+J`. He keeps an ear on your agents (via Herdr) and, on request, takes you to whoever most needs you next — the one that is blocked before the one that is merely finished. A soft, distinct chime marks each, so you can stay heads-down elsewhere and still know.
 
 Capture and Relay both remember your **last ten**, so you can arrow back through recent screenshots or clips in the picker and re-send any of them without re-snapping.
@@ -160,6 +161,7 @@ Each entry needs an `id`, a `label`, and at least one window matcher — `proces
 | `Ctrl+Alt+H` | Herald | Voice → polished text, delivered to an agent pane |
 | `Ctrl+Alt+S` | Capture | Screenshot the active window → deliver it |
 | `Ctrl+Alt+C` | Relay | Clipboard (text / image / files) → deliver it |
+| `Ctrl+Alt+V` | Paste | Paste your latest capture into the app you're focused in |
 | `Ctrl+Alt+J` | Jump | Go to the agent that most needs you |
 | `Esc` | — | Cancel a recording, or undo a crop, or dismiss the picker |
 | `←` / `→` | — | Arrow through your last ten captures / relays in the picker |

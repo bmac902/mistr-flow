@@ -183,6 +183,7 @@ interface Harness {
   deps: RunRelaySessionDependencies;
   states: OverlaySnapshot[];
   delivered: { payload: SendPayload; target: EligibleTarget }[];
+  pastedToForeground: SendPayload[];
   copiedToClipboard: CaptureArtifact[];
   picker: FakePicker;
   openPickerCalls(): number;
@@ -255,9 +256,11 @@ function makeHarness(overrides: {
   clock?: CaptureSessionClock;
   history?: SessionHistoryPort<RelayArtifact>;
   mintId?: () => string;
+  pasteToForeground?: (payload: SendPayload) => void | Promise<void>;
 }): Harness {
   const states: OverlaySnapshot[] = [];
   const delivered: { payload: SendPayload; target: EligibleTarget }[] = [];
+  const pastedToForeground: SendPayload[] = [];
   const copiedToClipboard: CaptureArtifact[] = [];
   const picker = makeFakePicker();
   let openCalls = 0;
@@ -285,6 +288,11 @@ function makeHarness(overrides: {
         delivered.push({ payload, target });
         return { kind: "delivered" };
       }),
+    pasteToForeground:
+      overrides.pasteToForeground ??
+      ((payload) => {
+        pastedToForeground.push(payload);
+      }),
     copyToClipboard: async (artifact) => {
       copiedToClipboard.push(artifact);
     },
@@ -297,6 +305,7 @@ function makeHarness(overrides: {
     deps,
     states,
     delivered,
+    pastedToForeground,
     copiedToClipboard,
     picker,
     openPickerCalls: () => openCalls,
@@ -350,6 +359,45 @@ test("copying text opens a picker with slot 1 (Clipboard, the renderer default l
   // Dismiss to settle the session.
   h.picker.resolve({ kind: "escape" });
   await session;
+});
+
+test("Ctrl+Alt+V in the Relay picker (#101) pastes the entry (text) to the foreground with a fresh id, not through deliver", async () => {
+  const h = makeHarness({
+    port: fakeClipboardPort({ text: "const x = 1;\nconst y = 2;" }),
+    mintId: () => "fresh-foreground-id",
+  });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+
+  h.picker.resolve({ kind: "paste-foreground" });
+  const result = await session;
+
+  assert.deepEqual(result, { kind: "foreground-pasted" });
+  assert.equal(h.pastedToForeground.length, 1, "the entry was pasted to the foreground");
+  // A fresh payload id per paste (the #95/#96 ledger discipline), not the
+  // relay's own id — so re-pasting the same entry actually fires Ctrl+V again.
+  assert.equal(h.pastedToForeground[0]!.id, "fresh-foreground-id");
+  // A LOCAL outcome — never the pane-delivery path (so it never updates Last Target).
+  assert.equal(h.delivered.length, 0, "paste-foreground never goes through deliver");
+  // The success beat, never the cancelled one.
+  assert.equal(h.states.at(-1)!.phase, "done");
+});
+
+test("Ctrl+Alt+V in the Relay picker (#101) pastes a relayed IMAGE to the foreground", async () => {
+  const h = makeHarness({
+    port: fakeClipboardPort({ text: "", imagePng: Buffer.from("PNGDATA") }),
+  });
+
+  const session = runRelaySession(h.deps);
+  await flush();
+
+  h.picker.resolve({ kind: "paste-foreground" });
+  const result = await session;
+
+  assert.deepEqual(result, { kind: "foreground-pasted" });
+  assert.equal(h.pastedToForeground.length, 1, "the image entry was pasted to the foreground");
+  assert.equal(h.delivered.length, 0);
 });
 
 test("short copied text delivers inline via the payload-agnostic adapter (no spill)", async () => {

@@ -109,6 +109,14 @@ export interface RunHeraldSessionDependencies {
    * H when you meant D, tap 1, and the utterance isn't re-spoken (ADR 0003).
    */
   pasteHere(text: string): Promise<void> | void;
+  /**
+   * Paste-to-foreground (Ctrl+Alt+V, issue #101): the transcript into the
+   * focused window through the shared foreground adapter — a LOCAL outcome like
+   * slot 1's "Paste here", so it never updates the Last Target. Optional: a
+   * fresh payload id is minted per paste. Omitted → the in-picker paste source
+   * is a truthful no-op.
+   */
+  pasteToForeground?(payload: SendPayload): void | Promise<void>;
   /** Mints the payload id — one per utterance, so the delivery ledger keys correctly. */
   mintId(): string;
   /** Same agent again (issue #58): the shared Last Target, passed straight through. */
@@ -183,6 +191,12 @@ export async function runHeraldSession(
       clipboardSlot: true,
       slotOneLabel: HERALD_SLOT_ONE_LABEL,
       deliver: (a, target) => deps.deliver(a.payload, target),
+      // Ctrl+Alt+V (issue #101): the transcript into the focused window, a fresh
+      // payload id per paste. Effectively slot 1's "Paste here" reached by the
+      // paste verb rather than the digit — omitted → the source is a no-op.
+      pasteToForeground: deps.pasteToForeground
+        ? (a) => deps.pasteToForeground!({ ...a.payload, id: deps.mintId() })
+        : undefined,
       again: deps.again,
       clock: deps.clock,
       paneQueryTimeoutMs: deps.paneQueryTimeoutMs,
@@ -192,6 +206,11 @@ export async function runHeraldSession(
     if (sendResult.kind === "cancelled") continue; // Esc re-dictates.
 
     if (sendResult.kind === "clipboard-delivered") {
+      return { kind: "pasted-here" };
+    }
+    // Ctrl+Alt+V (issue #101) pasted the transcript into the focused window —
+    // the same local ending as slot 1's "Paste here", reported the same way.
+    if (sendResult.kind === "foreground-pasted") {
       return { kind: "pasted-here" };
     }
     if (sendResult.kind === "capture-failed") {

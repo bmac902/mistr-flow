@@ -1120,3 +1120,96 @@ test("runCaptureSession: navigate events are inert without a history port", asyn
   picker.resolveSelection({ kind: "escape" });
   await session;
 });
+
+// ---------------------------------------------------------------------------
+// Paste to foreground: the in-picker Ctrl+Alt+V source (issue #101)
+// ---------------------------------------------------------------------------
+
+test("runCaptureSession: paste-foreground pastes the current entry and settles as a LOCAL success", async () => {
+  const pasted: CaptureArtifact[] = [];
+  const { deps, states, calls, picker } = baseDeps({
+    async pasteToForeground(artifact) {
+      pasted.push(artifact);
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+
+  picker.resolveSelection({ kind: "paste-foreground" });
+  const result = await session;
+
+  assert.deepEqual(result, { kind: "foreground-pasted" });
+  assert.deepEqual(pasted, [ARTIFACT], "the current entry was pasted to the foreground");
+  // A LOCAL outcome, like slot 1 — never the pane-delivery path.
+  assert.ok(!calls.includes("deliver"), "paste-foreground never goes through deliver");
+  assert.equal(picker.closeCallCount(), 1);
+  // The success beat ("Pasted, sir."), never the cancelled beat.
+  assert.equal(states.at(-1)?.phase, "done");
+  assert.notEqual(states.at(-1)?.phase, "cancelled");
+});
+
+test("runCaptureSession: paste-foreground pastes the ARROWED entry after navigation", async () => {
+  const ring = createCaptureHistory<CaptureArtifact>({
+    maxBytes: Number.MAX_SAFE_INTEGER,
+    sizeOf: () => 0,
+    pathsOf: (a) => [a.pngPath],
+  });
+  ring.push(OLDER_ARTIFACT);
+  const pasted: CaptureArtifact[] = [];
+  const { deps, picker } = historyDeps(ring, {
+    async pasteToForeground(artifact) {
+      pasted.push(artifact);
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  picker.resolveSelection({ kind: "navigate", direction: "older" });
+  await flush();
+  picker.resolveSelection({ kind: "paste-foreground" });
+  const result = await session;
+
+  assert.deepEqual(result, { kind: "foreground-pasted" });
+  assert.deepEqual(pasted, [OLDER_ARTIFACT], "the arrowed entry, not the fresh grab");
+});
+
+test("runCaptureSession: paste-foreground pastes the CROPPED artifact after a crop", async () => {
+  const pasted: CaptureArtifact[] = [];
+  const { deps, picker } = cropDeps({
+    async pasteToForeground(artifact) {
+      pasted.push(artifact);
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  picker.resolveSelection({ kind: "crop", rect: CROP_RECT });
+  await flush();
+  picker.resolveSelection({ kind: "paste-foreground" });
+  await session;
+
+  assert.deepEqual(pasted, [CROPPED_ARTIFACT], "the crop, not the original");
+});
+
+test("runCaptureSession: paste-foreground is a truthful no-op when no pasteToForeground is wired", async () => {
+  const { deps, states, picker } = baseDeps({
+    async renderThumbnail() {
+      return PREVIEW;
+    },
+  });
+
+  const session = runCaptureSession(deps);
+  await flush();
+  const before = states.length;
+
+  picker.resolveSelection({ kind: "paste-foreground" });
+  await flush();
+
+  // No paste dependency: nothing pasted, picker stays open, no beat change.
+  assert.equal(states.length, before);
+  assert.equal(picker.closeCallCount(), 0);
+
+  picker.resolveSelection({ kind: "escape" });
+  await session;
+});

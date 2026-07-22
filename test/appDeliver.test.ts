@@ -19,6 +19,18 @@ const CHATGPT = appTargetToEligibleTarget({
   glyph: "chatgpt",
 });
 
+// The current foreground window (Ctrl+Alt+V, issue #101): an app target with no
+// window matcher — the foreground IS the target, so there is no `app` view to
+// focus. Delivery writes the clipboard then pastes, with NO focus step.
+const FOREGROUND: EligibleTarget = {
+  target: "foreground",
+  label: "the foreground window",
+  agentStatus: "idle",
+  agent: "foreground",
+  cwd: null,
+  kind: "foreground",
+};
+
 const CHATGPT_WITH_KEYS = appTargetToEligibleTarget({
   id: "chatgpt",
   label: "ChatGPT",
@@ -247,10 +259,104 @@ test("a payload id reused against a different target or text is rejected as a mi
 });
 
 // ---------------------------------------------------------------------------
+// Foreground delivery (Ctrl+Alt+V, issue #101): the foreground window IS the
+// target, so it is app delivery MINUS the focus step — write the clipboard,
+// settle, paste; never a focusWindow call, never a focus failure.
+// ---------------------------------------------------------------------------
+
+test("foreground delivery writes the clipboard, settles, then pastes — with NO focus call", async () => {
+  const { deps, log } = makeDeps();
+  const deliver = createAppDeliveryAdapter(deps);
+  const outcome = await deliver(
+    { id: "fg-1", injectText: "C:\\tmp\\cap.png", requiresFile: "C:\\tmp\\cap.png" },
+    FOREGROUND,
+  );
+
+  assert.deepEqual(outcome, { kind: "delivered" });
+  // clipboard BEFORE paste, a settle strictly between them, and crucially no
+  // "focus" entry — the foreground window already holds focus.
+  assert.deepEqual(log, ["image:C:\\tmp\\cap.png", "delay:50", "paste"]);
+  assert.ok(!log.includes("focus"), "foreground paste never focuses a window");
+});
+
+test("foreground delivery honors the payload flavor (image / text-spill / inline text)", async () => {
+  const image = makeDeps();
+  await createAppDeliveryAdapter(image.deps)(
+    { id: "fg-img", injectText: "C:\\tmp\\a.png", requiresFile: "C:\\tmp\\a.png" },
+    FOREGROUND,
+  );
+  assert.deepEqual(image.log, ["image:C:\\tmp\\a.png", "delay:50", "paste"]);
+
+  const spill = makeDeps();
+  await createAppDeliveryAdapter(spill.deps)(
+    { id: "fg-txt", injectText: "C:\\tmp\\relay.txt", requiresFile: "C:\\tmp\\relay.txt" },
+    FOREGROUND,
+  );
+  assert.deepEqual(spill.log, ["text:spilled contents", "delay:50", "paste"]);
+
+  const inline = makeDeps();
+  await createAppDeliveryAdapter(inline.deps)(
+    { id: "fg-inline", injectText: "hello foreground" },
+    FOREGROUND,
+  );
+  assert.deepEqual(inline.log, ["text:hello foreground", "delay:50", "paste"]);
+});
+
+test("foreground delivery honors the file precondition — clipboard untouched, no paste on a missing file", async () => {
+  const { deps, log } = makeDeps({ pathExists: async () => false });
+  const deliver = createAppDeliveryAdapter(deps);
+  const outcome = await deliver(
+    { id: "fg-gone", injectText: "C:\\tmp\\gone.png", requiresFile: "C:\\tmp\\gone.png" },
+    FOREGROUND,
+  );
+  assert.equal(outcome.kind, "failed");
+  assert.equal((outcome as { code: string }).code, "delivery-file-missing");
+  assert.deepEqual(log, []);
+});
+
+test("foreground delivery reuses the ledger: a repeat (id, text, target) pastes once", async () => {
+  const { deps, log } = makeDeps();
+  const deliver = createAppDeliveryAdapter(deps);
+  const payload: SendPayload = { id: "fg-same", injectText: "hi" };
+  await deliver(payload, FOREGROUND);
+  await deliver(payload, FOREGROUND);
+  assert.equal(log.filter((x) => x === "paste").length, 1, "exactly one paste");
+});
+
+test("foreground delivery with a FRESH id re-pastes the same content — the #95 fresh-id guard", async () => {
+  // Re-pasting the SAME ring entry must actually fire Ctrl+V again. The ledger
+  // keys on (id, injectText, target); minting a fresh id per paste (main.ts)
+  // keeps injectText/target stable while making each paste a distinct key, so
+  // the second one lands rather than returning the cached no-op (issue #95).
+  const { deps, log } = makeDeps();
+  const deliver = createAppDeliveryAdapter(deps);
+  await deliver({ id: "fresh-1", injectText: "C:\\tmp\\cap.png", requiresFile: "C:\\tmp\\cap.png" }, FOREGROUND);
+  await deliver({ id: "fresh-2", injectText: "C:\\tmp\\cap.png", requiresFile: "C:\\tmp\\cap.png" }, FOREGROUND);
+  assert.equal(log.filter((x) => x === "paste").length, 2, "each fresh id pastes");
+});
+
+test("foreground delivery rejects a reused id against a mismatched injectText (same ledger rule)", async () => {
+  const { deps } = makeDeps();
+  const deliver = createAppDeliveryAdapter(deps);
+  await deliver({ id: "fg-x", injectText: "hi" }, FOREGROUND);
+  const mismatch = await deliver({ id: "fg-x", injectText: "different" }, FOREGROUND);
+  assert.equal((mismatch as { code: string }).code, "delivery-id-mismatch");
+});
+
+test("the shared simulatePaste/sendKeys 50 ms is untouched — the app path still settles 150 ms", async () => {
+  // #101 must not lengthen the shared 50 ms inside simulatePasteKeystroke, and
+  // the app-delivery settle default is unchanged — regression guard.
+  const { deps, log } = makeDeps();
+  const deliver = createAppDeliveryAdapter(deps);
+  await deliver({ id: "app-still-150", injectText: "hi" }, CHATGPT);
+  assert.deepEqual(log, ["text:hi", "focus", "delay:150", "paste"]);
+});
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
-test("the router sends kind:'app' to the app adapter and everything else to herdr", async () => {
+test("the router sends kind:'app' and kind:'foreground' to the app adapter, everything else to herdr", async () => {
   const seen: string[] = [];
   const herdr: DeliverFn = async () => {
     seen.push("herdr");
@@ -273,6 +379,7 @@ test("the router sends kind:'app' to the app adapter and everything else to herd
   await route({ id: "1", injectText: "x" }, CHATGPT);
   await route({ id: "2", injectText: "x" }, pane); // kind undefined ⇒ herdr
   await route({ id: "3", injectText: "x" }, { ...pane, kind: "herdr" });
+  await route({ id: "4", injectText: "x" }, FOREGROUND); // kind:"foreground" ⇒ app
 
-  assert.deepEqual(seen, ["app", "herdr", "herdr"]);
+  assert.deepEqual(seen, ["app", "herdr", "herdr", "app"]);
 });

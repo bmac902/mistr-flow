@@ -79,6 +79,18 @@ export type HistorySource = (
   emit: (direction: "older" | "newer") => void,
 ) => () => void;
 
+/**
+ * Subscribes paste-to-foreground (Ctrl+Alt+V, issue #101), returning an
+ * unsubscribe. Like {@link AgainSource}/{@link CancelSource} it is a pure
+ * external emit — the Ctrl+Alt+V `globalShortcut` stays registered in main.ts
+ * (a standalone verb) and is routed in through this seam whenever a picker is
+ * open, so this handle registers NO accelerator of its own. On emit it resolves
+ * a `paste-foreground` selection: the session pastes the arrowed entry into the
+ * foreground window and settles as a LOCAL success (never the cancel beat),
+ * mirroring slot 1. One ordered event stream, whatever the input.
+ */
+export type PasteSource = (emit: () => void) => () => void;
+
 export interface CapturePickerHandleDeps {
   readonly shortcuts: GlobalShortcutPort;
   readonly cropSource?: CropSource;
@@ -86,6 +98,7 @@ export interface CapturePickerHandleDeps {
   readonly clickSource?: RowClickSource;
   readonly cancelSource?: CancelSource;
   readonly historySource?: HistorySource;
+  readonly pasteSource?: PasteSource;
   /**
    * Whether digit `1` resolves to the pinned local-outcome slot. True for
    * every verb since #64 (slot 1 is always "end this locally, no pane" —
@@ -106,8 +119,15 @@ export interface CapturePickerHandleDeps {
 export function createCapturePickerHandle(
   deps: CapturePickerHandleDeps,
 ): CapturePickerHandle {
-  const { shortcuts, cropSource, againSource, clickSource, cancelSource, historySource } =
-    deps;
+  const {
+    shortcuts,
+    cropSource,
+    againSource,
+    clickSource,
+    cancelSource,
+    historySource,
+    pasteSource,
+  } = deps;
   const includeClipboardSlot = deps.includeClipboardSlot ?? true;
   const registeredAccelerators = new Set<string>();
   // The targets THIS instance put on digit slots, in append order — the sole
@@ -121,6 +141,7 @@ export function createCapturePickerHandle(
   let unsubscribeClick: (() => void) | null = null;
   let unsubscribeCancel: (() => void) | null = null;
   let unsubscribeHistory: (() => void) | null = null;
+  let unsubscribePaste: (() => void) | null = null;
 
   function resolveSelection(event: CaptureSelectionEvent): void {
     if (closed || !pendingResolve) return;
@@ -185,6 +206,17 @@ export function createCapturePickerHandle(
     unsubscribeCancel = cancelSource(() => resolveSelection({ kind: "escape" }));
   }
 
+  // Paste-to-foreground (issue #101): the Ctrl+Alt+V verb, routed in from
+  // main.ts while this picker is open — no accelerator registered here (see
+  // PasteSource). Emitting resolves the same selection channel as everything
+  // else, so the session pastes the arrowed entry and settles as a local
+  // success, exactly like a slot-1 press.
+  if (pasteSource) {
+    unsubscribePaste = pasteSource(() =>
+      resolveSelection({ kind: "paste-foreground" }),
+    );
+  }
+
   // History arrows exist only for a verb with a history ring (Capture #95,
   // Relay #96). Registered like the digits — with the picker's lifetime, in
   // both the plain and (for symmetry with the digit numpad forms) the bare
@@ -239,6 +271,9 @@ export function createCapturePickerHandle(
 
       unsubscribeHistory?.();
       unsubscribeHistory = null;
+
+      unsubscribePaste?.();
+      unsubscribePaste = null;
 
       for (const accelerator of registeredAccelerators) {
         shortcuts.unregister(accelerator);
