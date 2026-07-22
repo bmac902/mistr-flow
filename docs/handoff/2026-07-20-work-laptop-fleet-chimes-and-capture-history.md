@@ -7,8 +7,8 @@
 1. **`git remote -v` — do this FIRST, before pulling.** This repo has **two** remotes, and everything below landed on only one of them:
 
    ```
-   origin      github.com/bmac902/mistr-flow                  ← main tracks this; has all the work
-   blairfork   github.com/Blair-MacDonald_questsw/mistr-flow  ← work-account fork; NOT updated
+   origin      github.com/bmac902/mistr-flow      ← main tracks this; has all the work
+   blairfork   <work-account fork>/mistr-flow     ← work-account fork; NOT updated
    ```
 
    From the home machine, `blairfork` cannot even be fetched — the attempt hangs and times out, consistent with a work-account remote this machine can't authenticate to. **If this clone's `main` tracks `blairfork`, a plain `git pull` returns nothing and the sync silently looks like it worked.** Point at `origin`/`bmac902` (or fetch it explicitly) before doing anything else.

@@ -9,5 +9,12 @@ dist/
 vocabulary*.json
 *.private.json
 
+# Machine-local handoffs. Ignored by default so a stray commit — or a
+# branchStrategy:head Sandcastle container that has none of a local
+# .git/info/exclude — can never accidentally publish one to this PUBLIC repo.
+# To share a handoff cross-machine, `git add -f` it deliberately, and treat it
+# as public (no secrets, no work-account/employer references). See CLAUDE.md.
+docs/handoff/
+
 # Claude Design handoff snapshot — regenerated on demand via `npm run design:canvas`
 design-canvas/
